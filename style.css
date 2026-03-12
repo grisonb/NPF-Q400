@@ -10,6 +10,7 @@
     --border-radius: 12px;
     --success-color: #28a745;
     --water-color: #007bff;
+    --retardant-color: #ff5a3d;
     --safe-area-top: 22px; /* Marge supérieure pour les appareils mobiles */
 }
 
@@ -35,7 +36,22 @@ html, body {
 .search-wrapper { position: relative; flex-grow: 1; }
 .search-wrapper::before { content: '🔍'; position: absolute; left: 18px; top: 50%; transform: translateY(-50%); font-size: 1.2em; opacity: 0.5; pointer-events: none; }
 #search-input { width: 100%; padding: 15px 40px 15px 50px; font-size: 16px; border: 1px solid var(--border-color); border-radius: var(--border-radius); box-sizing: border-box; -webkit-appearance: none; }
-#clear-search { position: absolute; right: 15px; top: 50%; transform: translateY(-50%); font-size: 24px; color: #999; cursor: pointer; display: none; }
+#clear-search {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-60%);
+    width: 36px;
+    height: 44px;
+    line-height: 44px;
+    text-align: center;
+    font-size: 24px;
+    color: #999;
+    cursor: pointer;
+    display: none;
+    user-select: none;
+    touch-action: manipulation;
+}
 .airport-controls { display: flex; flex-direction: column; align-items: center; font-size: 0.8em; color: var(--light-text-color); }
 #airport-count { width: 60px; padding: 8px; font-size: 16px; border: 1px solid var(--border-color); border-radius: 8px; text-align: center; margin-top: 4px; }
 #results-list { list-style-type: none; padding: 0; margin-top: 5px; max-height: 40vh; overflow-y: auto; text-align: left; border-top: 1px solid var(--border-color); }
@@ -52,6 +68,7 @@ html, body {
 .airport-popup .popup-buttons { display: flex; gap: 5px; margin-top: 10px; }
 .airport-popup button { flex-grow: 1; padding: 8px; border: none; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; }
 .airport-popup .water-btn { background-color: var(--water-color); }
+.airport-popup .water-btn-retardant { background-color: var(--retardant-color); }
 .airport-popup .enable-btn { background-color: var(--success-color); }
 .airport-popup .disable-btn { background-color: var(--secondary-color); }
 #bingo-map-display {
@@ -112,14 +129,14 @@ html, body {
     position: absolute;
     top: -0px;      /* Décalé encore moins vers le haut */
     right: -0px;     /* Décalé encore moins vers la droite */
-    width: 35px;
-    height: 35px;
+    width: 52px;
+    height: 52px;
     background-color: var(--secondary-color); /* Fond rouge */
     color: white;                             /* Croix blanche */
     border: 3px solid white;                  /* Bordure blanche pour le détacher */
     border-radius: 50%;                       /* Forme de cercle */
     box-shadow: 0 4px 8px rgba(0,0,0,0.3);
-    font-size: 28px;
+    font-size: 32px;
     font-weight: bold;
     cursor: pointer;
     z-index: 1060;
@@ -129,12 +146,17 @@ html, body {
     line-height: 1;
     transition: transform 0.2s ease;
 }
+#close-calculator-btn::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+}
 #close-calculator-btn:hover {
     transform: scale(1.1); /* Effet de grossissement au survol */
 }
 .main-container { width: 100%; max-width: 1000px; height: 100%; max-height: 95vh; background-color: #fff; border-radius: var(--border-radius); box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; position: relative; }
-.onglets-navigation { display: flex; background-color: var(--background-color); border-bottom: 1px solid var(--border-color); }
-.onglet-bouton { flex: 1; padding: 15px; border: none; background: transparent; font-size: 16px; font-weight: 500; color: var(--light-text-color); cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; }
+.onglets-navigation { display: flex; align-items: stretch; background-color: var(--background-color); border-bottom: 1px solid var(--border-color); }
+.onglet-bouton { flex: 1; min-height: 56px; padding: 16px 10px; border: none; background: transparent; font-size: 16px; font-weight: 500; color: var(--light-text-color); cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; display: flex; align-items: center; justify-content: center; touch-action: manipulation; }
 .onglet-bouton.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
 .onglets-conteneur { flex-grow: 1; position: relative; overflow: hidden; }
 .onglet-panneau { display: none; flex-direction: column; height: 100%; }
@@ -327,9 +349,14 @@ html, body {
 }
 
 #offline-map-modal #close-offline-map-btn {
-    position: absolute; top: 10px; right: 15px; width: 44px; height: 44px;
-    font-size: 32px; font-weight: bold; color: var(--light-text-color);
+    position: absolute; top: 10px; right: 15px; width: 52px; height: 52px;
+    font-size: 36px; font-weight: bold; color: var(--light-text-color);
     background: transparent; border: none; cursor: pointer; line-height: 1;
+}
+#offline-map-modal #close-offline-map-btn::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
 }
 
 .modal-content {
