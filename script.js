@@ -162,8 +162,9 @@ function setupEventListeners() {
     
     if (mainActionButtons) {
         const versionDisplay = document.createElement('div');
-        versionDisplay.className = 'version-display';
-        versionDisplay.innerText = 'v5.1';
+        versionDisplay.className = 'version-display'
+      versionDisplay.innerText = 'v5.2';
+
         mainActionButtons.appendChild(versionDisplay);
     }
 
@@ -482,7 +483,9 @@ function drawPermanentAirportMarkers() {
         const marker = L.marker([airport.lat, airport.lon], { icon: icon });
         const disableButtonText = isDisabled ? "Activer" : "Désactiver";
         const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
-        marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="water-btn" onclick="window.toggleWater('${airport.oaci}')">Eau</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button></div></div>`);
+        const waterButtonText = isWater ? "RETARDANT" : "EAU";
+        const waterButtonClass = isWater ? "water-btn water-btn-retardant" : "water-btn";
+        marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button></div></div>`);
         marker.addTo(permanentAirportLayer);
     });
 }
@@ -637,7 +640,16 @@ async function handleZipImport(file) {
         return;
     }
 
-    const packName = file.name.replace('.zip', '');
+    if (!db) {
+        try {
+            await initDB();
+        } catch (error) {
+            alert(`ERREUR : Impossible d'ouvrir la base locale (${error.message || error}).`);
+            return;
+        }
+    }
+
+    const packName = file.name.replace(/\.zip$/i, '');
     const progressSection = document.getElementById('import-progress-section');
     const statusMessage = document.getElementById('import-status-message');
     const progressBar = document.getElementById('import-progress-bar');
@@ -657,18 +669,19 @@ async function handleZipImport(file) {
 
         statusMessage.textContent = `Préparation de ${totalFiles} tuiles pour l'importation...`;
 
-        const allTilesData = [];
-        for (const tileFile of tileFiles) {
-            const blob = await tileFile.async('blob');
-            const url = `https://a.tile.openstreetmap.org/${tileFile.name}`;
-            allTilesData.push({ url: url, tile: blob, packName: packName });
-        }
-
         const batchSize = 100;
         let processedFiles = 0;
 
-        for (let i = 0; i < allTilesData.length; i += batchSize) {
-            const batch = allTilesData.slice(i, i + batchSize);
+        for (let i = 0; i < tileFiles.length; i += batchSize) {
+            const batchEntries = tileFiles.slice(i, i + batchSize);
+            const batch = await Promise.all(batchEntries.map(async tileFile => {
+                const blob = await tileFile.async('blob');
+                return {
+                    url: `https://a.tile.openstreetmap.org/${tileFile.name}`,
+                    tile: blob,
+                    packName: packName
+                };
+            }));
             const transaction = db.transaction('tiles', 'readwrite');
             const store = transaction.objectStore('tiles');
 
@@ -769,7 +782,11 @@ const calculateBingo = (dist) => (dist <= 70) ? (dist * 5) + 700 : (dist * 4) + 
 const calculateFuelToGo = (dist) => (dist <= 70) ? (dist * 5) : (dist * 4);
 const calculateConsoRotation = (dist) => { const effectiveDist = Math.max(dist, 10); return (effectiveDist <= 70) ? (effectiveDist * 10) + 250 : (effectiveDist * 8) + 250; };
 const calculateTransitTime = (dist) => (dist <= 70) ? (dist * (60 / 210)) : (dist * (60 / 240));
-const calculateRotationTime = (dist) => { const effectiveDist = Math.max(dist, 10); return (effectiveDist <= 50) ? (20 + (effectiveDist / 3.5)) : (20 + (effectiveDist / 4)); };
+const calculateRotationTime = (dist) => {
+    const effectiveDist = Math.max(dist, 10);
+    const rotationDistance = effectiveDist * 2;
+    return (effectiveDist <= 50) ? (20 + (rotationDistance / 3.5)) : (20 + (rotationDistance / 4));
+};
 let masterRecalculate = () => {};
 let isFuelSurFeuManual = false, isSuiviConsoManual = false, isSuiviDureeManual = false;
 const parseTime = (timeString) => { if (!timeString || !timeString.includes(':')) return null; const parts = timeString.split(':'); return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10); };
@@ -780,6 +797,7 @@ function updateAndSortRotations(container, current, params) {
     const lines = Array.from(container.querySelectorAll('.result-line'));
     const resultsData = [];
     let minTimeLimit = Infinity;
+    let minFuelLimit = Infinity;
 
     // --- Première passe : Calculer toutes les valeurs et trouver la limite temporelle ---
     lines.forEach(line => {
@@ -823,22 +841,24 @@ function updateAndSortRotations(container, current, params) {
 
         resultsData.push({ type, value, element: line, formulaString });
         
-        if ((type === 'cs' || type === 'tmd') && value !== null && value >= 0) {
+        if ((type === 'cs' || type === 'tmd' || type === 'hdv') && value !== null) {
             minTimeLimit = Math.min(minTimeLimit, value);
         }
+        if ((type === 'base' || type === 'pelic') && value !== null) {
+            minFuelLimit = Math.min(minFuelLimit, value);
+        }
     });
+
+    // Si une limite temporelle est la première limite atteinte,
+    // toute valeur suivante (plus élevée) est impossible et passe en rouge.
+    const shouldForceTimeConstraint = minTimeLimit !== Infinity && minTimeLimit <= minFuelLimit;
 
     // --- Deuxième passe : Appliquer les styles et mettre à jour le DOM ---
     resultsData.forEach(result => {
         const { type, value, element, formulaString } = result;
         const valueCell = element.querySelector('.value');
         const helpIcon = element.querySelector('.formula-help-icon');
-
-        // ========================= MODIFICATION ICI =========================
-        // La condition est simplifiée pour s'appliquer à TOUTES les lignes,
-        // y compris CS et TMD eux-mêmes.
-        const isTimeLimited = (value !== null && value > minTimeLimit);
-        // ======================= FIN DE LA MODIFICATION =======================
+        const isTimeLimited = shouldForceTimeConstraint && value !== null && value > minTimeLimit;
 
         if (value === null) {
             valueCell.textContent = '--';
@@ -976,7 +996,7 @@ function updatePreviTab() {
     setHelp('conso-aller-feu-help', `Formule : Distance * Conso. au Nm\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} Nm * ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} kg/Nm`);
 
     document.getElementById('duree-rotation').textContent = rotationTime === 20 ? '--:--' : formatTime(rotationTime);
-    setHelp('duree-rotation-help', `Formule : 20min + (Distance / Vitesse Sol)\n\nCalcul : 20 + (${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm / ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 50 ? 3.5 : 4})`);
+    setHelp('duree-rotation-help', `Formule : 20min + ((Distance effective × 2) / Vitesse Sol)\n\nCalcul : 20 + ((${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm × 2) / ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 50 ? 3.5 : 4})`);
 
     document.getElementById('conso-par-rotation').textContent = consoRotation === 250 ? '-- kg' : `${consoRotation} kg`;
     setHelp('conso-par-rotation-help', `Formule : (Distance * Conso. au Nm) + Forfait\n\nCalcul : (${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm * ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 70 ? 10 : 8}) + 250`);
@@ -1041,7 +1061,8 @@ function updateSuiviTab() {
 
         const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
         const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: currentTime }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: 0 });
+        const transitTimeRetourBase = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
+        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: currentTime }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: transitTimeRetourBase });
     }
 }
 
