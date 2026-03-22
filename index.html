@@ -6,12 +6,30 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Carte de Navigation</title>
     <link rel="stylesheet" href="leaflet.css">
-    <link rel="stylesheet" href="style.css">
-    <link rel="manifest" href="manifest.json">
+    <link rel="stylesheet" href="style.css?v=v2026.2">
+    <link rel="manifest" href="manifest.json?v=v2026.2">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script>
         const APP_VERSION = 'v2026.2';
+        window.APP_VERSION = APP_VERSION;
+
+        const VERSION_STORAGE_KEY = 'pelicAppVersion';
+        const previousVersion = localStorage.getItem(VERSION_STORAGE_KEY);
+        localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+
+        if (previousVersion !== APP_VERSION) {
+            const resetPromises = [];
+            if ('caches' in window) {
+                resetPromises.push(caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key)))));
+            }
+            if ('serviceWorker' in navigator) {
+                resetPromises.push(navigator.serviceWorker.getRegistrations().then(registrations => Promise.all(registrations.map(reg => reg.unregister()))));
+            }
+            Promise.allSettled(resetPromises).finally(() => {
+                window.location.replace(`./index.html?version=${APP_VERSION}&refresh=${Date.now()}`);
+            });
+        }
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', async () => {
@@ -102,7 +120,7 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
       <script src="jszip.min.js"></script>
-    <script src="script.js"></script>
+    <script src="script.js?v=v2026.2"></script>
     
     <div id="calculator-modal" style="display: none;">
         <div class="main-container">
