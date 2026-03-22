@@ -11,13 +11,43 @@
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script>
+        const APP_VERSION = 'v2026.2';
+
         if ('serviceWorker' in navigator) {
-            window.addEventListener('load', () => {
-                navigator.serviceWorker.register('./sw.js').then(reg => {
-                    console.log('Service Worker enregistré:', reg);
-                }).catch(err => {
-                    console.log('Erreur enregistrement Service Worker:', err);
+            window.addEventListener('load', async () => {
+                let isRefreshing = false;
+
+                navigator.serviceWorker.addEventListener('controllerchange', () => {
+                    if (isRefreshing) return;
+                    isRefreshing = true;
+                    window.location.reload();
                 });
+
+                try {
+                    const reg = await navigator.serviceWorker.register(`./sw.js?version=${APP_VERSION}`, { updateViaCache: 'none' });
+                    console.log('Service Worker enregistré:', reg);
+
+                    const requestSkipWaiting = (registration) => {
+                        if (registration && registration.waiting) {
+                            registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+                        }
+                    };
+
+                    requestSkipWaiting(reg);
+                    reg.addEventListener('updatefound', () => {
+                        const newWorker = reg.installing;
+                        if (!newWorker) return;
+                        newWorker.addEventListener('statechange', () => {
+                            if (newWorker.state === 'installed') {
+                                requestSkipWaiting(reg);
+                            }
+                        });
+                    });
+
+                    reg.update();
+                } catch (err) {
+                    console.log('Erreur enregistrement Service Worker:', err);
+                }
             });
         }
     </script>
@@ -34,6 +64,7 @@
         <span id="map-bingo-pelic"></span>
     </div>
     <div id="commune-info-display"></div>
+    <div id="nearest-commune-display" style="display: none;"></div>
     <div id="ui-overlay">
         <div id="status-message">Chargement des données...</div>
         <div id="search-section" style="display: none;">
@@ -53,6 +84,7 @@
 <div class="extra-controls">
                 <button id="lftw-route-button" class="toggle-button active" title="Afficher/Masquer la route vers la base">Route BASE (LFTW)</button>
                 <button id="gaar-mode-button" class="toggle-button" title="Afficher/Masquer les circuits GAAR">Circuits GAAR</button>
+                <button id="departments-layer-button" class="toggle-button" title="Afficher/Masquer les contours de départements">Départements</button>
                 <button id="offline-maps-button" class="toggle-button" title="Gérer les cartes hors-ligne">Cartes offline</button>
             </div>
 
@@ -146,6 +178,8 @@
                             <div class="rotations-group">
                                  <h3 class="analyse-col-title" style="visibility: hidden;">&nbsp;</h3>
                                 <div class="result-line"><span class="label">Fuel Pélic. Actuel :</span><span class="value" id="suivi-fuel-actuel">-- kg</span></div>
+                                <div class="result-line"><span class="label">Heure sur Feu :<span id="suivi-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="suivi-heure-sur-feu">--:--</span></div>
+                                <div class="result-line"><span class="label">CS sur Feu :</span><span class="value" id="suivi-cs-sur-feu">--:--</span></div>
                                <div class="result-line"><span class="label">Conso. Rotation :</span><div style="display: flex; align-items: center;"><div id="suivi-conso-rotation-wrapper" class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric" readonly><span class="clear-btn">&times;</span></div><button class="manual-btn" id="suivi-conso-rotation-manual-btn">AUTO</button></div></div>
                                 <div class="result-line"><span class="label">Durée Rotation :</span><div style="display: flex; align-items: center;"><div id="suivi-duree-rotation-wrapper" class="input-wrapper time-input-wrapper"><input type="text" class="display-input manual-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div><button class="manual-btn" id="suivi-duree-rotation-manual-btn">AUTO</button></div></div>
                             </div>
@@ -175,6 +209,8 @@
                                  <h3 class="analyse-col-title" style="visibility: hidden;">&nbsp;</h3>
                                 <div class="result-line"><span class="label">Fuel actuel :</span><div id="deroutement-fuel-wrapper" class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric"><span class="clear-btn">&times;</span></div></div>
                                 <div class="result-line"><span class="label">Heure actuelle :</span><div id="deroutement-heure-wrapper" class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
+                                <div class="result-line"><span class="label">Heure sur Feu :<span id="derout-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="derout-heure-sur-feu">--:--</span></div>
+                                <div class="result-line"><span class="label">CS sur Feu :</span><span class="value" id="derout-cs-sur-feu">--:--</span></div>
                                 <div class="result-line"><span class="label"><span id="derout-fuel-mini-base-label">Fuel mini 1 largage / BASE (LFTW) :</span><span id="derout-fuel-mini-base-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-base">-- kg</span></div>
                                 <div class="result-line"><span class="label">Fuel mini 1 largage / Pélic :<span id="derout-fuel-mini-pelic-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-pelic">-- kg</span></div>
                                 <button id="refresh-gps-btn">🛰️ Rafraîchir GPS</button>
@@ -196,7 +232,7 @@
             
             <div class="modal-content">
                 <div class="import-section">
-                    <p>Importez un pack de tuiles au format .zip pour l'utiliser hors-ligne.</p>
+                    <p>Importez un pack de tuiles au format .zip (formats reconnus : z/x/y.png, z_x_y.png ou z-x-y.png) pour l'utiliser hors-ligne.</p>
                     <label for="zip-importer-input" class="import-button">Importer un pack de tuiles (.zip)</label>
                     <input type="file" id="zip-importer-input" accept=".zip" style="display: none;">
                 </div>
@@ -210,6 +246,12 @@
 
                 <div class="installed-maps-section">
                     <h3>Packs installés</h3>
+                    <div class="offline-toggle-row">
+                        <label>
+                            <input type="checkbox" id="offline-tiles-enabled-toggle" checked>
+                            Utiliser les cartes téléchargées (hors-ligne prioritaire)
+                        </label>
+                    </div>
                     <ul id="installed-maps-list">
                         <!-- Les packs installés seront listés ici par le JavaScript -->
                         <li class="no-maps-placeholder">Aucun pack de cartes installé.</li>
