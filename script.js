@@ -1069,6 +1069,56 @@ async function initializeOfflineTilePreference() {
     updateOfflineStatus();
 }
 
+async function persistTileBatch(batch) {
+    if (!Array.isArray(batch) || batch.length === 0) return;
+
+    await new Promise((resolve, reject) => {
+        let settled = false;
+        const transaction = db.transaction('tiles', 'readwrite');
+        const store = transaction.objectStore('tiles');
+
+        const rejectOnce = (error) => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        };
+
+        transaction.oncomplete = () => {
+            if (settled) return;
+            settled = true;
+            resolve();
+        };
+        transaction.onerror = () => rejectOnce(transaction.error || new Error('Erreur transaction écriture indexedDB'));
+        transaction.onabort = () => rejectOnce(transaction.error || new Error("Transaction interrompue pendant l'écriture indexedDB"));
+
+        try {
+            for (const tileData of batch) {
+                store.put(tileData);
+            }
+        } catch (error) {
+            rejectOnce(error);
+            try { transaction.abort(); } catch (_) {}
+        }
+    });
+}
+
+async function persistTileBatchWithFallback(batch) {
+    try {
+        await persistTileBatch(batch);
+    } catch (error) {
+        const message = String(error && error.message ? error.message : error || '');
+        const isInactiveTx = message.includes('transaction is inactive or finished') || error?.name === 'InvalidStateError';
+
+        if (!isInactiveTx || batch.length <= 1) {
+            throw error;
+        }
+
+        for (const tileData of batch) {
+            await persistTileBatch([tileData]);
+        }
+    }
+}
+
 async function handleZipImport(file) {
     if (!file) return;
     if (typeof JSZip === 'undefined') {
@@ -1143,22 +1193,11 @@ async function handleZipImport(file) {
                     packName: packName
                 };
             }));
-            const transaction = db.transaction('tiles', 'readwrite');
-            const store = transaction.objectStore('tiles');
+            await persistTileBatchWithFallback(batch);
 
-            batch.forEach(tileData => {
-                store.put(tileData);
-            });
-
-            await new Promise((resolve, reject) => {
-                transaction.oncomplete = () => {
-                    processedFiles += batch.length;
-                    statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
-                    progressBar.style.width = `${(processedFiles / totalFiles) * 100}%`;
-                    resolve();
-                };
-                transaction.onerror = () => reject(transaction.error);
-            });
+            processedFiles += batch.length;
+            statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
+            progressBar.style.width = `${(processedFiles / totalFiles) * 100}%`;
         }
 
         statusMessage.textContent = `Importation de ${packName} terminée !`;
