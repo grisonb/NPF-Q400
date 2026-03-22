@@ -1,6 +1,6 @@
-const APP_CACHE_NAME = 'test-communes-app-cache-v20262'; 
-const DATA_CACHE_NAME = 'test-communes-data-cache-v20262';
-const TILE_CACHE_NAME = 'test-communes-tile-cache-v20262';
+const APP_CACHE_NAME = 'test-communes-app-cache-v20263'; 
+const DATA_CACHE_NAME = 'test-communes-data-cache-v20263';
+const TILE_CACHE_NAME = 'test-communes-tile-cache-v20263';
 
 const APP_SHELL_URLS = [
     './',
@@ -259,8 +259,12 @@ self.addEventListener('fetch', event => {
     }
     
     // Stratégie pour le reste (App Shell, données): réseau d'abord, puis fallback cache
+    const requestToFetch = (event.request.method === 'GET')
+        ? new Request(event.request, { cache: 'no-store' })
+        : event.request;
+
     event.respondWith(
-        fetch(event.request)
+        fetch(requestToFetch)
             .then(networkResponse => {
                 if (event.request.method === 'GET' && networkResponse && networkResponse.ok) {
                     const requestUrlObject = new URL(event.request.url);

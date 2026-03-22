@@ -14,6 +14,23 @@
         const APP_VERSION = 'v2026.2';
         window.APP_VERSION = APP_VERSION;
 
+        const VERSION_STORAGE_KEY = 'pelicAppVersion';
+        const previousVersion = localStorage.getItem(VERSION_STORAGE_KEY);
+        localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
+
+        if (previousVersion && previousVersion !== APP_VERSION) {
+            const resetPromises = [];
+            if ('caches' in window) {
+                resetPromises.push(caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key)))));
+            }
+            if ('serviceWorker' in navigator) {
+                resetPromises.push(navigator.serviceWorker.getRegistrations().then(registrations => Promise.all(registrations.map(reg => reg.unregister()))));
+            }
+            Promise.allSettled(resetPromises).finally(() => {
+                window.location.replace(`./index.html?version=${APP_VERSION}&refresh=${Date.now()}`);
+            });
+        }
+
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', async () => {
                 let isRefreshing = false;
