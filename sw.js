@@ -263,7 +263,11 @@ self.addEventListener('fetch', event => {
         fetch(event.request)
             .then(networkResponse => {
                 if (event.request.method === 'GET' && networkResponse && networkResponse.ok) {
-                    const requestUrlString = event.request.url;
+                    const requestUrlObject = new URL(event.request.url);
+                    const requestUrlWithoutSearch = new URL(requestUrlObject);
+                    requestUrlWithoutSearch.search = '';
+                    requestUrlWithoutSearch.hash = '';
+                    const requestUrlString = requestUrlWithoutSearch.toString();
                     const appShellUrls = new Set(APP_SHELL_URLS.map(url => new URL(url, self.location.origin).toString()));
                     const dataUrls = new Set(DATA_URLS.map(url => new URL(url, self.location.origin).toString()));
                     let cacheName = null;
@@ -272,19 +276,31 @@ self.addEventListener('fetch', event => {
                     else if (dataUrls.has(requestUrlString)) cacheName = DATA_CACHE_NAME;
 
                     if (cacheName) {
-                        caches.open(cacheName).then(cache => cache.put(event.request, networkResponse.clone()));
+                        caches.open(cacheName).then(cache => cache.put(requestUrlString, networkResponse.clone()));
                     }
                 }
                 return networkResponse;
             })
             .catch(() => {
+                const requestUrlObject = new URL(event.request.url);
+                const requestUrlWithoutSearch = new URL(requestUrlObject);
+                requestUrlWithoutSearch.search = '';
+                requestUrlWithoutSearch.hash = '';
+                const requestUrlString = requestUrlWithoutSearch.toString();
+
                 return caches.match(event.request).then(cachedResponse => {
                     if (cachedResponse) {
                         return cachedResponse;
                     }
-                    if (event.request.mode === 'navigate') {
-                        return caches.match('./index.html');
-                    }
+
+                    return caches.match(requestUrlString).then(cachedWithoutSearch => {
+                        if (cachedWithoutSearch) {
+                            return cachedWithoutSearch;
+                        }
+                        if (event.request.mode === 'navigate') {
+                            return caches.match('./index.html');
+                        }
+                    });
                 });
             })
     );
