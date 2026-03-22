@@ -9,12 +9,16 @@ document.addEventListener('DOMContentLoaded', () => {
 // =========================================================================
 // VARIABLES GLOBALES
 // =========================================================================
-let allCommunes = [], map, permanentAirportLayer, routesLayer, currentCommune = null, selectedPelicanOACI = null;
+let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, currentCommune = null, selectedPelicanOACI = null;
 let disabledAirports = new Set(), waterAirports = new Set();
 const MAGNETIC_DECLINATION = 1.0;
 let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
 let userToTargetLayer = null, lftwRouteLayer = null;
 let showLftwRoute = true;
+let departmentsLayerGroup = null;
+let departmentsLabelsLayer = null;
+let areDepartmentsVisible = false;
+let hasLoadedDepartments = false;
 const DEFAULT_BASE_OACI = 'LFTW';
 let selectedBaseOACI = DEFAULT_BASE_OACI;
 let gaarCircuits = [];
@@ -23,6 +27,15 @@ let isDrawingMode = false;
 const manualCircuitColors = ['#ff00ff', '#00ffff', '#ff8c00', '#00ff00', '#ff1493'];
 let gaarLayer = null;
 let db; // Variable pour la connexion à la base de données IndexedDB
+const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
+const DEFAULT_OFFLINE_TILES_ENABLED = true;
+const OFFLINE_TILES_MAX_ZOOM_KEY = 'offlineTilesMaxZoom';
+const SHOW_DEPARTMENTS_LAYER_KEY = 'showDepartmentsLayer';
+const ONLINE_MAX_NATIVE_ZOOM = 18;
+const OFFLINE_FALLBACK_NATIVE_ZOOM = 14;
+const GLOBAL_MAX_ZOOM = 18;
+let baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
+let offlineTilesMode = DEFAULT_OFFLINE_TILES_ENABLED;
 
 const pelicanAirports = [
     { oaci: "LFLU", name: "Valence-Chabeuil", lat: 44.920, lon: 4.968 }, { oaci: "LFMU", name: "Béziers-Vias", lat: 43.323, lon: 3.354 }, { oaci: "LFJR", name: "Angers-Marcé", lat: 47.560, lon: -0.312 }, { oaci: "LFHO", name: "Aubenas-Ardèche Méridionale", lat: 44.545, lon: 4.385 }, { oaci: "LFLX", name: "Châteauroux-Déols", lat: 46.861, lon: 1.720 }, { oaci: "LFBM", name: "Mont-de-Marsan", lat: 43.894, lon: -0.509 }, { oaci: "LFBL", name: "Limoges-Bellegarde", lat: 45.862, lon: 1.180 }, { oaci: "LFAQ", name: "Albert-Bray", lat: 49.972, lon: 2.698 }, { oaci: "LFBP", name: "Pau-Pyrénées", lat: 43.380, lon: -0.418 }, { oaci: "LFTH", name: "Toulon-Hyères", lat: 43.097, lon: 6.146 }, { oaci: "LFSG", name: "Épinal-Mirecourt", lat: 48.325, lon: 6.068 }, { oaci: "LFKC", name: "Calvi-Sainte-Catherine", lat: 42.530, lon: 8.793 }, { oaci: "LFMD", name: "Cannes-Mandelieu", lat: 43.542, lon: 6.956 }, { oaci: "LFKB", name: "Bastia-Poretta", lat: 42.552, lon: 9.483 }, { oaci: "LFMH", name: "Saint-Étienne-Bouthéon", lat: 45.541, lon: 4.296 }, { oaci: "LFKF", name: "Figari-Sud-Corse", lat: 41.500, lon: 9.097 }, { oaci: "LFCC", name: "Cahors-Lalbenque", lat: 44.351, lon: 1.475 }, { oaci: "LFML", name: "Marseille-Provence", lat: 43.436, lon: 5.215 }, { oaci: "LFKJ", name: "Ajaccio-Napoléon-Bonaparte", lat: 41.923, lon: 8.802 }, { oaci: "LFMK", name: "Carcassonne-Salvaza", lat: 43.215, lon: 2.306 }, { oaci: "LFRV", name: "Vannes-Meucon", lat: 47.720, lon: -2.721 }, { oaci: "LFTW", name: "Nîmes-Garons", lat: 43.757, lon: 4.416 }, { oaci: "LFMP", name: "Perpignan-Rivesaltes", lat: 42.740, lon: 2.870 }, { oaci: "LFBD", name: "Bordeaux-Mérignac", lat: 44.828, lon: -0.691 }
@@ -54,6 +67,42 @@ const calculateDestinationPoint = (lat, lon, bearing, distanceNm) => {
     return [toDeg(destLatRad), toDeg(destLonRad)];
 };
 
+function computeConvexHull(latLngPoints) {
+    const uniquePoints = new Map();
+    latLngPoints.forEach(([lat, lon]) => {
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
+        if (!uniquePoints.has(key)) uniquePoints.set(key, [lat, lon]);
+    });
+
+    const points = Array.from(uniquePoints.values());
+    if (points.length < 3) return points;
+
+    points.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0])); // tri par longitude puis latitude
+    const cross = (o, a, b) => ((a[1] - o[1]) * (b[0] - o[0])) - ((a[0] - o[0]) * (b[1] - o[1]));
+
+    const lower = [];
+    for (const p of points) {
+        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
+            lower.pop();
+        }
+        lower.push(p);
+    }
+
+    const upper = [];
+    for (let i = points.length - 1; i >= 0; i -= 1) {
+        const p = points[i];
+        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
+            upper.pop();
+        }
+        upper.push(p);
+    }
+
+    lower.pop();
+    upper.pop();
+    return lower.concat(upper);
+}
+
 // =========================================================================
 // LOGIQUE PRINCIPALE DE L'APPLICATION
 // =========================================================================
@@ -63,11 +112,14 @@ async function initializeApp() {
     loadState();
     const savedLftwState = localStorage.getItem('showLftwRoute');
     showLftwRoute = savedLftwState === null ? true : (savedLftwState === 'true');
+    localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
     const savedGaarJSON = localStorage.getItem('gaarCircuits');
     if (savedGaarJSON) {
         gaarCircuits = JSON.parse(savedGaarJSON);
     }
     await initDB();
+    await initializeOfflineTilePreference();
+    await updateBaseTileNativeZoomFromAvailability();
     displayInstalledMaps();
     try {
         const response = await fetch('./communes.json');
@@ -79,6 +131,9 @@ async function initializeApp() {
         searchSection.style.display = 'block';
         initMap();
         setupEventListeners();
+        setTimeout(() => {
+            updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
+        }, 0);
         if (localStorage.getItem('liveGpsActive') === 'true') {
             toggleLiveGps();
         } else {
@@ -96,16 +151,26 @@ async function initializeApp() {
 
 function initMap() {
     if (map) return;
-    map = L.map('map', { attributionControl: false, zoomControl: false }).setView([46.6, 2.2], 5.5);
+    map = L.map('map', {
+        attributionControl: false,
+        zoomControl: false,
+        maxZoom: GLOBAL_MAX_ZOOM
+    }).setView([46.6, 2.2], 5.5);
     L.control.zoom({ position: 'bottomright' }).addTo(map);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 18, attribution: '© OpenStreetMap' }).addTo(map);
+    setupBaseTileLayer();
     permanentAirportLayer = L.layerGroup().addTo(map);
     routesLayer = L.layerGroup().addTo(map);
     userToTargetLayer = L.layerGroup().addTo(map);
     lftwRouteLayer = L.layerGroup().addTo(map);
     gaarLayer = L.layerGroup().addTo(map);
+    departmentsLayerGroup = L.layerGroup();
+    departmentsLabelsLayer = L.layerGroup();
     drawPermanentAirportMarkers();
     redrawGaarCircuits();
+
+    if (areDepartmentsVisible) {
+        setTimeout(() => { toggleDepartmentsLayer(true); }, 150);
+    }
 
     map.on('click', handleGaarMapClick);
 
@@ -113,12 +178,38 @@ function initMap() {
         if (isDrawingMode) return;
         selectedPelicanOACI = null;
         L.DomEvent.preventDefault(e.originalEvent);
-        const pointName = findClosestCommuneName(e.latlng.lat, e.latlng.lng) || 'Feu manuel';
-        const manualCommune = { nom_standard: pointName, latitude_mairie: e.latlng.lat, longitude_mairie: e.latlng.lng, isManual: true };
+        const closestCommune = findClosestCommune(e.latlng.lat, e.latlng.lng, 27);
+        const pointName = closestCommune?.nom_standard || 'Feu manuel';
+        const manualCommune = {
+            nom_standard: pointName,
+            dep_code: closestCommune?.dep_code || null,
+            dep_nom: closestCommune?.dep_nom || null,
+            latitude_mairie: e.latlng.lat,
+            longitude_mairie: e.latlng.lng,
+            isManual: true
+        };
         currentCommune = manualCommune;
         localStorage.setItem('currentCommune', JSON.stringify(manualCommune));
         displayCommuneDetails(manualCommune, false);
     });
+}
+
+function setupBaseTileLayer() {
+    if (!map) return;
+    if (baseTileLayer) {
+        map.removeLayer(baseTileLayer);
+    }
+    const overzoomDelta = offlineTilesMode ? 0 : 2;
+    const effectiveMaxZoom = Math.min(GLOBAL_MAX_ZOOM, baseTileMaxNativeZoom + overzoomDelta);
+    map.setMaxZoom(effectiveMaxZoom);
+    baseTileLayer = L.tileLayer('https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxNativeZoom: baseTileMaxNativeZoom,
+        maxZoom: effectiveMaxZoom,
+        attribution: '© OpenStreetMap',
+        keepBuffer: 8,
+        updateWhenZooming: false,
+        updateWhenIdle: true
+    }).addTo(map);
 }
 
 function clearCurrentSelection() {
@@ -157,16 +248,25 @@ function setupEventListeners() {
     const calculatorButton = document.getElementById('calculator-button');
     const calculatorModal = document.getElementById('calculator-modal');
     const closeCalculatorButton = document.getElementById('close-calculator-btn');
+    const departmentsLayerButton = document.getElementById('departments-layer-button');
     const offlineMapsButton = document.getElementById('offline-maps-button');
     const offlineMapModal = document.getElementById('offline-map-modal');
     const closeOfflineMapButton = document.getElementById('close-offline-map-btn');
     const zipImporterInput = document.getElementById('zip-importer-input');
+    const offlineTilesEnabledToggle = document.getElementById('offline-tiles-enabled-toggle');
     
     if (mainActionButtons) {
         const versionDisplay = document.createElement('div');
         versionDisplay.className = 'version-display';
-        versionDisplay.innerText = 'v2026.1';
+        versionDisplay.innerText = 'v2026.2';
         mainActionButtons.appendChild(versionDisplay);
+    }
+
+    if (departmentsLayerButton) {
+        departmentsLayerButton.classList.toggle('active', areDepartmentsVisible);
+        departmentsLayerButton.addEventListener('click', () => {
+            toggleDepartmentsLayer(!areDepartmentsVisible);
+        });
     }
 
     searchInput.addEventListener('input', () => {
@@ -228,8 +328,16 @@ function setupEventListeners() {
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 const { latitude, longitude } = pos.coords;
-                const pointName = findClosestCommuneName(latitude, longitude) || 'Feu GPS';
-                const gpsCommune = { nom_standard: pointName, latitude_mairie: latitude, longitude_mairie: longitude, isManual: true };
+                const closestCommune = findClosestCommune(latitude, longitude, 27);
+                const pointName = closestCommune?.nom_standard || 'Feu GPS';
+                const gpsCommune = {
+                    nom_standard: pointName,
+                    dep_code: closestCommune?.dep_code || null,
+                    dep_nom: closestCommune?.dep_nom || null,
+                    latitude_mairie: latitude,
+                    longitude_mairie: longitude,
+                    isManual: true
+                };
                 currentCommune = gpsCommune;
                 localStorage.setItem('currentCommune', JSON.stringify(gpsCommune));
                 displayCommuneDetails(gpsCommune, false);
@@ -283,6 +391,15 @@ function setupEventListeners() {
         event.target.value = '';
     });
 
+    if (offlineTilesEnabledToggle) {
+        offlineTilesEnabledToggle.addEventListener('change', async (event) => {
+            const enabled = event.target.checked;
+            await setOfflineTilesEnabled(enabled);
+            await updateBaseTileNativeZoomFromAvailability();
+            updateOfflineStatus();
+        });
+    }
+
     updateBaseLabels();
     updateLftwButtonState();
     updateGaarButtonState();
@@ -308,6 +425,66 @@ function displayResults(results) {
     }
 }
 
+async function findMaxOfflineTileZoom() {
+    if (!db) return null;
+    return new Promise((resolve) => {
+        const tx = db.transaction('tiles', 'readonly');
+        const store = tx.objectStore('tiles');
+        const request = store.openCursor();
+        let maxZoom = null;
+
+        request.onsuccess = (event) => {
+            const cursor = event.target.result;
+            if (!cursor) {
+                resolve(maxZoom);
+                return;
+            }
+            const url = cursor.value?.url;
+            if (typeof url === 'string') {
+                const match = url.match(/\/(\d+)\/\d+\/\d+\.(png|jpg|jpeg)$/i);
+                if (match) {
+                    const zoom = Number.parseInt(match[1], 10);
+                    if (Number.isFinite(zoom)) {
+                        maxZoom = maxZoom === null ? zoom : Math.max(maxZoom, zoom);
+                    }
+                }
+            }
+            cursor.continue();
+        };
+
+        request.onerror = () => resolve(null);
+    });
+}
+
+async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = {}) {
+    const offlineEnabled = await getOfflineTilesEnabled();
+    if (!offlineEnabled) {
+        baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
+    } else {
+        const storedOfflineMaxZoom = Number.parseInt(localStorage.getItem(OFFLINE_TILES_MAX_ZOOM_KEY) || '', 10);
+        let offlineMaxZoom = Number.isFinite(storedOfflineMaxZoom) ? storedOfflineMaxZoom : null;
+
+        if (forceScan) {
+            offlineMaxZoom = await findMaxOfflineTileZoom();
+            if (offlineMaxZoom === null) {
+                localStorage.removeItem(OFFLINE_TILES_MAX_ZOOM_KEY);
+            } else {
+                localStorage.setItem(OFFLINE_TILES_MAX_ZOOM_KEY, String(offlineMaxZoom));
+            }
+        }
+
+        if (offlineMaxZoom === null) {
+            baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
+        } else {
+            baseTileMaxNativeZoom = Math.max(0, Math.min(ONLINE_MAX_NATIVE_ZOOM, offlineMaxZoom));
+        }
+    }
+
+    if (map && baseTileLayer) {
+        setupBaseTileLayer();
+    }
+}
+
 function updateCommuneDisplay(commune) {
     const communeDisplay = document.getElementById('commune-info-display');
     if (!commune) {
@@ -315,7 +492,12 @@ function updateCommuneDisplay(commune) {
         communeDisplay.style.display = 'none';
         return;
     }
-    const communeNameHTML = `<span class="commune-name">${commune.nom_standard}</span>`;
+    const fallbackClosest = (!commune.dep_code && commune.latitude_mairie != null && commune.longitude_mairie != null)
+        ? findClosestCommune(commune.latitude_mairie, commune.longitude_mairie, 27)
+        : null;
+    const depCodeValue = commune.dep_code || fallbackClosest?.dep_code || '';
+    const depCode = depCodeValue ? ` (${depCodeValue})` : '';
+    const communeNameHTML = `<span class="commune-name">${commune.nom_standard}${depCode}</span>`;
     let sunsetHTML = '';
     if (typeof SunCalc !== 'undefined') {
         try {
@@ -514,6 +696,100 @@ function drawPermanentAirportMarkers() {
         marker.addTo(permanentAirportLayer);
     });
 }
+
+async function loadDepartmentsLayerData() {
+    const byDepartment = new Map();
+
+    allCommunes.forEach((commune) => {
+        const depCode = commune?.dep_code;
+        if (!depCode) return;
+
+        if (!byDepartment.has(depCode)) {
+            byDepartment.set(depCode, {
+                points: [],
+                latSum: 0,
+                lonSum: 0,
+                count: 0
+            });
+        }
+
+        const depData = byDepartment.get(depCode);
+
+        if (Number.isFinite(commune.latitude_centre) && Number.isFinite(commune.longitude_centre)) {
+            depData.points.push([commune.latitude_centre, commune.longitude_centre]);
+        }
+
+        if (Number.isFinite(commune.latitude_mairie) && Number.isFinite(commune.longitude_mairie)) {
+            depData.latSum += commune.latitude_mairie;
+            depData.lonSum += commune.longitude_mairie;
+            depData.count += 1;
+        }
+    });
+
+    byDepartment.forEach((depData, depCode) => {
+        if (!depData.points.length) return;
+
+        const sampleStep = Math.max(1, Math.floor(depData.points.length / 400));
+        const sampledPoints = depData.points.filter((_, idx) => idx % sampleStep === 0);
+        const hull = computeConvexHull(sampledPoints);
+        if (hull.length < 3) return;
+
+        const polygon = L.polygon(hull, {
+            color: '#111',
+            weight: 1,
+            opacity: 0.9,
+            fillColor: '#ffffff',
+            fillOpacity: 0.03
+        });
+        departmentsLayerGroup.addLayer(polygon);
+
+        const center = depData.count > 0
+            ? [depData.latSum / depData.count, depData.lonSum / depData.count]
+            : polygon.getBounds().getCenter();
+
+        departmentsLabelsLayer.addLayer(L.marker(center, {
+            icon: L.divIcon({
+                className: 'department-code-label',
+                html: `<span>${depCode}</span>`
+            }),
+            interactive: false,
+            keyboard: false
+        }));
+    });
+
+    hasLoadedDepartments = true;
+}
+
+async function toggleDepartmentsLayer(shouldShow) {
+    const departmentsLayerButton = document.getElementById('departments-layer-button');
+
+    if (shouldShow && !hasLoadedDepartments) {
+        try {
+            await loadDepartmentsLayerData();
+        } catch (error) {
+            console.error('Erreur de chargement du calque départements:', error);
+            alert("Impossible de générer le calque des départements.");
+            areDepartmentsVisible = false;
+            localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
+            if (departmentsLayerButton) departmentsLayerButton.classList.remove('active');
+            return;
+        }
+    }
+
+    areDepartmentsVisible = shouldShow;
+
+    if (areDepartmentsVisible) {
+        departmentsLayerGroup.addTo(map);
+        departmentsLabelsLayer.addTo(map);
+    } else {
+        map.removeLayer(departmentsLayerGroup);
+        map.removeLayer(departmentsLabelsLayer);
+    }
+
+    localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, String(areDepartmentsVisible));
+    if (departmentsLayerButton) departmentsLayerButton.classList.toggle('active', areDepartmentsVisible);
+}
+
 const loadState = () => {
     const savedDisabled = localStorage.getItem('disabled_airports');
     if (savedDisabled) disabledAirports = new Set(JSON.parse(savedDisabled));
@@ -576,6 +852,41 @@ function drawUserToTargetRoute() {
     }
 }
 
+function updateNearestCommuneDisplay(lat, lon) {
+    const nearestDisplay = document.getElementById('nearest-commune-display');
+    if (!nearestDisplay) return;
+
+    const nearestCommune = findClosestCommune(lat, lon);
+    if (!nearestCommune) {
+        nearestDisplay.style.display = 'none';
+        nearestDisplay.innerHTML = '';
+        return;
+    }
+
+    nearestDisplay.style.display = 'block';
+    nearestDisplay.innerHTML = `📍 Plus proche: <b>${nearestCommune.nom_standard} (${nearestCommune.dep_code})</b>`;
+}
+
+function findClosestCommune(lat, lon, maxDistanceNm = null) {
+    if (!allCommunes || allCommunes.length === 0) return null;
+    let closestCommune = null;
+    let minDistance = Infinity;
+
+    for (const commune of allCommunes) {
+        const distance = calculateDistanceInNm(lat, lon, commune.latitude_mairie, commune.longitude_mairie);
+        if (distance < minDistance) {
+            minDistance = distance;
+            closestCommune = commune;
+        }
+    }
+
+    if (maxDistanceNm !== null && minDistance >= maxDistanceNm) {
+        return null;
+    }
+
+    return closestCommune;
+}
+
 function updateUserPosition(pos) {
     const { latitude, longitude } = pos.coords;
 
@@ -588,19 +899,20 @@ function updateUserPosition(pos) {
         userMarker.setLatLng([latitude, longitude]);
     }
 
+    updateNearestCommuneDisplay(latitude, longitude);
+
+    // Synchronise les calculs (dont GPS->Feu) dès qu'une position GPS est reçue.
+    if (currentCommune) {
+        updateCalculatorData();
+    }
+
     // On appelle toujours la fonction qui redessine la route
     drawUserToTargetRoute();
 }
 
 function findClosestCommuneName(lat, lon) {
-    if (!allCommunes || allCommunes.length === 0) return null;
-    let closestCommune = null; let minDistance = Infinity;
-    for (const commune of allCommunes) {
-        const distance = calculateDistanceInNm(lat, lon, commune.latitude_mairie, commune.longitude_mairie);
-        if (distance < minDistance) { minDistance = distance; closestCommune = commune; }
-    }
-    if (closestCommune && minDistance < 27) { return closestCommune.nom_standard; }
-    return null;
+    const closestCommune = findClosestCommune(lat, lon, 27);
+    return closestCommune ? closestCommune.nom_standard : null;
 }
 
 function toggleLftwRoute() {
@@ -663,12 +975,22 @@ function soundex(s) { if (!s) return ""; const a = s.toLowerCase().split(""), f 
 // =========================================================================
 function initDB() {
     return new Promise((resolve, reject) => {
-        const request = indexedDB.open('OfflineTilesDB', 1);
+        const request = indexedDB.open('OfflineTilesDB', 2);
         request.onupgradeneeded = event => {
             const dbInstance = event.target.result;
+            const transaction = event.target.transaction;
+
             if (!dbInstance.objectStoreNames.contains('tiles')) {
                 const store = dbInstance.createObjectStore('tiles', { keyPath: 'url' });
                 store.createIndex('packName', 'packName', { unique: false });
+            }
+
+            if (!dbInstance.objectStoreNames.contains('settings')) {
+                dbInstance.createObjectStore('settings', { keyPath: 'key' });
+            }
+
+            if (transaction && dbInstance.objectStoreNames.contains('settings')) {
+                transaction.objectStore('settings').put({ key: OFFLINE_TILES_ENABLED_KEY, value: DEFAULT_OFFLINE_TILES_ENABLED });
             }
         };
         request.onsuccess = event => {
@@ -681,6 +1003,70 @@ function initDB() {
             reject(event.target.error);
         };
     });
+}
+
+function getOfflineTilesEnabled() {
+    return new Promise((resolve) => {
+        if (!db) {
+            resolve(DEFAULT_OFFLINE_TILES_ENABLED);
+            return;
+        }
+
+        const transaction = db.transaction('settings', 'readonly');
+        const store = transaction.objectStore('settings');
+        const request = store.get(OFFLINE_TILES_ENABLED_KEY);
+
+        request.onsuccess = () => {
+            if (!request.result || typeof request.result.value !== 'boolean') {
+                resolve(DEFAULT_OFFLINE_TILES_ENABLED);
+                return;
+            }
+            resolve(request.result.value);
+        };
+        request.onerror = () => resolve(DEFAULT_OFFLINE_TILES_ENABLED);
+    });
+}
+
+function setOfflineTilesEnabled(enabled) {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction('settings', 'readwrite');
+        const store = transaction.objectStore('settings');
+        store.put({ key: OFFLINE_TILES_ENABLED_KEY, value: enabled });
+        transaction.oncomplete = () => {
+            notifyServiceWorkerOfflineTilesPreference(enabled);
+            resolve();
+        };
+        transaction.onerror = () => reject(transaction.error);
+    });
+}
+
+function notifyServiceWorkerOfflineTilesPreference(enabled) {
+    if (!('serviceWorker' in navigator)) return;
+    if (!navigator.serviceWorker.controller) return;
+    navigator.serviceWorker.controller.postMessage({
+        type: 'OFFLINE_TILES_ENABLED_CHANGED',
+        value: !!enabled
+    });
+}
+
+function updateOfflineStatus() {
+    const status = document.getElementById('offline-status');
+    const toggle = document.getElementById('offline-tiles-enabled-toggle');
+    if (!status || !toggle) return;
+
+    status.textContent = toggle.checked
+        ? 'Cartes téléchargées activées (prioritaires sur la carte en ligne).'
+        : 'Cartes téléchargées désactivées (utilisation de la carte en ligne).';
+}
+
+async function initializeOfflineTilePreference() {
+    const toggle = document.getElementById('offline-tiles-enabled-toggle');
+    if (!toggle) return;
+
+    const enabled = await getOfflineTilesEnabled();
+    toggle.checked = enabled;
+    notifyServiceWorkerOfflineTilesPreference(enabled);
+    updateOfflineStatus();
 }
 
 async function handleZipImport(file) {
@@ -710,11 +1096,36 @@ async function handleZipImport(file) {
 
     try {
         const zip = await JSZip.loadAsync(file);
-        const tileFiles = Object.values(zip.files).filter(f => !f.dir && f.name.match(/\d+\/\d+\/\d+\.(png|jpg|jpeg)$/i));
-        const totalFiles = tileFiles.length;
+        const allFiles = Object.values(zip.files).filter(f => !f.dir);
+        const tileCandidates = allFiles.map(fileEntry => {
+            const normalizedName = fileEntry.name.replace(/\\/g, '/');
+            const xyzMatch = normalizedName.match(/(?:^|\/)(\d+)\/(\d+)\/(\d+)\.(png|jpg|jpeg)$/i);
+            if (xyzMatch) {
+                return {
+                    fileEntry,
+                    tilePath: `${xyzMatch[1]}/${xyzMatch[2]}/${xyzMatch[3]}.${xyzMatch[4].toLowerCase()}`
+                };
+            }
+
+            const flatMatch = normalizedName.match(/(?:^|\/)(\d+)[-_](\d+)[-_](\d+)\.(png|jpg|jpeg)$/i);
+            if (flatMatch) {
+                return {
+                    fileEntry,
+                    tilePath: `${flatMatch[1]}/${flatMatch[2]}/${flatMatch[3]}.${flatMatch[4].toLowerCase()}`
+                };
+            }
+
+            return null;
+        }).filter(Boolean);
+
+        const totalFiles = tileCandidates.length;
+        const importedMaxZoom = tileCandidates.reduce((max, entry) => {
+            const z = Number.parseInt(entry.tilePath.split('/')[0], 10);
+            return Number.isFinite(z) ? Math.max(max, z) : max;
+        }, 0);
 
         if (totalFiles === 0) {
-            throw new Error("Aucune tuile valide trouvée dans le ZIP. La structure doit être /zoom/colonne/ligne.png");
+            throw new Error("Aucune tuile valide trouvée dans le ZIP. Formats acceptés : z/x/y.png (avec sous-dossiers possibles) ou z_x_y.png (z-y-x aussi accepté).");
         }
 
         statusMessage.textContent = `Préparation de ${totalFiles} tuiles pour l'importation...`;
@@ -722,12 +1133,12 @@ async function handleZipImport(file) {
         const batchSize = 100;
         let processedFiles = 0;
 
-        for (let i = 0; i < tileFiles.length; i += batchSize) {
-            const batchEntries = tileFiles.slice(i, i + batchSize);
-            const batch = await Promise.all(batchEntries.map(async tileFile => {
-                const blob = await tileFile.async('blob');
+        for (let i = 0; i < tileCandidates.length; i += batchSize) {
+            const batchEntries = tileCandidates.slice(i, i + batchSize);
+            const batch = await Promise.all(batchEntries.map(async ({ fileEntry, tilePath }) => {
+                const blob = await fileEntry.async('blob');
                 return {
-                    url: `https://a.tile.openstreetmap.org/${tileFile.name}`,
+                    url: `https://a.tile.openstreetmap.org/${tilePath}`,
                     tile: blob,
                     packName: packName
                 };
@@ -757,6 +1168,10 @@ async function handleZipImport(file) {
             installedPacks.push({ name: packName, date: new Date().toLocaleDateString() });
             localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
         }
+        const currentOfflineMax = Number.parseInt(localStorage.getItem(OFFLINE_TILES_MAX_ZOOM_KEY) || '', 10);
+        const nextOfflineMax = Number.isFinite(currentOfflineMax) ? Math.max(currentOfflineMax, importedMaxZoom) : importedMaxZoom;
+        localStorage.setItem(OFFLINE_TILES_MAX_ZOOM_KEY, String(nextOfflineMax));
+        await updateBaseTileNativeZoomFromAvailability({ forceScan: true });
         displayInstalledMaps();
 
     } catch (error) {
@@ -792,23 +1207,128 @@ window.deleteMapPack = async function(packName) {
         return;
     }
 
-    try {
-        const transaction = db.transaction('tiles', 'readwrite');
-        const store = transaction.objectStore('tiles');
-        const index = store.index('packName');
-        const request = index.openKeyCursor(IDBKeyRange.only(packName));
+    const withTimeout = (promise, timeoutMs, timeoutMessage) => new Promise((resolve, reject) => {
+        const timerId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
+        promise.then(
+            (value) => { clearTimeout(timerId); resolve(value); },
+            (error) => { clearTimeout(timerId); reject(error); }
+        );
+    });
 
-        let deletedCount = 0;
-        request.onsuccess = event => {
-            const cursor = event.target.result;
-            if (cursor) {
-                store.delete(cursor.primaryKey);
-                deletedCount++;
-                cursor.continue();
+    const collectPackKeysByIndex = (limit = 200) => new Promise((resolve, reject) => {
+        const keys = [];
+        const tx = db.transaction('tiles', 'readonly');
+        const store = tx.objectStore('tiles');
+        const index = store.index('packName');
+        const request = index.openCursor(IDBKeyRange.only(packName));
+
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor || keys.length >= limit) {
+                return;
             }
+            keys.push(cursor.primaryKey);
+            cursor.continue();
         };
 
-        await new Promise(resolve => transaction.oncomplete = resolve);
+        request.onerror = () => reject(request.error || new Error('Erreur lecture des clés pack (index)'));
+        tx.oncomplete = () => resolve(keys);
+        tx.onerror = () => reject(tx.error || new Error('Erreur transaction lecture indexedDB (index)'));
+        tx.onabort = () => reject(tx.error || new Error('Transaction lecture indexedDB annulée (index)'));
+    });
+
+    const collectPackKeysByScan = (limit = 100) => new Promise((resolve, reject) => {
+        const keys = [];
+        const tx = db.transaction('tiles', 'readonly');
+        const store = tx.objectStore('tiles');
+        const request = store.openCursor();
+
+        request.onsuccess = () => {
+            const cursor = request.result;
+            if (!cursor || keys.length >= limit) {
+                return;
+            }
+
+            const value = cursor.value || {};
+            if (value.packName === packName) {
+                keys.push(cursor.primaryKey);
+            }
+            cursor.continue();
+        };
+
+        request.onerror = () => reject(request.error || new Error('Erreur lecture des clés pack (scan)'));
+        tx.oncomplete = () => resolve(keys);
+        tx.onerror = () => reject(tx.error || new Error('Erreur transaction lecture indexedDB (scan)'));
+        tx.onabort = () => reject(tx.error || new Error('Transaction lecture indexedDB annulée (scan)'));
+    });
+
+    const deleteKeysBatch = (keys) => new Promise((resolve, reject) => {
+        if (!keys.length) {
+            resolve(0);
+            return;
+        }
+
+        let deletedCount = 0;
+        const tx = db.transaction('tiles', 'readwrite');
+        const store = tx.objectStore('tiles');
+
+        keys.forEach((key) => {
+            const delReq = store.delete(key);
+            delReq.onsuccess = () => { deletedCount += 1; };
+            delReq.onerror = () => reject(delReq.error || new Error('Erreur suppression clé indexedDB'));
+        });
+
+        tx.oncomplete = () => resolve(deletedCount);
+        tx.onerror = () => reject(tx.error || new Error('Erreur transaction suppression indexedDB'));
+        tx.onabort = () => reject(tx.error || new Error('Transaction suppression indexedDB annulée'));
+    });
+
+    const purgeByCollector = async (collector, initialBatchSize) => {
+        let totalDeleted = 0;
+        let batchSize = initialBatchSize;
+
+        while (true) {
+            const keys = await withTimeout(
+                collector(batchSize),
+                30000,
+                'Lecture des clés du pack trop longue'
+            );
+
+            if (keys.length === 0) {
+                break;
+            }
+
+            try {
+                totalDeleted += await withTimeout(
+                    deleteKeysBatch(keys),
+                    45000,
+                    'Suppression du lot indexedDB trop longue'
+                );
+
+                if (batchSize < initialBatchSize) {
+                    batchSize = Math.min(initialBatchSize, batchSize * 2);
+                }
+            } catch (deleteError) {
+                if (batchSize === 1) {
+                    throw deleteError;
+                }
+                batchSize = Math.max(1, Math.floor(batchSize / 2));
+                console.warn(`Suppression pack: réduction batch à ${batchSize} suite à une erreur indexedDB.`);
+            }
+        }
+
+        return totalDeleted;
+    };
+
+    try {
+        if (!db) {
+            await withTimeout(initDB(), 15000, 'Initialisation indexedDB trop longue');
+        }
+
+        let deletedCount = await purgeByCollector(collectPackKeysByIndex, 200);
+        if (deletedCount === 0) {
+            deletedCount = await purgeByCollector(collectPackKeysByScan, 100);
+        }
 
         alert(`${deletedCount} tuiles du pack "${packName}" ont été supprimées.`);
 
@@ -816,13 +1336,23 @@ window.deleteMapPack = async function(packName) {
         installedPacks = installedPacks.filter(p => p.name !== packName);
         localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
 
+        if ('caches' in window) {
+            const cacheNames = await caches.keys();
+            await Promise.all(cacheNames
+                .filter(name => name.startsWith('test-communes-tile-cache-'))
+                .map(name => caches.delete(name))
+            );
+        }
+
+        await updateBaseTileNativeZoomFromAvailability({ forceScan: true });
         displayInstalledMaps();
 
     } catch (error) {
-        alert(`Erreur lors de la suppression du pack : ${error.message}`);
-        console.error("Erreur de suppression:", error);
+        alert(`Erreur lors de la suppression du pack : ${error.message || error}`);
+        console.error('Erreur de suppression:', error);
     }
 }
+
 
 // =========================================================================
 // LOGIQUE DU CALCULATEUR DE MISSION
@@ -876,8 +1406,14 @@ function updateAndSortRotations(container, current, params) {
             if (canCalculateFuel) value = ((current.fuel - params.bingoPelic) / params.consoRotation) + plusOne;
         }
         if (type === 'cs') {
-            formulaString = `Heure sur Feu = ${formatTime(current.time) || 'N/A'}\n\nFormule : (Heure CS - Heure sur Feu) / Durée Rotation\n\nCalcul : (${formatTime(params.csFeuTime) || 'N/A'} - ${formatTime(current.time) || 'N/A'}) / ${params.rotationTime || 'N/A'} min`;
-            if (canCalculateTime && params.csFeuTime !== null) value = (params.csFeuTime - current.time) / params.rotationTime;
+            const canDropOnArrivalBeforeCs = canCalculateTime && params.csFeuTime !== null && current.time < params.csFeuTime;
+            const plusOne = canDropOnArrivalBeforeCs ? 1 : 0;
+            formulaString = `Heure sur Feu = ${formatTime(current.time) || 'N/A'}
+
+Formule : ((Heure CS - Heure sur Feu) / Durée Rotation) [+1 si arrivée sur feu avant CS]
+
+Calcul : ((${formatTime(params.csFeuTime) || 'N/A'} - ${formatTime(current.time) || 'N/A'}) / ${params.rotationTime || 'N/A'} min) + ${plusOne}`;
+            if (canCalculateTime && params.csFeuTime !== null) value = ((params.csFeuTime - current.time) / params.rotationTime) + plusOne;
         }
         if (type === 'tmd') {
             formulaString = `Heure sur Feu = ${formatTime(current.time) || 'N/A'}\n\nFormule : (Heure TMD - Heure sur Feu) / Durée Rotation\n\nCalcul : (${formatTime(params.tmdTime) || 'N/A'} - ${formatTime(current.time) || 'N/A'}) / ${params.rotationTime || 'N/A'} min`;
@@ -1073,6 +1609,10 @@ function updateSuiviTab() {
         document.getElementById('suivi-bingo-base').innerHTML = '-- kg';
         document.getElementById('suivi-bingo-pelic').innerHTML = '-- kg';
         document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
+        document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
+        document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
+        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
+        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
         suiviConsoInput.value = '';
         suiviDureeInput.value = '';
         return;
@@ -1099,6 +1639,10 @@ function updateSuiviTab() {
 
     if (!lastFilledRow) {
         document.getElementById('suivi-fuel-actuel').textContent = '-- kg';
+        document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
+        document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
+        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
+        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
         document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
     } else {
         const currentFuel = parseNumeric(lastFilledRow.querySelector('.numeric-input-wrapper .display-input').value);
@@ -1111,8 +1655,15 @@ function updateSuiviTab() {
 
         const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
         const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-        const transitTimeRetourBase = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
-        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: currentTime }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: transitTimeRetourBase });
+        const transitTimeVersFeu = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
+        const heureSurFeu = currentTime !== null ? currentTime + transitTimeVersFeu : null;
+        document.getElementById('suivi-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
+        document.getElementById('suivi-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
+        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
+        if (suiviHeureHelpIcon) {
+            suiviHeureHelpIcon.onclick = () => alert(`Formule : Heure bloc arrivée + Durée transit base->Feu\n\nCalcul : ${formatTime(currentTime) || 'N/A'} + ${formatTime(transitTimeVersFeu) || 'N/A'}`);
+        }
+        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: heureSurFeu }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: transitTimeVersFeu });
     }
 }
 
@@ -1129,7 +1680,9 @@ function updateDeroutementTab() {
         resultsContainer.querySelectorAll('.value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
         document.getElementById('derout-fuel-mini-base').textContent = '-- kg';
         document.getElementById('derout-fuel-mini-pelic').textContent = '-- kg';
-        setHelp('derout-fuel-mini-base-help'); setHelp('derout-fuel-mini-pelic-help');
+        document.getElementById('derout-heure-sur-feu').textContent = '--:--';
+        document.getElementById('derout-cs-sur-feu').textContent = '--:--';
+        setHelp('derout-fuel-mini-base-help'); setHelp('derout-fuel-mini-pelic-help'); setHelp('derout-heure-sur-feu-help');
         return;
     }
 
@@ -1143,28 +1696,40 @@ function updateDeroutementTab() {
     const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
     const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
     const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-    const transitTimeFromGps = Math.round(calculateTransitTime(CALCULATOR_DATA.distGpsFeu));
-    const consoTransitFromGps = calculateFuelToGo(CALCULATOR_DATA.distGpsFeu);
+    const hasGpsPosition = !!(userMarker && userMarker.getLatLng());
+    const distGpsFeu = hasGpsPosition ? CALCULATOR_DATA.distGpsFeu : null;
+    const transitTimeFromGps = distGpsFeu !== null ? Math.round(calculateTransitTime(distGpsFeu)) : null;
+    const consoTransitFromGps = distGpsFeu !== null ? calculateFuelToGo(distGpsFeu) : null;
 
     const bingoBaseDisplay = document.getElementById('derout-bingo-base');
     if (bingoBase === 700) { bingoBaseDisplay.innerHTML = '-- kg'; } else { bingoBaseDisplay.innerHTML = `${CALCULATOR_DATA.distBaseFeu} Nm /&nbsp;<b>${bingoBase} kg</b>`; }
     const bingoPelicDisplay = document.getElementById('derout-bingo-pelic');
     if (bingoPelic === 700 || !selectedPelicanOACI) { bingoPelicDisplay.innerHTML = '-- kg'; } else { bingoPelicDisplay.innerHTML = `${selectedPelicanOACI} / ${CALCULATOR_DATA.distPelicFeu} Nm /&nbsp;<b>${bingoPelic} kg</b>`; }
 
-    const fuelMiniBase = consoTransitFromGps + 250 + bingoBase;
-    const fuelMiniPelic = consoTransitFromGps + 250 + bingoPelic;
-    document.getElementById('derout-fuel-mini-base').textContent = (fuelMiniBase === (950 + consoTransitFromGps)) ? '-- kg' : `${fuelMiniBase} kg`;
-    document.getElementById('derout-fuel-mini-pelic').textContent = (fuelMiniPelic === (950 + consoTransitFromGps)) ? '-- kg' : `${fuelMiniPelic} kg`;
-    setHelp('derout-fuel-mini-base-help', `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Base\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoBase}`);
-    setHelp('derout-fuel-mini-pelic-help', `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Pélic.\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoPelic}`);
+    const fuelMiniBase = consoTransitFromGps !== null ? consoTransitFromGps + 250 + bingoBase : null;
+    const fuelMiniPelic = consoTransitFromGps !== null ? consoTransitFromGps + 250 + bingoPelic : null;
+    document.getElementById('derout-fuel-mini-base').textContent = fuelMiniBase !== null ? `${fuelMiniBase} kg` : '-- kg';
+    document.getElementById('derout-fuel-mini-pelic').textContent = fuelMiniPelic !== null ? `${fuelMiniPelic} kg` : '-- kg';
+    setHelp('derout-fuel-mini-base-help', consoTransitFromGps !== null
+        ? `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Base\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoBase}`
+        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
+    setHelp('derout-fuel-mini-pelic-help', consoTransitFromGps !== null
+        ? `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Pélic.\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoPelic}`
+        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
 
-    if (fuelActuel === null || heureActuelle === null) {
+    const heureSurFeu = (heureActuelle !== null && transitTimeFromGps !== null) ? heureActuelle + transitTimeFromGps : null;
+    document.getElementById('derout-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
+    document.getElementById('derout-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
+    setHelp('derout-heure-sur-feu-help', transitTimeFromGps !== null
+        ? `Formule : Heure actuelle + Durée transit GPS->Feu\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'}`
+        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
+
+    if (fuelActuel === null || heureActuelle === null || consoTransitFromGps === null || transitTimeFromGps === null) {
         resultsContainer.querySelectorAll('.value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
         resultsContainer.querySelectorAll('.formula-help-icon').forEach(icon => icon.onclick = () => alert("Données insuffisantes pour le calcul."));
         return;
     }
 
-    const heureSurFeu = heureActuelle + transitTimeFromGps;
     const fuelSurFeu = fuelActuel - consoTransitFromGps;
 
     updateAndSortRotations(
@@ -1180,15 +1745,20 @@ function initializeCalculator() {
     const csLftwDisplay = document.getElementById('cs-lftw-display');
     const refreshGpsBtn = document.getElementById('refresh-gps-btn');
     refreshGpsBtn.addEventListener('click', () => {
-        // On vérifie simplement si une position GPS est déjà connue via le marqueur sur la carte
-        if (userMarker && userMarker.getLatLng()) {
-            // Si oui, on lance directement le recalcul des données
-            updateCalculatorData();
-            masterRecalculate();
-        } else {
-            // Si aucune position n'a jamais été reçue, on prévient l'utilisateur
-            alert("Aucune position GPS n'est disponible pour le rafraîchissement.");
+        if (!navigator.geolocation) {
+            alert("La géolocalisation n'est pas supportée par votre navigateur.");
+            return;
         }
+
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                updateUserPosition(pos);
+            },
+            () => {
+                alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
+            },
+            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
+        );
     });
 
     function updateLftwSunset() {
