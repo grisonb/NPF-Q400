@@ -6,34 +6,43 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>Carte de Navigation</title>
     <link rel="stylesheet" href="leaflet.css">
-    <link rel="stylesheet" href="style.css?v=v2026.2">
-    <link rel="manifest" href="manifest.json?v=v2026.2">
+    <link rel="stylesheet" href="style.css">
+    <link rel="manifest" href="manifest.json">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
     <script>
-        const APP_VERSION = 'v2026.2';
-        window.APP_VERSION = APP_VERSION;
-
-        const VERSION_STORAGE_KEY = 'pelicAppVersion';
-        const previousVersion = localStorage.getItem(VERSION_STORAGE_KEY);
-        localStorage.setItem(VERSION_STORAGE_KEY, APP_VERSION);
-
-        if (previousVersion !== APP_VERSION) {
-            const resetPromises = [];
-            if ('caches' in window) {
-                resetPromises.push(caches.keys().then(keys => Promise.all(keys.map(key => caches.delete(key)))));
-            }
-            if ('serviceWorker' in navigator) {
-                resetPromises.push(navigator.serviceWorker.getRegistrations().then(registrations => Promise.all(registrations.map(reg => reg.unregister()))));
-            }
-            Promise.allSettled(resetPromises).finally(() => {
-                window.location.replace(`./index.html?version=${APP_VERSION}&refresh=${Date.now()}`);
-            });
-        }
+        const APP_VERSION = 'v8.82';
 
         if ('serviceWorker' in navigator) {
             window.addEventListener('load', async () => {
                 let isRefreshing = false;
+
+                try {
+                    const previousVersion = localStorage.getItem(APP_VERSION_STORAGE_KEY);
+                    const alreadyRefreshed = sessionStorage.getItem(APP_VERSION_SESSION_KEY) === APP_VERSION;
+                    if (previousVersion !== APP_VERSION && !alreadyRefreshed) {
+                        localStorage.setItem(APP_VERSION_STORAGE_KEY, APP_VERSION);
+                        localStorage.setItem('appVersionReloadPending', '1');
+                        sessionStorage.setItem(APP_VERSION_SESSION_KEY, APP_VERSION);
+
+                        const registrations = await navigator.serviceWorker.getRegistrations();
+                        await Promise.all(registrations.map((reg) => reg.unregister()));
+
+                        if ('caches' in window) {
+                            const cacheKeys = await caches.keys();
+                            await Promise.all(cacheKeys.map((key) => caches.delete(key)));
+                        }
+
+                        window.location.reload();
+                        return;
+                    }
+
+                    if (localStorage.getItem('appVersionReloadPending') === '1') {
+                        localStorage.removeItem('appVersionReloadPending');
+                    }
+                } catch (e) {
+                    console.log('Version refresh warning:', e);
+                }
 
                 navigator.serviceWorker.addEventListener('controllerchange', () => {
                     if (isRefreshing) return;
@@ -42,7 +51,10 @@
                 });
 
                 try {
-                    const reg = await navigator.serviceWorker.register(`./sw.js?version=${APP_VERSION}`, { updateViaCache: 'none' });
+                    // Important: keep a stable URL for the SW script.
+                    // Some environments fail SW updates with a "script load failed"
+                    // error when cache-busting query params are used on sw.js.
+                    const reg = await navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' });
                     console.log('Service Worker enregistré:', reg);
 
                     const requestSkipWaiting = (registration) => {
@@ -76,6 +88,7 @@
         <button id="toggle-search-button" title="Rechercher une commune">🏙️</button>
         <button id="calculator-button" title="Ouvrir le calculateur de mission">✈️</button>
         <button id="gps-feu-button" title="Créer un feu à ma position">🎯</button>
+        <button id="chat-toggle-button" title="Ouvrir/Fermer le chat équipe">💬<span id="chat-alert-badge" style="display:none;">0</span><span id="chat-offline-badge" aria-hidden="true">✕</span></button>
     </div>
       <div id="bingo-map-display" style="display: none;">
         <span id="map-bingo-lftw"></span>
@@ -83,6 +96,39 @@
     </div>
     <div id="commune-info-display"></div>
     <div id="nearest-commune-display" style="display: none;"></div>
+    <div id="team-chat-panel" style="display: none;">
+        <div class="chat-header">
+            <strong>Chat équipe</strong>
+            <div class="chat-header-actions">
+                <span id="chat-connection-state">Hors ligne</span>
+                <span id="chat-online-users">En ligne: --</span>
+                <button id="chat-clear-button" title="Supprimer les messages">🗑️</button>
+                <button id="chat-minimize-button" title="Réduire/Agrandir le chat">—</button>
+            </div>
+        </div>
+        <div class="chat-config-row">
+            <input type="text" id="chat-room-input" maxlength="32" placeholder="Canal (ex: GAAR-ALPHA)">
+            <input type="text" id="chat-user-input" maxlength="24" placeholder="Votre pseudo">
+            <button id="chat-connect-button">Connexion</button>
+        </div>
+        <div id="chat-messages"></div>
+        <div class="chat-send-row">
+            <input type="text" id="chat-message-input" maxlength="280" placeholder="Message...">
+            <button id="chat-send-button">Envoyer</button>
+        </div>
+    </div>
+
+    <div id="chat-clear-modal" class="chat-clear-modal" style="display: none;">
+        <div class="chat-clear-modal-content">
+            <h3>Suppression des messages</h3>
+            <p>Choisissez l’action à effectuer :</p>
+            <div class="chat-clear-modal-actions">
+                <button id="chat-clear-local-button" class="chat-clear-option">Supprimer localement</button>
+                <button id="chat-clear-channel-button" class="chat-clear-option chat-clear-option-danger">Local + canal</button>
+                <button id="chat-clear-cancel-button" class="chat-clear-option">Annuler</button>
+            </div>
+        </div>
+    </div>
     <div id="ui-overlay">
         <div id="status-message">Chargement des données...</div>
         <div id="search-section" style="display: none;">
@@ -103,7 +149,7 @@
                 <button id="lftw-route-button" class="toggle-button active" title="Afficher/Masquer la route vers la base">Route BASE (LFTW)</button>
                 <button id="gaar-mode-button" class="toggle-button" title="Afficher/Masquer les circuits GAAR">Circuits GAAR</button>
                 <button id="departments-layer-button" class="toggle-button" title="Afficher/Masquer les contours de départements">Départements</button>
-                <button id="offline-maps-button" class="toggle-button" title="Gérer les cartes hors-ligne">Cartes offline</button>
+                <button id="offline-maps-button" class="toggle-button" title="Gérer les cartes hors-ligne">Cartes</button>
             </div>
 
   
@@ -119,8 +165,9 @@
     </div>
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
-      <script src="jszip.min.js"></script>
-    <script src="script.js?v=v2026.2"></script>
+    <script src="jszip.min.js"></script>
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    <script src="script.js"></script>
     
     <div id="calculator-modal" style="display: none;">
         <div class="main-container">
@@ -253,6 +300,10 @@
                     <p>Importez un pack de tuiles au format .zip (formats reconnus : z/x/y.png, z_x_y.png ou z-x-y.png) pour l'utiliser hors-ligne.</p>
                     <label for="zip-importer-input" class="import-button">Importer un pack de tuiles (.zip)</label>
                     <input type="file" id="zip-importer-input" accept=".zip" style="display: none;">
+                    <label for="folder-importer-input" class="import-button import-button-secondary">Importer un dossier de tuiles</label>
+                    <input type="file" id="folder-importer-input" webkitdirectory directory multiple style="display: none;">
+                    <label for="tiles-importer-input" class="import-button import-button-secondary">Importer des fichiers tuiles (multi-sélection)</label>
+                    <input type="file" id="tiles-importer-input" accept=".png,.jpg,.jpeg,image/png,image/jpeg" multiple style="display: none;">
                 </div>
 
                 <div id="import-progress-section" style="display: none;">
@@ -265,11 +316,13 @@
                 <div class="installed-maps-section">
                     <h3>Packs installés</h3>
                     <div class="offline-toggle-row">
-                        <label>
-                            <input type="checkbox" id="offline-tiles-enabled-toggle" checked>
-                            Utiliser les cartes téléchargées (hors-ligne prioritaire)
-                        </label>
+                        <span>Type de carte :</span>
+                        <div class="map-source-buttons">
+                            <button type="button" id="map-source-online-btn" class="map-source-btn map-source-btn-online active">Online</button>
+                            <button type="button" id="map-source-offline-btn" class="map-source-btn map-source-btn-offline">Offline</button>
+                        </div>
                     </div>
+                    <button type="button" id="purge-inactive-packs-btn" class="danger-inline-btn">Vider le cache des packs désélectionnés</button>
                     <ul id="installed-maps-list">
                         <!-- Les packs installés seront listés ici par le JavaScript -->
                         <li class="no-maps-placeholder">Aucun pack de cartes installé.</li>
