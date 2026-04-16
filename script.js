@@ -1,2879 +1,1076 @@
-// =========================================================================
-// INITIALISATION DE L'APPLICATION
-// =========================================================================
-document.addEventListener('DOMContentLoaded', () => {
-    if (typeof L === 'undefined') { document.getElementById('status-message').textContent = "❌ ERREUR : leaflet.min.js non chargé."; return; }
-    initializeApp();
-});
+/***************************************************
+ * LIMITES HDV + SYNC PILOTES + SYNCS SÉPARÉES
+ *
+ * Onglets mois :
+ *   Janvier, Février, Mars, Avril, Mai, Juin,
+ *   Juillet, Août, Septembre, Octobre, Novembre, Décembre
+ *
+ * Onglet "Socle" :
+ *  - Doit être l’onglet ouvert à l’ouverture du fichier
+ *  - Ne doit JAMAIS être touché par les synchronisations
+ *
+ * Zone calendrier intouchable :
+ *   B1:AF2 (ligne 1-2, colonnes jours)
+ *
+ * HDV :
+ *  - Écrit dans le tableau "Limites Hdv" via détection par en-têtes :
+ *      "3j / 20h max", "7j / 35h max", "30j / 80h max"
+ *    (si tu changes "max" en rien, ça marche toujours car on détecte "3j"+"20", etc.)
+ *
+ * Synchros séparées (fiables) :
+ *  - Sync PILOTES (structure)
+ *  - Sync FORMAT (bordures/couleurs/polices)
+ *  - Sync LARGEURS/HAUTEURS
+ *  - Sync TITRES (textes) hors zone calendrier
+ *  - Sync TITRES HDV (3j/7j/30j)
+ ***************************************************/
 
-// =========================================================================
-// VARIABLES GLOBALES
-// =========================================================================
-let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, currentCommune = null, selectedPelicanOACI = null;
-let disabledAirports = new Set(), waterAirports = new Set();
-const MAGNETIC_DECLINATION = 1.0;
-let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
-let userToTargetLayer = null, lftwRouteLayer = null;
-let showLftwRoute = true;
-let departmentsLayerGroup = null;
-let departmentsLabelsLayer = null;
-let areDepartmentsVisible = false;
-let hasLoadedDepartments = false;
-const DEFAULT_BASE_OACI = 'LFTW';
-let selectedBaseOACI = DEFAULT_BASE_OACI;
-let gaarCircuits = [];
-let isGaarMode = false;
-let isDrawingMode = false;
-const manualCircuitColors = ['#ff00ff', '#00ffff', '#ff8c00', '#00ff00', '#ff1493'];
-let gaarLayer = null;
-let db; // Variable pour la connexion à la base de données IndexedDB
-const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
-const DEFAULT_OFFLINE_TILES_ENABLED = true;
-const MAP_SOURCE_MODE_KEY = 'mapSourceMode';
-const DEFAULT_MAP_SOURCE_MODE = 'online';
-const OFFLINE_ONLINE_FALLBACK_KEY = 'offlineOnlineFallback';
-const DEFAULT_OFFLINE_ONLINE_FALLBACK = true;
-const OFFLINE_TILES_MAX_ZOOM_KEY = 'offlineTilesMaxZoom';
-const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
-const COMMUNES_CACHE_KEY = 'communesDataCacheV1';
-const SHOW_DEPARTMENTS_LAYER_KEY = 'showDepartmentsLayer';
-const ONLINE_MAX_NATIVE_ZOOM = 18;
-const OFFLINE_FALLBACK_NATIVE_ZOOM = 14;
-const GLOBAL_MAX_ZOOM = 18;
-let baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
-let offlineTilesMode = DEFAULT_OFFLINE_TILES_ENABLED;
-let mapSourceMode = DEFAULT_MAP_SOURCE_MODE;
-let offlineOnlineFallbackMode = DEFAULT_OFFLINE_ONLINE_FALLBACK;
-let activeOfflinePacks = [];
-let isMapSourceSwitching = false;
-let isZipImportRunning = false;
-const CHAT_STORAGE_KEY = 'teamChatConfig';
-const CHAT_HISTORY_KEY = 'teamChatHistory';
-let chatClient = null;
-let chatTopic = null;
-let chatHistoryTopic = null;
-let chatPresenceTopic = null;
-let chatConnected = false;
-const CHAT_BROKER_URL = 'wss://broker.emqx.io:8084/mqtt';
+const CFG = {
+  SOCLE_SHEET: "Socle",
+  FIRST_ROW: 3,
 
-const pelicanAirports = [
-    { oaci: "LFLU", name: "Valence-Chabeuil", lat: 44.920, lon: 4.968 }, { oaci: "LFMU", name: "Béziers-Vias", lat: 43.323, lon: 3.354 }, { oaci: "LFJR", name: "Angers-Marcé", lat: 47.560, lon: -0.312 }, { oaci: "LFHO", name: "Aubenas-Ardèche Méridionale", lat: 44.545, lon: 4.385 }, { oaci: "LFLX", name: "Châteauroux-Déols", lat: 46.861, lon: 1.720 }, { oaci: "LFBM", name: "Mont-de-Marsan", lat: 43.894, lon: -0.509 }, { oaci: "LFBL", name: "Limoges-Bellegarde", lat: 45.862, lon: 1.180 }, { oaci: "LFAQ", name: "Albert-Bray", lat: 49.972, lon: 2.698 }, { oaci: "LFBP", name: "Pau-Pyrénées", lat: 43.380, lon: -0.418 }, { oaci: "LFTH", name: "Toulon-Hyères", lat: 43.097, lon: 6.146 }, { oaci: "LFSG", name: "Épinal-Mirecourt", lat: 48.325, lon: 6.068 }, { oaci: "LFKC", name: "Calvi-Sainte-Catherine", lat: 42.530, lon: 8.793 }, { oaci: "LFMD", name: "Cannes-Mandelieu", lat: 43.542, lon: 6.956 }, { oaci: "LFKB", name: "Bastia-Poretta", lat: 42.552, lon: 9.483 }, { oaci: "LFMH", name: "Saint-Étienne-Bouthéon", lat: 45.541, lon: 4.296 }, { oaci: "LFKF", name: "Figari-Sud-Corse", lat: 41.500, lon: 9.097 }, { oaci: "LFCC", name: "Cahors-Lalbenque", lat: 44.351, lon: 1.475 }, { oaci: "LFML", name: "Marseille-Provence", lat: 43.436, lon: 5.215 }, { oaci: "LFKJ", name: "Ajaccio-Napoléon-Bonaparte", lat: 41.923, lon: 8.802 }, { oaci: "LFMK", name: "Carcassonne-Salvaza", lat: 43.215, lon: 2.306 }, { oaci: "LFRV", name: "Vannes-Meucon", lat: 47.720, lon: -2.721 }, { oaci: "LFTW", name: "Nîmes-Garons", lat: 43.757, lon: 4.416 }, { oaci: "LFMP", name: "Perpignan-Rivesaltes", lat: 42.740, lon: 2.870 }, { oaci: "LFBD", name: "Bordeaux-Mérignac", lat: 44.828, lon: -0.691 }
-];
+  // Grille heures (jours) : B..AF
+  GRID_COL_START: 2,        // B
+  GRID_COL_COUNT: 31,       // B..AF
+  GRID_COL_END: 2 + 31 - 1, // AF = 32
 
-const otherAirports = [
-    { oaci: "LFBC", name: "Cazaux", lat: 44.534, lon: -1.155 }, { oaci: "LFBF", name: "Toulouse-Francazal", lat: 43.546, lon: 1.365 }, { oaci: "LFBG", name: "Cognac-Châteaubernard", lat: 45.660, lon: -0.354 }, { oaci: "LFBI", name: "Poitiers-Biard", lat: 46.587, lon: 0.309 }, { oaci: "LFBK", name: "Saint-Brieuc-Armor", lat: 48.538, lon: -2.852 }, { oaci: "LFBO", name: "Toulouse-Blagnac", lat: 43.635, lon: 1.363 }, { oaci: "LFBS", name: "Chambéry-Savoie", lat: 45.640, lon: 5.881 }, { oaci: "LFBT", name: "Tarbes-Lourdes-Pyrénées", lat: 43.185, lon: -0.003 }, { oaci: "LFBU", name: "Angoulême-Cognac", lat: 45.729, lon: 0.220 }, { oaci: "LFBV", name: "Brive-Souillac", lat: 45.040, lon: 1.484 }, { oaci: "LFCU", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFLA", name: "Auxerre-Branches", lat: 47.848, lon: 3.497 }, { oaci: "LFLC", name: "Clermont-Ferrand-Auvergne", lat: 45.786, lon: 3.169 }, { oaci: "LFLD", name: "Bourges", lat: 47.059, lon: 2.370 }, { oaci: "LFLL", name: "Lyon-Saint Exupéry", lat: 45.725, lon: 5.081 }, { oaci: "LFLN", name: "Saint-Yan", lat: 46.409, lon: 4.013 }, { oaci: "LFLS", name: "Grenoble-Isère", lat: 45.363, lon: 5.331 }, { oaci: "LFLV", name: "Vichy-Charmeil", lat: 46.167, lon: 3.403 }, { oaci: "LFLW", name: "Aurillac", lat: 44.887, lon: 2.418 }, { oaci: "LFLY", name: "Lyon-Bron", lat: 45.729, lon: 4.945 }, { oaci: "LFLZ", name: "Le Puy-Loudes", lat: 45.079, lon: 3.762 }, { oaci: "LFMC", name: "Le Luc-Le Cannet", lat: 43.385, lon: 6.368 }, { oaci: "LFMI", name: "Istres-Le Tubé", lat: 43.524, lon: 4.944 }, { oaci: "LFMN", name: "Nice-Côte d'Azur", lat: 43.665, lon: 7.215 }, { oaci: "LFMQ", name: "Le Castellet", lat: 43.253, lon: 5.786 }, { oaci: "LFMV", name: "Avignon-Provence", lat: 43.906, lon: 4.902 }, { oaci: "LFMY", name: "Salon-de-Provence", lat: 43.606, lon: 5.110 }, { oaci: "LFOA", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFOB", name: "Paris-Le Bourget", lat: 48.969, lon: 2.441 }, { oaci: "LFOC", name: "Châteaudun", lat: 48.058, lon: 1.378 }, { oaci: "LFOE", name: "Évreux-Fauville", lat: 49.028, lon: 1.218 }, { oaci: "LFOK", name: "Châlons-Vatry", lat: 48.776, lon: 4.185 }, { oaci: "LFOJ", name: "Orléans-Bricy", lat: 47.989, lon: 1.758 }, { oaci: "LFOP", name: "Rouen-Vallée de Seine", lat: 49.385, lon: 1.182 }, { oaci: "LFOQ", name: "Blois-Le Breuil", lat: 47.678, lon: 1.217 }, { oaci: "LFOR", name: "Chartres-Métropole", lat: 48.455, lon: 1.530 }, { oaci: "LFOT", name: "Tours-Val de Loire", lat: 47.432, lon: 0.722 }, { oaci: "LFOU", name: "Cholet-Le Pontreau", lat: 47.081, lon: -0.871 }, { oaci: "LFOV", name: "Laval-Entrammes", lat: 48.033, lon: -0.749 }, { oaci: "LFPB", name: "Paris-Le Bourget", lat: 48.969, lon: 2.441 }, { oaci: "LFPC", name: "Creil", lat: 49.253, lon: 2.520 }, { oaci: "LFPG", name: "Paris-Charles-de-Gaulle", lat: 49.009, lon: 2.547 }, { oaci: "LFPO", name: "Paris-Orly", lat: 48.723, lon: 2.379 }, { oaci: "LFPV", name: "Villacoublay-Vélizy", lat: 48.773, lon: 2.203 }, { oaci: "LFRB", name: "Brest-Bretagne", lat: 48.447, lon: -4.418 }, { oaci: "LFRC", name: "Cherbourg-Manche", lat: 49.650, lon: -1.478 }, { oaci: "LFRD", name: "Dinard-Pleurtuit-Saint-Malo", lat: 48.587, lon: -2.080 }, { oaci: "LFRE", name: "La Baule-Escoublac", lat: 47.289, lon: -2.348 }, { oaci: "LFRF", name: "Granville-Mont-Saint-Michel", lat: 48.887, lon: -1.564 }, { oaci: "LFRG", name: "Deauville-Normandie", lat: 49.365, lon: 0.154 }, { oaci: "LFRH", name: "Lorient-Bretagne-Sud", lat: 47.760, lon: -3.440 }, { oaci: "LFRI", name: "La Roche-sur-Yon-Les Ajoncs", lat: 46.702, lon: -1.381 }, { oaci: "LFRJ", name: "Landivisiau", lat: 48.527, lon: -4.156 }, { oaci: "LFRK", name: "Caen-Carpiquet", lat: 49.173, lon: -0.450 }, { oaci: "LFRL", name: "Lanvéoc-Poulmic", lat: 48.278, lon: -4.437 }, { oaci: "LFRM", name: "Le Mans-Arnage", lat: 47.949, lon: 0.203 }, { oaci: "LFRN", name: "Rennes-Saint-Jacques", lat: 48.070, lon: -1.732 }, { oaci: "LFRO", name: "Lannion-Côte de Granit Rose", lat: 48.755, lon: -3.472 }, { oaci: "LFRQ", name: "Quimper-Pluguffan", lat: 47.975, lon: -4.167 }, { oaci: "LFRS", name: "Nantes-Atlantique", lat: 47.153, lon: -1.607 }, { oaci: "LFRT", name: "Saint-Nazaire-Montoir", lat: 47.312, lon: -2.152 }, { oaci: "LFRU", name: "Morlaix-Ploujean", lat: 48.604, lon: -3.818 }, { oaci: "LFSD", name: "Dijon-Longvic", lat: 47.268, lon: 5.088 }, { oaci: "LFSF", name: "Metz-Nancy-Lorraine", lat: 48.981, lon: 6.251 }, { oaci: "LFSH", name: "Haguenau", lat: 48.790, lon: 7.820 }, { oaci: "LFSJ", name: "Dole-Tavaux", lat: 47.039, lon: 5.428 }, { oaci: "LFSK", name: "Colmar-Houssen", lat: 48.110, lon: 7.359 }, { oaci: "LFSO", name: "Nancy-Ochey", lat: 48.577, lon: 5.955 }, { oaci: "LFSQ", name: "Luxeuil-Saint-Sauveur", lat: 47.779, lon: 6.353 }, { oaci: "LFSR", name: "Reims-Prunay", lat: 49.207, lon: 4.148 }, { oaci: "LFST", name: "Strasbourg-Entzheim", lat: 48.542, lon: 7.628 }, { oaci: "LFSX", name: "Montbéliard-Courcelles", lat: 47.487, lon: 6.852 }, { oaci: "LFYR", name: "Romorantin-Pruniers", lat: 47.352, lon: 1.670 }, { oaci: "LFYD", name: "Dinard", lat: 48.587, lon: -2.080 }, { oaci: "LFXI", name: "Reims-Champagne", lat: 49.308, lon: 4.045 }, { oaci: "LFYL", name: "Lille-Lesquin", lat: 50.563, lon: 3.086 }, { oaci: "LFXM", name: "Melun-Villaroche", lat: 48.608, lon: 2.671 }, { oaci: "LFXO", name: "Beauvais-Tillé", lat: 49.454, lon: 2.112 }, { oaci: "LFXQ", name: "Saint-Omer-Wizernes", lat: 50.725, lon: 2.220 }, { oaci: "LFKS", name: "Solenzara", lat: 41.924, lon: 9.405 }
-];
+  PILOT_COL: 1, // A
 
-// =========================================================================
-// FONCTIONS UTILITAIRES
-// =========================================================================
-const toRad = deg => deg * Math.PI / 180, toDeg = rad => rad * 180 / Math.PI;
-const simplifyString = str => typeof str !== 'string' ? '' : str.toLowerCase().replace(/\bst\b/g, 'saint').normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, ' ').trim().replace(/\s+/g, ' ');
-const calculateDistanceInNm = (lat1, lon1, lat2, lon2) => { const R = 6371, dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1), a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2), c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); return (R * c) / 1.852; };
-const calculateBearing = (lat1, lon1, lat2, lon2) => { const lat1Rad = toRad(lat1), lon1Rad = toRad(lon1), lat2Rad = toRad(lat2), lon2Rad = toRad(lon2), dLon = lon2Rad - lon1Rad, y = Math.sin(dLon) * Math.cos(lat2Rad), x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon); let bearingRad = Math.atan2(y, x), bearingDeg = toDeg(bearingRad); return (bearingDeg + 360) % 360; };
-const convertToDMM = (deg, type) => { if (deg === null || isNaN(deg)) return 'N/A'; const absDeg = Math.abs(deg), degrees = Math.floor(absDeg), minutesTotal = (absDeg - degrees) * 60, minutesFormatted = minutesTotal.toFixed(2).padStart(5, '0'); let direction = type === 'lat' ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W'); return `${degrees}° ${minutesFormatted}' ${direction}`; };
-const levenshteinDistance = (a, b) => { const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null)); for (let i = 0; i <= a.length; i += 1) matrix[0][i] = i; for (let j = 0; j <= b.length; j += 1) matrix[j][0] = j; for (let j = 1; j <= b.length; j += 1) for (let i = 1; i <= a.length; i += 1) { const indicator = a[i - 1] === b[j - 1] ? 0 : 1; matrix[j][i] = Math.min(matrix[j][i - 1] + 1, matrix[j - 1][i] + 1, matrix[j - 1][i - 1] + indicator); } return matrix[b.length][a.length]; };
-const calculateDestinationPoint = (lat, lon, bearing, distanceNm) => {
-    const R = 3440.065; // Rayon de la Terre en milles nautiques
-    const latRad = toRad(lat);
-    const lonRad = toRad(lon);
-    const bearingRad = toRad(bearing);
-    const distRad = distanceNm / R;
+  // Zone calendrier intouchable
+  CALENDAR_A1: "B1:AF2",
 
-    const destLatRad = Math.asin(Math.sin(latRad) * Math.cos(distRad) + Math.cos(latRad) * Math.sin(distRad) * Math.cos(bearingRad));
-    let destLonRad = lonRad + Math.atan2(Math.sin(bearingRad) * Math.sin(distRad) * Math.cos(latRad), Math.cos(distRad) - Math.sin(latRad) * Math.sin(destLatRad));
+  TEMPLATE_MAX_ROWS: 250,
+  TEMPLATE_MAX_COLS: 0,
 
-    return [toDeg(destLatRad), toDeg(destLonRad)];
+  LIMITS: {
+    D3:  { max: 20, orangeAt: 12, redAt: 16 },
+    D7:  { max: 35, orangeAt: 19, redAt: 27 },
+    D30: { max: 80, orangeAt: 64, redAt: 72 }
+  },
+
+  STYLE: {
+    ORANGE_BG: "#ff9900",
+    RED_BG: "#ff0000",
+    WHITE_BG: "#ffffff",
+    FONT_WHITE: "#ffffff",
+    FONT_BLACK: "#000000",
+    FONT_FAMILY: "Comfortaa",
+    WEIGHT_BOLD: "bold",
+    WEIGHT_NORMAL: "normal"
+  },
+
+  BTN: {
+  EntOPS:     "#ff9900",
+  FeuGAAR:    "#ff3333",
+  GAAR:       "#f66a6a",     // ✅ rosée (sans alpha)
+  MiFrance:   "#00ccff",
+  MiEtranger: "#4a86e8",
+  EntNAV:     "#ccff00",
+  EntVDN:     "#ff33ff",
+  VolTech:    "#cccccc"
+},
+
+
+  TEMPLATE_TIME_BUDGET_MS: 5.2 * 60 * 1000
 };
 
-function computeConvexHull(latLngPoints) {
-    const uniquePoints = new Map();
-    latLngPoints.forEach(([lat, lon]) => {
-        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
-        const key = `${lat.toFixed(5)},${lon.toFixed(5)}`;
-        if (!uniquePoints.has(key)) uniquePoints.set(key, [lat, lon]);
-    });
+/* =========================
+   MENUS + OUVERTURE (Socle)
+   ========================= */
+function onOpen() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
 
-    const points = Array.from(uniquePoints.values());
-    if (points.length < 3) return points;
 
-    points.sort((a, b) => (a[1] - b[1]) || (a[0] - b[0])); // tri par longitude puis latitude
-    const cross = (o, a, b) => ((a[1] - o[1]) * (b[0] - o[0])) - ((a[0] - o[0]) * (b[1] - o[1]));
+  ui.createMenu("HDV")
+  .addItem("Recalculer Limites HDV", "updateHdvLimitsAllSheets")
+  .addSeparator()
+  .addItem("Synchroniser PILOTES (depuis Janvier)", "syncPilotsFromJanuary")
+  .addItem("Synchroniser BORDURES + LARGEURS/HAUTEURS", "syncTemplateBordersAndDimensionsFromJanuaryFast")
+  .addItem("Synchroniser COULEURS", "syncTemplateColorsFromJanuaryFast")
+  .addItem("Synchroniser TITRES (textes)", "syncTemplateTitlesFromJanuaryFast")
+  .addSeparator()
+  .addItem("Débloquer HDV (reset lock)", "resetHdvLock")
+  .addSeparator()
+  .addItem("TEST : Hook", "testHook")
+  .addToUi();
+}
+function onSelectionChange(e) {
+  try {
+    if (!e || !e.range) return;
+    const sh = e.range.getSheet();
+    const cell = e.range.getSheet().getActiveCell();
+const a1 = cell ? cell.getA1Notation() : e.range.getA1Notation();
 
-    const lower = [];
-    for (const p of points) {
-        while (lower.length >= 2 && cross(lower[lower.length - 2], lower[lower.length - 1], p) <= 0) {
-            lower.pop();
-        }
-        lower.push(p);
-    }
-
-    const upper = [];
-    for (let i = points.length - 1; i >= 0; i -= 1) {
-        const p = points[i];
-        while (upper.length >= 2 && cross(upper[upper.length - 2], upper[upper.length - 1], p) <= 0) {
-            upper.pop();
-        }
-        upper.push(p);
-    }
-
-    lower.pop();
-    upper.pop();
-    return lower.concat(upper);
+    const p = PropertiesService.getDocumentProperties();
+    p.setProperty("LAST_SEL_SHEET", sh.getName());
+    p.setProperty("LAST_SEL_A1", a1);
+    p.setProperty("LAST_SEL_TS", String(Date.now()));
+  } catch (err) {
+    // silence volontaire
+  }
 }
 
-// =========================================================================
-// LOGIQUE PRINCIPALE DE L'APPLICATION
-// =========================================================================
-async function initializeApp() {
-    const statusMessage = document.getElementById('status-message');
-    const searchSection = document.getElementById('search-section');
+function resetHdvLock() {
+  const props = PropertiesService.getDocumentProperties();
+  props.deleteProperty("HDV_LOCK");
+  props.deleteProperty("HDV_LOCK_TS");
+  SpreadsheetApp.getActive().toast("HDV_LOCK réinitialisé", "HDV", 3);
+}
+
+/* =========================
+   BOUTON MANUEL "Recalculer Limites Hdv"
+   ========================= */
+function btnRecalculerLimitesHdv() {
+  updateHdvLimitsAllSheets();
+}
+
+/* =========================
+   HDV : UPDATE (Menu)
+   ========================= */
+function updateHdvLimitsAllSheets() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const sh = ss.getActiveSheet();
+  if (!sh) return;
+
+  const mi = _getMonthIndexFromSheetName_(sh.getName());
+  if (mi === null) return;
+
+  _updateHdvForSheetAndPrev_(sh);
+}
+
+/* =========================
+   HDV : UPDATE (onglet donné + précédent)
+   + PROPAGATION ALERTE TRIGRAMMES SUR TOUS LES MOIS
+   ========================= */
+function _updateHdvForSheetAndPrev_(sh) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const mi = _getMonthIndexFromSheetName_(sh.getName());
+  if (mi === null) return;
+
+  const today = _stripTime_(new Date());
+
+  const sheets = [sh];
+  if (mi > 0) {
+    const prev = ss.getSheetByName(_monthNameFromIndex_(mi - 1));
+    if (prev) sheets.push(prev);
+  }
+
+  const index = _buildFlightsIndex_(sheets, today, 30);
+
+  sheets.forEach(s => _writeLimitsForSheet_(s, index, today));
+
+  _applyPilotAlertsAllMonthSheetsGlobal_(ss, today);
+}
+
+/* =========================
+   DISPATCHER UNIQUE onEdit(e)
+   - Socle => _onEditSocle_(e)
+   - Mois  => _onEditHdv_(e)
+   ========================= */
+function onEdit(e) {
+  try {
+    if (!e || !e.range) return;
+
+    const shName = e.range.getSheet().getName();
+    _logOnEdit_("onEdit déclenché", e);
+
+    // Nom SOCLE (via Config si dispo, sinon fallback "Socle")
+    const c = (typeof CFG_ === "function") ? CFG_() : {};
+    const socleName = (c && c.SOCLE_SHEET) ? c.SOCLE_SHEET : "Socle";
+
+    // 1) SOCLE
+    if (shName === socleName) {
+      _logOnEdit_("branche SOCLE", e);
+
+      if (typeof _onEditSocle_ === "function") {
+        _onEditSocle_(e);
+        _logOnEdit_("_onEditSocle_ OK", e);
+      } else {
+        _logOnEdit_("_onEditSocle_ introuvable", e);
+        SpreadsheetApp.getActive().toast("_onEditSocle_ introuvable (Socle.gs ?)", "SOCLE", 6);
+      }
+      return;
+    }
+
+    // 2) HDV
+    _logOnEdit_("branche HDV", e);
+    _onEditHdv_(e);
+
+  } catch (err) {
+    _logOnEdit_("Erreur onEdit global : " + err.message, e);
+  }
+}
+
+/* =========================
+   AUTO À CHAQUE SAISIE
+   - heures B..AF => HDV (onglet édité + précédent)
+   + FIX : si tu VIDES une cellule, on efface la couleur manuelle
+   ========================= */
+function _onEditHdv_(e) {
+  if (!e || !e.range) return;
+
+  const sh = e.range.getSheet();
+  const mi = _getMonthIndexFromSheetName_(sh.getName());
+  if (mi === null) return;
+
+  if (e.range.getRow() < CFG.FIRST_ROW) return;
+
+  const c1 = e.range.getColumn();
+  const c2 = c1 + e.range.getNumColumns() - 1;
+  if (c2 < CFG.GRID_COL_START || c1 > CFG.GRID_COL_END) return;
+
+  // ✅ 0) Si un bouton de coloration vient d’être cliqué,
+  // on colore la cellule éditée au moment où la valeur est enfin commit.
+  const pendingBg = _consumePendingBtnColor_();
+  if (pendingBg) {
     try {
-        loadState();
-    } catch (stateError) {
-        console.error('État local invalide, réinitialisation.', stateError);
-        localStorage.removeItem('disabled_airports');
-        localStorage.removeItem('water_airports');
-        localStorage.removeItem('selected_base_oaci');
-    }
-    const savedLftwState = localStorage.getItem('showLftwRoute');
-    showLftwRoute = savedLftwState === null ? true : (savedLftwState === 'true');
-    localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
-    const savedGaarJSON = localStorage.getItem('gaarCircuits');
-    if (savedGaarJSON) {
-        try {
-            const parsedGaar = JSON.parse(savedGaarJSON);
-            gaarCircuits = Array.isArray(parsedGaar) ? parsedGaar : [];
-        } catch (gaarError) {
-            console.error('Données GAAR invalides, réinitialisation.', gaarError);
-            gaarCircuits = [];
-            localStorage.removeItem('gaarCircuits');
+      // on ne fait ça que sur une cellule unique
+      if (e.range.getNumRows() === 1 && e.range.getNumColumns() === 1) {
+        const v = e.range.getValue();
+        if (v !== "" && v !== null) {
+          e.range.setBackground(pendingBg);
         }
+      }
+    } catch (err) {}
+  }
+
+  // 1) Si l'utilisateur efface des cellules => on supprime la mise en forme manuelle
+  _clearManualColorWhenEmpty_(e.range);
+
+  // 2) Recalcul HDV avec lock
+  const props = PropertiesService.getDocumentProperties();
+  const now = Date.now();
+  const lockVal = props.getProperty("HDV_LOCK");
+  const lockTs = Number(props.getProperty("HDV_LOCK_TS") || "0");
+
+  if (lockVal === "1" && lockTs && (now - lockTs) > 90 * 1000) {
+    props.deleteProperty("HDV_LOCK");
+    props.deleteProperty("HDV_LOCK_TS");
+  }
+  if (props.getProperty("HDV_LOCK") === "1") return;
+
+  const lock = LockService.getDocumentLock();
+  if (!lock.tryLock(2000)) return;
+
+  props.setProperty("HDV_LOCK", "1");
+  props.setProperty("HDV_LOCK_TS", String(now));
+
+  try {
+    _updateHdvForSheetAndPrev_(sh);
+  } finally {
+    props.deleteProperty("HDV_LOCK");
+    props.deleteProperty("HDV_LOCK_TS");
+    lock.releaseLock();
+  }
+}
+
+function _clearManualColorWhenEmpty_(range) {
+  const sheet = range.getSheet();
+
+  const r1 = range.getRow();
+  const c1 = range.getColumn();
+  const nr = range.getNumRows();
+  const nc = range.getNumColumns();
+
+  // travaille uniquement sur l'intersection avec B..AF
+  const left = Math.max(c1, CFG.GRID_COL_START);
+  const right = Math.min(c1 + nc - 1, CFG.GRID_COL_END);
+  if (right < left) return;
+
+  const width = right - left + 1;
+  const sub = sheet.getRange(r1, left, nr, width);
+
+  const vals = sub.getValues();
+  const bgs = sub.getBackgrounds();
+  const fcs = sub.getFontColors();
+  const fws = sub.getFontWeights();
+  const ffs = sub.getFontFamilies();
+
+  let changed = false;
+
+  for (let r = 0; r < nr; r++) {
+    for (let c = 0; c < width; c++) {
+      const v = vals[r][c];
+      const empty = (v === "" || v === null);
+      if (empty) {
+        if (bgs[r][c] !== CFG.STYLE.WHITE_BG) { bgs[r][c] = CFG.STYLE.WHITE_BG; changed = true; }
+        if (fcs[r][c] !== CFG.STYLE.FONT_BLACK) { fcs[r][c] = CFG.STYLE.FONT_BLACK; changed = true; }
+        if (fws[r][c] !== CFG.STYLE.WEIGHT_NORMAL) { fws[r][c] = CFG.STYLE.WEIGHT_NORMAL; changed = true; }
+        if (ffs[r][c] !== CFG.STYLE.FONT_FAMILY) { ffs[r][c] = CFG.STYLE.FONT_FAMILY; changed = true; }
+      }
     }
+  }
+
+  if (changed) {
+    sub.setBackgrounds(bgs);
+    sub.setFontColors(fcs);
+    sub.setFontWeights(fws);
+    sub.setFontFamilies(ffs);
+  }
+}
+
+/* =========================
+   LIMITES HDV : détection colonnes par en-têtes
+   ========================= */
+function findLimitesHdvColumns_(sheet) {
+  const lastCol = sheet.getLastColumn();
+  const maxRows = Math.min(50, sheet.getMaxRows());
+
+  for (let r = 1; r <= maxRows; r++) {
+    const row = sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0];
+    let c3 = null, c7 = null, c30 = null;
+
+    for (let i = 0; i < row.length; i++) {
+      const t = _normHeaderText_(row[i]);
+      if (!c3  && t.includes("3j")  && t.includes("20")) c3  = i + 1;
+      if (!c7  && t.includes("7j")  && t.includes("35")) c7  = i + 1;
+      if (!c30 && t.includes("30j") && t.includes("80")) c30 = i + 1;
+    }
+    if (c3 && c7 && c30) return { headerRow: r, col3: c3, col7: c7, col30: c30 };
+  }
+
+  // fallback (à ajuster si besoin)
+  return { headerRow: 2, col3: 41, col7: 42, col30: 43 };
+}
+
+/* =========================
+   LIMITES HDV : écriture + styles
+   ========================= */
+function _writeLimitsForSheet_(sh, index, today) {
+  const cols = findLimitesHdvColumns_(sh);
+  const FIRST_ROW = Math.max(CFG.FIRST_ROW, cols.headerRow + 1);
+
+  const lastRow = sh.getLastRow();
+  if (lastRow < FIRST_ROW) return;
+  const rows = lastRow - FIRST_ROW + 1;
+
+  const miSheet = _getMonthIndexFromSheetName_(sh.getName());
+  const miToday = today.getMonth();
+  const isCurrentMonthSheet = (miSheet === miToday);
+
+  const pilots = sh.getRange(FIRST_ROW, CFG.PILOT_COL, rows, 1).getValues();
+
+  const out3 = [], out7 = [], out30 = [];
+  const bg3 = [], fc3 = [], fw3 = [];
+  const bg7 = [], fc7 = [], fw7 = [];
+  const bg30 = [], fc30 = [], fw30 = [];
+
+  for (let i = 0; i < rows; i++) {
+    const code = (pilots[i][0] || "").toString().trim().toUpperCase();
+
+    if (!_isTrigram_(code)) {
+      out3.push([""]); out7.push([""]); out30.push([""]);
+      const n = _styleNormal_();
+      bg3.push([n.bg]);  fc3.push([n.fc]);  fw3.push([n.fw]);
+      bg7.push([n.bg]);  fc7.push([n.fc]);  fw7.push([n.fw]);
+      bg30.push([n.bg]); fc30.push([n.fc]); fw30.push([n.fw]);
+      continue;
+    }
+
+    const entries = index[code] || [];
+    const v3  = _round1_(_sumLastNDays_(entries, today, 3));
+    const v7  = _round1_(_sumLastNDays_(entries, today, 7));
+    const v30 = _round1_(_sumLastNDays_(entries, today, 30));
+
+    const s3  = _styleForLimit_(v3,  CFG.LIMITS.D3);
+    const s7  = _styleForLimit_(v7,  CFG.LIMITS.D7);
+    const s30 = _styleForLimit_(v30, CFG.LIMITS.D30);
+
+    if (isCurrentMonthSheet) {
+      out3.push([v3]); out7.push([v7]); out30.push([v30]);
+      bg3.push([s3.bg]);   fc3.push([s3.fc]);   fw3.push([s3.fw]);
+      bg7.push([s7.bg]);   fc7.push([s7.fc]);   fw7.push([s7.fw]);
+      bg30.push([s30.bg]); fc30.push([s30.fc]); fw30.push([s30.fw]);
+    } else {
+      out3.push([""]); out7.push([""]); out30.push([""]);
+      const n = _styleNormal_();
+      bg3.push([n.bg]);  fc3.push([n.fc]);  fw3.push([n.fw]);
+      bg7.push([n.bg]);  fc7.push([n.fc]);  fw7.push([n.fw]);
+      bg30.push([n.bg]); fc30.push([n.fc]); fw30.push([n.fw]);
+    }
+  }
+
+  sh.getRange(FIRST_ROW, cols.col3,  rows, 1).setValues(out3);
+  sh.getRange(FIRST_ROW, cols.col7,  rows, 1).setValues(out7);
+  sh.getRange(FIRST_ROW, cols.col30, rows, 1).setValues(out30);
+
+  _applyStyleColumn_(sh, FIRST_ROW, cols.col3,  rows, bg3,  fc3,  fw3);
+  _applyStyleColumn_(sh, FIRST_ROW, cols.col7,  rows, bg7,  fc7,  fw7);
+  _applyStyleColumn_(sh, FIRST_ROW, cols.col30, rows, bg30, fc30, fw30);
+}
+
+/* =========================
+   PROPAGATION ALERTE TRIGRAMMES SUR TOUS LES MOIS
+   ========================= */
+function _applyPilotAlertsAllMonthSheetsGlobal_(ss, today) {
+  const monthSheets = _getMonthSheets_(ss);
+  const indexAll = _buildFlightsIndex_(monthSheets, today, 30);
+  const styleMap = _computePilotAlertStyleMap_(indexAll, today);
+  monthSheets.forEach(sh => _applyPilotAlertStyleToOneSheet_(sh, styleMap));
+}
+
+function _computePilotAlertStyleMap_(index, today) {
+  const map = {};
+  for (const code in index) {
+    if (!Object.prototype.hasOwnProperty.call(index, code)) continue;
+    if (!_isTrigram_(code)) continue;
+
+    const entries = index[code] || [];
+    const v3  = _round1_(_sumLastNDays_(entries, today, 3));
+    const v7  = _round1_(_sumLastNDays_(entries, today, 7));
+    const v30 = _round1_(_sumLastNDays_(entries, today, 30));
+
+    const s3  = _styleForLimit_(v3,  CFG.LIMITS.D3);
+    const s7  = _styleForLimit_(v7,  CFG.LIMITS.D7);
+    const s30 = _styleForLimit_(v30, CFG.LIMITS.D30);
+    const sp  = _mergeWorstStyle_(s3, s7, s30);
+
+    map[code] = { bg: sp.bg, fc: sp.fc };
+  }
+  return map;
+}
+
+function _applyPilotAlertStyleToOneSheet_(sh, styleMap) {
+  const lastTriRow = _findLastTrigramRow_(sh);
+  if (lastTriRow < CFG.FIRST_ROW) return;
+
+  const rows = lastTriRow - CFG.FIRST_ROW + 1;
+
+  const trigCols = _findTrigramColumns_(sh, CFG.FIRST_ROW, rows, 45);
+  if (!trigCols.length) return;
+
+  trigCols.forEach(col => {
+    const rng = sh.getRange(CFG.FIRST_ROW, col, rows, 1);
+    const vals = rng.getValues();
+
+    const bgs = [];
+    const fcs = [];
+
+    for (let i = 0; i < rows; i++) {
+      const code = (vals[i][0] || "").toString().trim().toUpperCase();
+      if (_isTrigram_(code) && styleMap[code]) {
+        bgs.push([styleMap[code].bg]);
+        fcs.push([styleMap[code].fc]);
+      } else {
+        bgs.push([CFG.STYLE.WHITE_BG]);
+        fcs.push([CFG.STYLE.FONT_BLACK]);
+      }
+    }
+
+    rng.setBackgrounds(bgs);
+    rng.setFontColors(fcs);
+  });
+
+  // sécurité : si une autre colonne “cible” ne fait pas partie des trigCols, on la remet neutre
+  if (sh.getMaxColumns() >= 45 && trigCols.indexOf(45) === -1) {
+    sh.getRange(CFG.FIRST_ROW, 45, rows, 1)
+      .setBackground(CFG.STYLE.WHITE_BG)
+      .setFontColor(CFG.STYLE.FONT_BLACK);
+  }
+}
+
+/* =========================
+   INDEX DES VOLS (jours ligne 2)
+   ========================= */
+function _buildFlightsIndex_(sheets, today, daysWindow) {
+  const start = _stripTime_(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (daysWindow - 1)));
+  const idx = {};
+  const year = today.getFullYear();
+
+  sheets.forEach(sh => {
+    const mi = _getMonthIndexFromSheetName_(sh.getName());
+    if (mi === null) return;
+
+    const dayNums = sh.getRange(2, CFG.GRID_COL_START, 1, CFG.GRID_COL_COUNT).getValues()[0];
+
+    const last = sh.getLastRow();
+    if (last < CFG.FIRST_ROW) return;
+
+    const rows = last - CFG.FIRST_ROW + 1;
+
+    const pilots = sh.getRange(CFG.FIRST_ROW, CFG.PILOT_COL, rows, 1).getValues();
+    const grid = sh.getRange(CFG.FIRST_ROW, CFG.GRID_COL_START, rows, CFG.GRID_COL_COUNT).getValues();
+
+    for (let r = 0; r < rows; r++) {
+      const code = (pilots[r][0] || "").toString().trim().toUpperCase();
+      if (!_isTrigram_(code)) continue;
+
+      for (let c = 0; c < CFG.GRID_COL_COUNT; c++) {
+        const day = parseInt(dayNums[c], 10);
+        if (!day || day < 1 || day > 31) continue;
+
+        const dt = _stripTime_(new Date(year, mi, day));
+        if (dt < start || dt > today) continue;
+
+        const h = _toNumberHours_(grid[r][c]);
+        if (!h || h <= 0) continue;
+
+        if (!idx[code]) idx[code] = [];
+        idx[code].push({ d: dt, h: h });
+      }
+    }
+  });
+
+  return idx;
+}
+
+/* =========================
+   STYLES (cumuls)
+   ========================= */
+function _styleForLimit_(v, lim) {
+  const n = Number(v) || 0;
+  if (n >= lim.redAt) {
+    return { level: 2, bg: CFG.STYLE.RED_BG, fc: CFG.STYLE.FONT_WHITE, fw: CFG.STYLE.WEIGHT_BOLD };
+  }
+  if (n >= lim.orangeAt) {
+    return { level: 1, bg: CFG.STYLE.ORANGE_BG, fc: CFG.STYLE.FONT_WHITE, fw: CFG.STYLE.WEIGHT_BOLD };
+  }
+  return _styleNormal_();
+}
+function _styleNormal_() {
+  return { level: 0, bg: CFG.STYLE.WHITE_BG, fc: CFG.STYLE.FONT_BLACK, fw: CFG.STYLE.WEIGHT_NORMAL };
+}
+function _mergeWorstStyle_(a, b, c) {
+  let m = a;
+  if (b.level > m.level) m = b;
+  if (c.level > m.level) m = c;
+  return m;
+}
+function _applyStyleColumn_(sh, startRow, col, rows, bgs, fcs, fws) {
+  const g = sh.getRange(startRow, col, rows, 1);
+  g.setBackgrounds(bgs);
+  g.setFontColors(fcs);
+  g.setFontWeights(fws);
+}
+
+/* ============================================================
+   SYNC PILOTES (depuis Janvier)
+   ============================================================ */
+function syncPilotsFromJanuary() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const jan = ss.getSheetByName("Janvier");
+  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
+
+  const monthSheets = _getMonthSheets_(ss);
+  const ref = _getPilotStructureFromSheet_(jan);
+  const desiredRows = ref.pattern.length;
+
+  monthSheets.forEach(sh => {
+    if (sh.getName() === "Janvier") return;
+    _syncPilotsOneSheet_(sh, ref, desiredRows);
+  });
+
+  updateHdvLimitsAllSheets();
+}
+
+function _syncPilotsOneSheet_(sh, ref, desiredRows) {
+  const startRow = CFG.FIRST_ROW;
+  const numCols = CFG.GRID_COL_END;
+
+  const currentLastTriRow = _findLastTrigramRow_(sh);
+  const currentEndRow = (currentLastTriRow >= startRow) ? currentLastTriRow : (startRow + desiredRows - 1);
+  const currentRows = Math.max(0, currentEndRow - startRow + 1);
+
+  let snap = { values: [], bgs: [], notes: [] };
+  if (currentRows > 0) {
+    const rng = sh.getRange(startRow, 1, currentRows, numCols);
+    snap = { values: rng.getValues(), bgs: rng.getBackgrounds(), notes: rng.getNotes() };
+  }
+
+  const delta = desiredRows - currentRows;
+  if (delta > 0) {
+    sh.insertRowsAfter(Math.max(currentEndRow, startRow - 1), delta);
+  } else if (delta < 0) {
+    const deleteStart = startRow + desiredRows;
+    const deleteCount = -delta;
+    if (deleteStart >= startRow) sh.deleteRows(deleteStart, deleteCount);
+  }
+
+  const map = {};
+  for (let i = 0; i < snap.values.length; i++) {
+    const tri = (snap.values[i][0] || "").toString().trim().toUpperCase();
+    if (_isTrigram_(tri)) map[tri] = { v: snap.values[i].slice(), bg: snap.bgs[i].slice(), n: snap.notes[i].slice() };
+  }
+
+  const outV = [], outBG = [], outN = [];
+  for (let i = 0; i < ref.pattern.length; i++) {
+    const tri = (ref.pattern[i].tri || "").toString().trim().toUpperCase();
+    if (_isTrigram_(tri) && map[tri]) {
+      outV.push(map[tri].v);
+      outBG.push(map[tri].bg);
+      outN.push(map[tri].n);
+    } else if (_isTrigram_(tri)) {
+      const rowV = new Array(numCols).fill("");
+      rowV[0] = tri;
+      outV.push(rowV);
+      outBG.push(new Array(numCols).fill(CFG.STYLE.WHITE_BG));
+      outN.push(new Array(numCols).fill(""));
+    } else {
+      outV.push(new Array(numCols).fill(""));
+      outBG.push(new Array(numCols).fill(CFG.STYLE.WHITE_BG));
+      outN.push(new Array(numCols).fill(""));
+    }
+  }
+
+  const dst = sh.getRange(startRow, 1, outV.length, numCols);
+  dst.setValues(outV);
+  dst.setBackgrounds(outBG);
+  dst.setNotes(outN);
+}
+
+function _getPilotStructureFromSheet_(sh) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < CFG.FIRST_ROW) return { pattern: [] };
+
+  const colA = sh.getRange(CFG.FIRST_ROW, 1, lastRow - CFG.FIRST_ROW + 1, 1).getValues();
+  let lastTriOffset = -1;
+
+  for (let i = 0; i < colA.length; i++) {
+    const s = (colA[i][0] || "").toString().trim().toUpperCase();
+    if (_isTrigram_(s)) lastTriOffset = i;
+  }
+  if (lastTriOffset < 0) return { pattern: [] };
+
+  const endRow = CFG.FIRST_ROW + lastTriOffset;
+  const pattern = [];
+  for (let r = CFG.FIRST_ROW; r <= endRow; r++) {
+    const v = (sh.getRange(r, 1).getValue() || "").toString().trim().toUpperCase();
+    pattern.push({ tri: _isTrigram_(v) ? v : "" });
+  }
+  return { pattern };
+}
+
+function _findLastTrigramRow_(sh) {
+  const lastRow = sh.getLastRow();
+  if (lastRow < CFG.FIRST_ROW) return CFG.FIRST_ROW - 1;
+
+  const colA = sh.getRange(CFG.FIRST_ROW, 1, lastRow - CFG.FIRST_ROW + 1, 1).getValues();
+  let last = CFG.FIRST_ROW - 1;
+
+  for (let i = 0; i < colA.length; i++) {
+    const s = (colA[i][0] || "").toString().trim().toUpperCase();
+    if (_isTrigram_(s)) last = CFG.FIRST_ROW + i;
+  }
+  return last;
+}
+
+/* ============================================================
+   SYNC TEMPLATE : désactivé (volontairement)
+   ============================================================ */
+function syncTemplateFromJanuary() {
+  SpreadsheetApp.getActive().toast(
+    "Synchroniser TEMPLATE est désactivé. Utilise : PILOTES / FORMAT / LARGEURS-HAUTEURS / TITRES.",
+    "HDV",
+    6
+  );
+}
+
+/* ============================================================
+   SYNC LARGEURS/HAUTEURS (rapide)
+   ============================================================ */
+function syncTemplateBordersAndDimensionsFromJanuaryFast() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const jan = ss.getSheetByName("Janvier");
+  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
+
+  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
+  const lastColRef = 45;
+
+  const refEndRow = Math.max(_findLastTrigramRow_(jan), jan.getLastRow());
+  const lastRowRef = (CFG.TEMPLATE_MAX_ROWS && CFG.TEMPLATE_MAX_ROWS > 0)
+    ? Math.min(refEndRow, CFG.TEMPLATE_MAX_ROWS)
+    : refEndRow;
+
+  const widths = [];
+  for (let c = 1; c <= lastColRef; c++) widths.push(jan.getColumnWidth(c));
+
+  const heights = [];
+  for (let r = 1; r <= lastRowRef; r++) heights.push(jan.getRowHeight(r));
+
+  const t0 = Date.now();
+
+  monthSheets.forEach(sh => {
+    _ensureMinColumns_(sh, lastColRef);
+
+    // 1) Largeurs / hauteurs
+    for (let c = 1; c <= lastColRef; c++) sh.setColumnWidth(c, widths[c - 1]);
+    for (let r = 1; r <= lastRowRef; r++) sh.setRowHeight(r, heights[r - 1]);
+
+    // 2) Bordures + alignements + formats SANS écraser les couleurs
+    // A1:A2
+    _copyBordersAndStructureOnly_(jan.getRange(1, 1, 2, 1), sh.getRange(1, 1, 2, 1));
+
+    // AG..AS lignes 1-2
+    const rightStart = CFG.GRID_COL_END + 1; // AG
+    if (lastColRef >= rightStart) {
+      const w = lastColRef - rightStart + 1;
+      _copyBordersAndStructureOnly_(
+        jan.getRange(1, rightStart, 2, w),
+        sh.getRange(1, rightStart, 2, w)
+      );
+    }
+
+    // A3..fin
+    if (lastRowRef >= 3) {
+      _copyBordersAndStructureOnly_(
+        jan.getRange(3, 1, lastRowRef - 2, lastColRef),
+        sh.getRange(3, 1, lastRowRef - 2, lastColRef)
+      );
+    }
+
+    if ((Date.now() - t0) > CFG.TEMPLATE_TIME_BUDGET_MS) {
+      SpreadsheetApp.getActive().toast("Synchroniser BORDURES + LARGEURS/HAUTEURS : interrompu (anti-timeout). Relance.", "HDV", 5);
+      throw new Error("Timeout (anti-timeout) pendant syncTemplateBordersAndDimensionsFromJanuaryFast()");
+    }
+  });
+
+  SpreadsheetApp.getActive().toast("Bordures + largeurs/hauteurs synchronisées ✅", "HDV", 4);
+}
+function _copyBordersAndStructureOnly_(src, dst) {
+  // Sauvegarde des couleurs déjà présentes sur la destination
+  const dstBackgrounds = dst.getBackgrounds();
+  const dstFontColors = dst.getFontColors();
+
+  // Copie tout le format depuis la source
+  // (bordures, alignements, formats, wrap, police, gras, etc.)
+  src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+
+  // Restaure uniquement les couleurs de la destination
+  // => on garde les bordures/structure de Janvier
+  // => sans écraser les couleurs déjà présentes
+  dst.setBackgrounds(dstBackgrounds);
+  dst.setFontColors(dstFontColors);
+}
+/* ============================================================
+   SYNC FORMAT (bordures/couleurs/polices)
+   ============================================================ */
+function syncTemplateColorsFromJanuaryFast() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const jan = ss.getSheetByName("Janvier");
+  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
+
+  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
+  const lastColRef = 45;
+
+  const refEndRow = Math.max(_findLastTrigramRow_(jan), jan.getLastRow());
+  const lastRowRef = (CFG.TEMPLATE_MAX_ROWS && CFG.TEMPLATE_MAX_ROWS > 0)
+    ? Math.min(refEndRow, CFG.TEMPLATE_MAX_ROWS)
+    : refEndRow;
+
+  const t0 = Date.now();
+
+  monthSheets.forEach(sh => {
+    _ensureMinColumns_(sh, lastColRef);
+
+    // A1:A2 : couleurs uniquement
+    _copyColorsOnly_(jan.getRange(1, 1, 2, 1), sh.getRange(1, 1, 2, 1));
+
+    // AG..AS lignes 1-2 : couleurs uniquement
+    const rightStart = CFG.GRID_COL_END + 1; // AG
+    if (lastColRef >= rightStart) {
+      const w = lastColRef - rightStart + 1;
+      _copyColorsOnly_(
+        jan.getRange(1, rightStart, 2, w),
+        sh.getRange(1, rightStart, 2, w)
+      );
+    }
+
+    // A3..fin : couleurs uniquement
+    if (lastRowRef >= 3) {
+      _copyColorsOnly_(
+        jan.getRange(3, 1, lastRowRef - 2, lastColRef),
+        sh.getRange(3, 1, lastRowRef - 2, lastColRef)
+      );
+    }
+
+    if ((Date.now() - t0) > CFG.TEMPLATE_TIME_BUDGET_MS) {
+      SpreadsheetApp.getActive().toast("Synchroniser COULEURS : interrompu (anti-timeout). Relance.", "HDV", 5);
+      throw new Error("Timeout (anti-timeout) pendant syncTemplateColorsFromJanuaryFast()");
+    }
+  });
+
+  SpreadsheetApp.getActive().toast("Couleurs synchronisées ✅", "HDV", 4);
+}
+function _copyColorsOnly_(src, dst) {
+  dst.setBackgrounds(src.getBackgrounds());
+  dst.setFontColors(src.getFontColors());
+}
+/* ============================================================
+   SYNC TITRES (textes) — hors B1:AF2
+   ============================================================ */
+function syncTemplateTitlesFromJanuaryFast() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const jan = ss.getSheetByName("Janvier");
+  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
+
+  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
+  const lastColRef = 45;
+
+  const headerRows = [1, 2];
+
+  monthSheets.forEach(sh => _ensureMinColumns_(sh, lastColRef));
+
+  monthSheets.forEach(sh => {
+    headerRows.forEach(r => {
+      // A en valeurs
+      jan.getRange(r, 1, 1, 1)
+        .copyTo(sh.getRange(r, 1, 1, 1), SpreadsheetApp.CopyPasteType.PASTE_VALUES, false);
+
+      // AG..AS en valeurs
+      const rightStart = CFG.GRID_COL_END + 1; // AG
+      if (lastColRef >= rightStart) {
+        const w = lastColRef - rightStart + 1;
+        jan.getRange(r, rightStart, 1, w)
+          .copyTo(sh.getRange(r, rightStart, 1, w), SpreadsheetApp.CopyPasteType.PASTE_VALUES, false);
+      }
+    });
+  });
+
+  SpreadsheetApp.getActive().toast("TITRES synchronisés ✅ (textes)", "HDV", 4);
+}
+
+/* ============================================================
+   SYNC TITRES HDV (3j/7j/30j)
+   ============================================================ */
+function syncHdvHeaderTitlesFromJanuary() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const jan = ss.getSheetByName("Janvier");
+  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
+
+  const refCols = findLimitesHdvColumns_(jan);
+
+  const title3  = jan.getRange(refCols.headerRow, refCols.col3).getDisplayValue();
+  const title7  = jan.getRange(refCols.headerRow, refCols.col7).getDisplayValue();
+  const title30 = jan.getRange(refCols.headerRow, refCols.col30).getDisplayValue();
+
+  const monthSheets = _getMonthSheets_(ss).filter(sh => sh.getName() !== "Janvier");
+
+  monthSheets.forEach(sh => {
+    const cols = findLimitesHdvColumns_(sh);
+    sh.getRange(cols.headerRow, cols.col3).setValue(title3);
+    sh.getRange(cols.headerRow, cols.col7).setValue(title7);
+    sh.getRange(cols.headerRow, cols.col30).setValue(title30);
+  });
+
+  SpreadsheetApp.getActive().toast("Titres HDV synchronisés ✅ (3j/7j/30j)", "HDV", 4);
+}
+
+/***************************************************
+ * BOUTONS DE COLORATION MANUELLE (via Dessins)
+ * - Ne touche JAMAIS aux lignes 1–2
+ * - IMPORTANT : ne recalcule PAS HDV
+ * - ✅ Ne colore QUE si la cellule n'est pas vide
+ * - ✅ Clic sur dessin OK (dernière sélection via onSelectionChange)
+ * - ✅ Anti double-clic / anti exécutions concurrentes (Lock)
+ ***************************************************/
+function _setPendingBtnColor_(bg) {
+  // ✅ par utilisateur (si plusieurs personnes utilisent le fichier)
+  PropertiesService.getUserProperties().setProperty("PENDING_BTN_BG", String(bg || ""));
+}
+
+function _consumePendingBtnColor_() {
+  const up = PropertiesService.getUserProperties();
+  const bg = up.getProperty("PENDING_BTN_BG");
+  if (bg) up.deleteProperty("PENDING_BTN_BG");
+  return bg || "";
+}
+
+function btnColorEntOPS()     { _applyBtnColor_(CFG.BTN.EntOPS); }
+function btnColorFeuGAAR()    { _applyBtnColor_(CFG.BTN.FeuGAAR); }
+function btnColorGAAR()       { _applyBtnColor_(CFG.BTN.GAAR); }
+function btnColorMission()    { _applyBtnColor_(CFG.BTN.MiFrance); }
+function btnColorMiEtranger() { _applyBtnColor_(CFG.BTN.MiEtranger); }
+function btnColorEntNAV()     { _applyBtnColor_(CFG.BTN.EntNAV); }
+function btnColorEntVDN()     { _applyBtnColor_(CFG.BTN.EntVDN); }
+function btnColorVolTech()    { _applyBtnColor_(CFG.BTN.VolTech); }
+function _tryColorOnce_(bg) {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+  // ✅ lock par utilisateur (pas de conflit avec HDV)
+  const lock = LockService.getUserLock();
+  if (!lock.tryLock(200)) return 0; // 0 = pas prêt (lock)
+
+  try {
+    // feuille + cellule active
+    const sh = ss.getActiveSheet();
+    let cell = sh ? sh.getActiveCell() : null;
+
+    // fallback dernière cellule mémorisée (clic sur dessin)
+    if (!cell) {
+      const p = PropertiesService.getDocumentProperties();
+      const lastSheetName = p.getProperty("LAST_SEL_SHEET");
+      const lastA1 = p.getProperty("LAST_SEL_A1");
+      const sh2 = lastSheetName ? ss.getSheetByName(lastSheetName) : null;
+      if (sh2 && lastA1) cell = sh2.getRange(lastA1);
+    }
+
+    if (!cell) return -1; // -1 = aucune cellule => vrai problème utilisateur
+    if (cell.getRow() < 3) return 1; // 1 = OK (rien à faire)
+
+    // ne colorer que si non vide
+    const v = cell.getValue();
+    if (v === "" || v === null) return 0; // 0 = pas prêt (valeur pas commit)
+
+    cell.setBackground(bg);
+    SpreadsheetApp.flush();
+    return 1; // 1 = coloré
+  } finally {
+    lock.releaseLock();
+  }
+}
+
+
+function _applyBtnColor_(bg) {
+  _setPendingBtnColor_(bg); // ✅ la couleur sera appliquée au commit via onEdit si besoin
+
+  // ✅ 3 tentatives rapides
+  let lastCode = 0;
+  for (let i = 0; i < 3; i++) {
+    lastCode = _tryColorOnce_(bg);
+    if (lastCode === 1) return;      // OK (coloré ou rien à faire)
+    if (lastCode === -1) break;      // aucune cellule => on sort pour toaster
+    Utilities.sleep(200);
+  }
+
+  // ✅ On ne toaster QUE si on n'a vraiment aucune cellule sélectionnée/mémorisée
+  if (lastCode === -1) {
     try {
-        await Promise.race([
-            initDB(),
-            new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout ouverture IndexedDB')), 4000))
-        ]);
-        activeOfflinePacks = JSON.parse(localStorage.getItem(OFFLINE_ACTIVE_PACKS_KEY) || '[]');
-        if (!Array.isArray(activeOfflinePacks)) activeOfflinePacks = [];
-        const savedMapSourceMode = localStorage.getItem(MAP_SOURCE_MODE_KEY);
-        mapSourceMode = savedMapSourceMode === 'offline' ? 'offline' : DEFAULT_MAP_SOURCE_MODE;
-        offlineOnlineFallbackMode = localStorage.getItem(OFFLINE_ONLINE_FALLBACK_KEY) === null
-            ? DEFAULT_OFFLINE_ONLINE_FALLBACK
-            : localStorage.getItem(OFFLINE_ONLINE_FALLBACK_KEY) === 'true';
-        await initializeOfflineTilePreference();
-        // Évite de bloquer le démarrage sur un scan potentiellement long de la DB offline.
-        await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
-        displayInstalledMaps();
-    } catch (startupError) {
-        console.error('Initialisation offline incomplète:', startupError);
-        mapSourceMode = DEFAULT_MAP_SOURCE_MODE;
-        offlineOnlineFallbackMode = DEFAULT_OFFLINE_ONLINE_FALLBACK;
-        activeOfflinePacks = [];
-        displayInstalledMaps();
-    }
-    let communesLoadError = null;
-    try {
-        const data = await loadCommunesData();
-        allCommunes = data.data.map(c => ({ ...c, normalized_name: simplifyString(c.nom_standard), search_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean), soundex_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean).map(part => soundex(part)) }));
-    } catch (error) {
-        communesLoadError = error;
-        allCommunes = [];
-        console.error('Chargement communes indisponible:', error);
-    }
-
-    statusMessage.style.display = 'none';
-    searchSection.style.display = 'block';
-    initMap();
-    initializeTeamChat();
-    try {
-        setupEventListeners();
-    } catch (uiError) {
-        console.error('Erreur setupEventListeners:', uiError);
-    }
-    setTimeout(() => {
-        updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
-    }, 0);
-    if (localStorage.getItem('liveGpsActive') === 'true') {
-        toggleLiveGps();
-    } else {
-        navigator.geolocation.getCurrentPosition(updateUserPosition, () => {}, { enableHighAccuracy: true });
-    }
-    const savedCommuneJSON = localStorage.getItem('currentCommune');
-    if (savedCommuneJSON) {
-        currentCommune = JSON.parse(savedCommuneJSON);
-        displayCommuneDetails(currentCommune, true);
-    }
-    if (communesLoadError) {
-        setTimeout(() => {
-            alert("Mode dégradé: base communes indisponible au démarrage. La carte reste utilisable, réessayez avec réseau pour la recherche commune.");
-        }, 400);
-    }
-}
-
-async function loadCommunesData() {
-    const fetchWithTimeout = async (url, options = {}, timeoutMs = 8000) => {
-        const controller = new AbortController();
-        const timer = setTimeout(() => controller.abort(), timeoutMs);
-        try {
-            return await fetch(url, { ...options, signal: controller.signal });
-        } finally {
-            clearTimeout(timer);
-        }
-    };
-
-    const parseAndStore = async (response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const payload = await response.json();
-        if (!payload || !Array.isArray(payload.data)) {
-            throw new Error("Format JSON invalide.");
-        }
-        try {
-            localStorage.setItem(COMMUNES_CACHE_KEY, JSON.stringify(payload));
-        } catch (_) {}
-        return payload;
-    };
-
-    try {
-        const networkResponse = await fetchWithTimeout('./communes.json', { cache: 'no-cache' }, 8000);
-        return await parseAndStore(networkResponse);
-    } catch (_) {
-        try {
-            const cachedData = localStorage.getItem(COMMUNES_CACHE_KEY);
-            if (cachedData) {
-                const parsed = JSON.parse(cachedData);
-                if (parsed && Array.isArray(parsed.data)) {
-                    return parsed;
-                }
-            }
-        } catch (_) {}
-
-        try {
-            const fallbackResponse = await fetchWithTimeout('./communes.json', { cache: 'force-cache' }, 4000);
-            return await parseAndStore(fallbackResponse);
-        } catch (_) {
-            throw new Error("Impossible de charger les données communes (réseau indisponible et cache local absent).");
-        }
-    }
-}
-
-function initMap() {
-    if (map) return;
-    map = L.map('map', {
-        attributionControl: false,
-        zoomControl: false,
-        maxZoom: GLOBAL_MAX_ZOOM
-    }).setView([46.6, 2.2], 5.5);
-    L.control.zoom({ position: 'bottomleft' }).addTo(map);
-    setupBaseTileLayer();
-    permanentAirportLayer = L.layerGroup().addTo(map);
-    routesLayer = L.layerGroup().addTo(map);
-    userToTargetLayer = L.layerGroup().addTo(map);
-    lftwRouteLayer = L.layerGroup().addTo(map);
-    gaarLayer = L.layerGroup().addTo(map);
-    departmentsLayerGroup = L.layerGroup();
-    departmentsLabelsLayer = L.layerGroup();
-    drawPermanentAirportMarkers();
-    redrawGaarCircuits();
-
-    if (areDepartmentsVisible) {
-        setTimeout(() => { toggleDepartmentsLayer(true); }, 150);
-    }
-
-    map.on('click', handleGaarMapClick);
-
-    map.on('contextmenu', (e) => {
-        if (isDrawingMode) return;
-        selectedPelicanOACI = null;
-        L.DomEvent.preventDefault(e.originalEvent);
-        const closestCommune = findClosestCommune(e.latlng.lat, e.latlng.lng, 27);
-        const pointName = closestCommune?.nom_standard || 'Feu manuel';
-        const manualCommune = {
-            nom_standard: pointName,
-            dep_code: closestCommune?.dep_code || null,
-            dep_nom: closestCommune?.dep_nom || null,
-            latitude_mairie: e.latlng.lat,
-            longitude_mairie: e.latlng.lng,
-            isManual: true
-        };
-        currentCommune = manualCommune;
-        localStorage.setItem('currentCommune', JSON.stringify(manualCommune));
-        displayCommuneDetails(manualCommune, false);
-    });
-}
-
-function setupBaseTileLayer() {
-    if (!map) return;
-    if (baseTileLayer) {
-        map.removeLayer(baseTileLayer);
-    }
-    const overzoomDelta = offlineTilesMode ? 0 : 2;
-    const effectiveMaxZoom = Math.min(GLOBAL_MAX_ZOOM, baseTileMaxNativeZoom + overzoomDelta);
-    map.setMaxZoom(effectiveMaxZoom);
-    baseTileLayer = L.tileLayer('https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxNativeZoom: baseTileMaxNativeZoom,
-        maxZoom: effectiveMaxZoom,
-        attribution: '© OpenStreetMap',
-        keepBuffer: 8,
-        updateWhenZooming: false,
-        updateWhenIdle: true
-    }).addTo(map);
-}
-
-function clearCurrentSelection() {
-    selectedPelicanOACI = null;
-    const searchInput = document.getElementById('search-input');
-    const clearSearchBtn = document.getElementById('clear-search');
-    searchInput.value = '';
-    document.getElementById('results-list').style.display = 'none';
-    clearSearchBtn.style.display = 'none';
-    routesLayer.clearLayers();
-    userToTargetLayer.clearLayers();
-    lftwRouteLayer.clearLayers();
-    drawPermanentAirportMarkers();
-    currentCommune = null;
-    localStorage.removeItem('currentCommune');
-    updateCalculatorData();
-    masterRecalculate();
-    updateCommuneDisplay(null);
-    document.getElementById('bingo-map-display').style.display = 'none';
-    navigator.geolocation.getCurrentPosition(updateUserPosition);
-    map.setView([46.6, 2.2], 5.5);
-}
-
-function setupEventListeners() {
-    const searchInput = document.getElementById('search-input');
-    const clearSearchBtn = document.getElementById('clear-search');
-    const airportCountInput = document.getElementById('airport-count');
-    const gpsFeuButton = document.getElementById('gps-feu-button');
-    const liveGpsButton = document.getElementById('live-gps-button');
-    const lftwRouteButton = document.getElementById('lftw-route-button');
-    const gaarModeButton = document.getElementById('gaar-mode-button');
-    const editCircuitsButton = document.getElementById('edit-circuits-button');
-    const deleteCircuitsButton = document.getElementById('delete-circuits-btn');
-    const toggleSearchButton = document.getElementById('toggle-search-button');
-    const mainActionButtons = document.getElementById('main-action-buttons');
-    const calculatorButton = document.getElementById('calculator-button');
-    const calculatorModal = document.getElementById('calculator-modal');
-    const closeCalculatorButton = document.getElementById('close-calculator-btn');
-    const departmentsLayerButton = document.getElementById('departments-layer-button');
-    const offlineMapsButton = document.getElementById('offline-maps-button');
-    const offlineMapModal = document.getElementById('offline-map-modal');
-    const closeOfflineMapButton = document.getElementById('close-offline-map-btn');
-    const zipImporterInput = document.getElementById('zip-importer-input');
-    const mapSourceOnlineBtn = document.getElementById('map-source-online-btn');
-    const mapSourceOfflineBtn = document.getElementById('map-source-offline-btn');
-    const purgeInactivePacksBtn = document.getElementById('purge-inactive-packs-btn');
-    
-    if (mainActionButtons) {
-        const versionDisplay = document.createElement('div');
-        versionDisplay.className = 'version-display';
-        versionDisplay.innerText = (typeof APP_VERSION !== 'undefined' && APP_VERSION) ? APP_VERSION : 'version inconnue';
-        mainActionButtons.appendChild(versionDisplay);
-
-        const forceUpdateButton = document.createElement('button');
-        forceUpdateButton.className = 'force-update-button';
-        forceUpdateButton.type = 'button';
-        forceUpdateButton.title = 'Forcer la recherche de mise à jour';
-        forceUpdateButton.textContent = '🔄 MAJ';
-        forceUpdateButton.addEventListener('click', async () => {
-            forceUpdateButton.disabled = true;
-            forceUpdateButton.textContent = '⏳ MAJ...';
-            try {
-                if (!('serviceWorker' in navigator)) {
-                    alert('Service Worker indisponible sur cet appareil.');
-                    return;
-                }
-
-                const registration = await navigator.serviceWorker.getRegistration();
-                if (registration) {
-                    await registration.update();
-                    if (registration.waiting) {
-                        registration.waiting.postMessage({ type: 'SKIP_WAITING' });
-                    }
-                }
-
-                if ('caches' in window) {
-                    const cacheKeys = await caches.keys();
-                    await Promise.all(cacheKeys.map((key) => caches.delete(key)));
-                }
-
-                window.location.reload();
-            } catch (error) {
-                alert(`Mise à jour impossible: ${error.message}`);
-            } finally {
-                forceUpdateButton.disabled = false;
-                forceUpdateButton.textContent = '🔄 MAJ';
-            }
-        });
-        mainActionButtons.appendChild(forceUpdateButton);
-    }
-
-    if (departmentsLayerButton) {
-        departmentsLayerButton.classList.toggle('active', areDepartmentsVisible);
-        departmentsLayerButton.addEventListener('click', () => {
-            toggleDepartmentsLayer(!areDepartmentsVisible);
-        });
-    }
-
-    searchInput.addEventListener('input', () => {
-        selectedPelicanOACI = null;
-        const rawSearch = searchInput.value;
-        clearSearchBtn.style.display = rawSearch.length > 0 ? 'block' : 'none';
-        let departmentFilter = null;
-        let searchTerm = rawSearch;
-        const depRegex = /\s(\d{1,3}|2A|2B)$/i;
-        const match = rawSearch.match(depRegex);
-        if (match) {
-            departmentFilter = match[1].length === 1 ? '0' + match[1] : match[1].toUpperCase();
-            searchTerm = rawSearch.substring(0, match.index).trim();
-        }
-        const simplifiedSearch = simplifyString(searchTerm);
-        if (simplifiedSearch.length < 2) {
-            document.getElementById('results-list').style.display = 'none';
-            return;
-        }
-        const searchWords = simplifiedSearch.split(' ').filter(Boolean);
-        const communesToSearch = departmentFilter ? allCommunes.filter(c => c.dep_code === departmentFilter) : allCommunes;
-        const scoredResults = communesToSearch.map(c => {
-            let totalScore = 0; let wordsFound = 0;
-            for (const word of searchWords) {
-                let bestWordScore = 999;
-                const wordSoundex = soundex(word);
-                for (let i = 0; i < c.search_parts.length; i++) {
-                    const communePart = c.search_parts[i];
-                    const communeSoundex = c.soundex_parts[i];
-                    let currentScore = 999;
-                    if (communePart.startsWith(word)) { currentScore = 0; }
-                    else if (communeSoundex === wordSoundex) { currentScore = 1; }
-                    else {
-                        const dist = levenshteinDistance(word, communePart);
-                        if (dist <= Math.floor(word.length / 3) + 1) { currentScore = 2 + dist; }
-                    }
-                    if (currentScore < bestWordScore) { bestWordScore = currentScore; }
-                }
-                if (bestWordScore < 999) { wordsFound++; totalScore += bestWordScore; }
-            }
-            const finalScore = (wordsFound === searchWords.length) ? totalScore : 999;
-            return { ...c, score: finalScore };
-        }).filter(c => c.score < 999);
-        scoredResults.sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length);
-        displayResults(scoredResults.slice(0, 10));
-    });
-
-    clearSearchBtn.addEventListener('click', clearCurrentSelection);
-
-    airportCountInput.addEventListener('change', () => {
-        if (currentCommune) {
-            displayCommuneDetails(currentCommune, false);
-        }
-    });
-
-    gpsFeuButton.addEventListener('click', () => {
-        if (!navigator.geolocation) { alert("La géolocalisation n'est pas supportée par votre navigateur."); return; }
-        selectedPelicanOACI = null;
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                const { latitude, longitude } = pos.coords;
-                const closestCommune = findClosestCommune(latitude, longitude, 27);
-                const pointName = closestCommune?.nom_standard || 'Feu GPS';
-                const gpsCommune = {
-                    nom_standard: pointName,
-                    dep_code: closestCommune?.dep_code || null,
-                    dep_nom: closestCommune?.dep_nom || null,
-                    latitude_mairie: latitude,
-                    longitude_mairie: longitude,
-                    isManual: true
-                };
-                currentCommune = gpsCommune;
-                localStorage.setItem('currentCommune', JSON.stringify(gpsCommune));
-                displayCommuneDetails(gpsCommune, false);
-            },
-            () => { alert("Impossible d'obtenir la position GPS. Veuillez vérifier vos autorisations."); },
-            { enableHighAccuracy: true }
-        );
-    });
-
-    liveGpsButton.addEventListener('click', toggleLiveGps);
-    lftwRouteButton.addEventListener('click', toggleLftwRoute);
-    gaarModeButton.addEventListener('click', toggleGaarVisibility);
-    editCircuitsButton.addEventListener('click', toggleGaarDrawingMode);
-    deleteCircuitsButton.addEventListener('click', () => { if (confirm("Voulez-vous vraiment supprimer tous les circuits GAAR ?")) { clearAllGaarCircuits(); } });
-
-    toggleSearchButton.addEventListener('click', () => {
-        const uiOverlay = document.getElementById('ui-overlay');
-        const communeDisplay = document.getElementById('commune-info-display');
-        if (uiOverlay.style.display === 'none') {
-            uiOverlay.style.display = 'block';
-            communeDisplay.style.display = 'none';
-            toggleSearchButton.classList.add('active');
-        } else {
-            uiOverlay.style.display = 'none';
-            toggleSearchButton.classList.remove('active');
-            if (communeDisplay.innerHTML.trim() !== '' && currentCommune) {
-                communeDisplay.style.display = 'flex';
-            }
-        }
-    });
-
-    document.addEventListener('communeSelected', () => {
-        document.getElementById('ui-overlay').style.display = 'none';
-        document.getElementById('toggle-search-button').classList.remove('active');
-        if (currentCommune) {
-            document.getElementById('commune-info-display').style.display = 'flex';
-        }
-    });
-
-    calculatorButton.addEventListener('click', () => { calculatorModal.style.display = 'flex'; });
-    closeCalculatorButton.addEventListener('click', () => { calculatorModal.style.display = 'none'; });
-    calculatorModal.addEventListener('click', (e) => { if (e.target === calculatorModal) { calculatorModal.style.display = 'none'; } });
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && calculatorModal.style.display === 'flex') { calculatorModal.style.display = 'none'; } });
-    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; });
-    closeOfflineMapButton.addEventListener('click', () => { offlineMapModal.style.display = 'none'; });
-    offlineMapModal.addEventListener('click', (e) => { if (e.target === offlineMapModal) { offlineMapModal.style.display = 'none'; } });
-    window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && offlineMapModal.style.display === 'flex') { offlineMapModal.style.display = 'none'; } });
-    zipImporterInput.addEventListener('change', (event) => {
-        const file = event.target.files[0];
-        handleZipImport(file);
-        event.target.value = '';
-    });
-    if (folderImporterInput) {
-        folderImporterInput.addEventListener('change', (event) => {
-            const files = Array.from(event.target.files || []);
-            handleFolderImport(files);
-            event.target.value = '';
-        });
-    }
-    if (tilesImporterInput) {
-        tilesImporterInput.addEventListener('change', (event) => {
-            const files = Array.from(event.target.files || []);
-            handleFolderImport(files, { fromDirectoryPicker: false });
-            event.target.value = '';
-        });
-    }
-
-    if (mapSourceOnlineBtn) {
-        mapSourceOnlineBtn.addEventListener('click', async () => {
-            try {
-                await setMapSourceMode('online');
-            } catch (error) {
-                console.error('Erreur activation mode online:', error);
-                alert(`Impossible d'activer le mode online: ${error.message || error}`);
-            }
-        });
-    }
-
-    if (mapSourceOfflineBtn) {
-        mapSourceOfflineBtn.addEventListener('click', async () => {
-            if (!activeOfflinePacks.length) {
-                alert('Aucun pack offline actif. Activez (ou importez) un pack avant de passer en mode offline.');
-                return;
-            }
-            try {
-                await setMapSourceMode('offline');
-            } catch (error) {
-                console.error('Erreur activation mode offline:', error);
-                alert(`Impossible d'activer le mode offline: ${error.message || error}`);
-            }
-        });
-    }
-
-    if (purgeInactivePacksBtn) {
-        purgeInactivePacksBtn.addEventListener('click', async () => {
-            await purgeInactivePacksCache();
-        });
-    }
-
-    updateBaseLabels();
-    updateLftwButtonState();
-    updateGaarButtonState();
-}
-
-function displayResults(results) {
-    const resultsList = document.getElementById('results-list');
-    resultsList.innerHTML = '';
-    if (results.length > 0) {
-        resultsList.style.display = 'block';
-        results.forEach(c => {
-            const li = document.createElement('li');
-            li.textContent = `${c.nom_standard} (${c.dep_nom} - ${c.dep_code})`;
-            li.addEventListener('click', () => {
-                currentCommune = c;
-                localStorage.setItem('currentCommune', JSON.stringify(c));
-                displayCommuneDetails(c);
-            });
-            resultsList.appendChild(li);
-        });
-    } else {
-        resultsList.style.display = 'none';
-    }
-}
-
-async function findMaxOfflineTileZoom() {
-    if (!db) return null;
-    const targetPacks = new Set(activeOfflinePacks);
-    return new Promise((resolve) => {
-        const tx = db.transaction('tiles', 'readonly');
-        const store = tx.objectStore('tiles');
-        const request = store.openCursor();
-        let maxZoom = null;
-
-        request.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (!cursor) {
-                resolve(maxZoom);
-                return;
-            }
-            if (targetPacks.size && !targetPacks.has(cursor.value?.packName || '')) {
-                cursor.continue();
-                return;
-            }
-            const url = cursor.value?.url;
-            if (typeof url === 'string') {
-                const match = url.match(/\/(\d+)\/\d+\/\d+\.(png|jpg|jpeg)$/i);
-                if (match) {
-                    const zoom = Number.parseInt(match[1], 10);
-                    if (Number.isFinite(zoom)) {
-                        maxZoom = maxZoom === null ? zoom : Math.max(maxZoom, zoom);
-                    }
-                }
-            }
-            cursor.continue();
-        };
-
-        request.onerror = () => resolve(null);
-    });
-}
-
-async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = {}) {
-    const offlineEnabled = await getOfflineTilesEnabled();
-    const shouldForceScan = forceScan;
-    if (!offlineEnabled) {
-        baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
-    } else {
-        const storedOfflineMaxZoom = Number.parseInt(localStorage.getItem(OFFLINE_TILES_MAX_ZOOM_KEY) || '', 10);
-        let offlineMaxZoom = Number.isFinite(storedOfflineMaxZoom) ? storedOfflineMaxZoom : null;
-
-        if (shouldForceScan) {
-            offlineMaxZoom = await findMaxOfflineTileZoom();
-            if (offlineMaxZoom === null) {
-                localStorage.removeItem(OFFLINE_TILES_MAX_ZOOM_KEY);
-            } else {
-                localStorage.setItem(OFFLINE_TILES_MAX_ZOOM_KEY, String(offlineMaxZoom));
-            }
-        }
-
-        if (offlineMaxZoom === null) {
-            baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
-        } else {
-            baseTileMaxNativeZoom = Math.max(0, Math.min(ONLINE_MAX_NATIVE_ZOOM, offlineMaxZoom));
-        }
-    }
-
-    if (map && baseTileLayer) {
-        setupBaseTileLayer();
-    }
-}
-
-function updateCommuneDisplay(commune) {
-    const communeDisplay = document.getElementById('commune-info-display');
-    if (!commune) {
-        communeDisplay.innerHTML = '';
-        communeDisplay.style.display = 'none';
-        return;
-    }
-    const fallbackClosest = (!commune.dep_code && commune.latitude_mairie != null && commune.longitude_mairie != null)
-        ? findClosestCommune(commune.latitude_mairie, commune.longitude_mairie, 27)
-        : null;
-    const depCodeValue = commune.dep_code || fallbackClosest?.dep_code || '';
-    const depCode = depCodeValue ? ` (${depCodeValue})` : '';
-    const communeNameHTML = `<span class="commune-name">${commune.nom_standard}${depCode}</span>`;
-    let sunsetHTML = '';
-    if (typeof SunCalc !== 'undefined') {
-        try {
-            const now = new Date();
-            const times = SunCalc.getTimes(now, commune.latitude_mairie, commune.longitude_mairie);
-            const sunsetString = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
-            // On ajoute le bouton "x" ici
-            const closeButtonHTML = `<span id="clear-commune-btn" class="clear-commune-btn" title="Effacer le feu">×</span>`;
-            sunsetHTML = `<div class="sunset-info">🌅&nbsp;CS&nbsp;<b>${sunsetString}</b></div>${closeButtonHTML}`;
-        } catch (e) {
-            sunsetHTML = '<div class="sunset-info"></div>';
-        }
-    }
-    communeDisplay.innerHTML = communeNameHTML + sunsetHTML;
-    
-    // On attache l'événement de clic au nouveau bouton
-    const clearCommuneBtn = document.getElementById('clear-commune-btn');
-    if (clearCommuneBtn) {
-        clearCommuneBtn.addEventListener('click', clearCurrentSelection);
-    }
-}
-
-function updateMapBingoDisplay() {
-    const bingoDisplay = document.getElementById('bingo-map-display');
-    if (!currentCommune) {
-        bingoDisplay.style.display = 'none';
-        return;
-    }
-
-    const bingoBase = calculateBingo(CALCULATOR_DATA.distBaseFeu);
-    const bingoPelic = calculateBingo(CALCULATOR_DATA.distPelicFeu);
-
-    const lftwEl = document.getElementById('map-bingo-lftw');
-    const pelicEl = document.getElementById('map-bingo-pelic');
-
-    lftwEl.innerHTML = `BINGO BASE ${selectedBaseOACI}: <b>${bingoBase} kg</b>`;
-
-    if (bingoPelic !== 700 && selectedPelicanOACI) {
-        pelicEl.innerHTML = `BINGO ${selectedPelicanOACI}: <b>${bingoPelic} kg</b>`;
-        pelicEl.style.display = 'inline-block';
-    } else {
-        pelicEl.style.display = 'none';
-    }
-
-    bingoDisplay.style.display = 'flex';
-}
-
-function displayCommuneDetails(commune, shouldFitBounds = true) {
-    routesLayer.clearLayers();
-    lftwRouteLayer.clearLayers();
-    drawPermanentAirportMarkers();
-
-    updateCommuneDisplay(commune);
-
-    const { latitude_mairie: lat, longitude_mairie: lon, nom_standard: name } = commune;
-    document.getElementById('search-input').value = name;
-    document.getElementById('results-list').style.display = 'none';
-    document.getElementById('clear-search').style.display = 'block';
-
-    const allPoints = [[lat, lon]];
-    const fireIcon = L.divIcon({ className: 'custom-marker-icon fire-marker', html: '🔥' });
-    L.marker([lat, lon], { icon: fireIcon }).bindPopup(`<b>${name}</b><br>${convertToDMM(lat, 'lat')}<br>${convertToDMM(lon, 'lon')}`).addTo(routesLayer);
-
-    const numAirports = parseInt(document.getElementById('airport-count').value, 10);
-    const closestAirports = getClosestAirports(lat, lon, numAirports);
-
-    const closestOACIs = new Set(closestAirports.map(ap => ap.oaci));
-    if (!selectedPelicanOACI || !closestOACIs.has(selectedPelicanOACI)) {
-        selectedPelicanOACI = closestAirports.length > 0 ? closestAirports[0].oaci : null;
-    }
-
-    closestAirports.forEach(ap => {
-        allPoints.push([ap.lat, ap.lon]);
-        drawRoute([lat, lon], [ap.lat, ap.lon], { oaci: ap.oaci });
-    });
-
-    const isLftwInClosest = closestAirports.some(ap => ap.oaci === 'LFTW');
-    if (showLftwRoute && !isLftwInClosest) {
-        drawLftwRoute();
-    }
-
-    updateCalculatorData();
-    updateMapBingoDisplay();
-    // Nous appelons directement la fonction de dessin. Si le GPS est actif, elle utilisera la dernière position.
-    drawUserToTargetRoute();
-
-    if (shouldFitBounds) {
-        setTimeout(() => {
-            if (userMarker && userMarker.getLatLng()) {
-                allPoints.push(userMarker.getLatLng());
-            }
-            if (allPoints.length > 1) {
-                map.fitBounds(L.latLngBounds(allPoints).pad(0.3));
-            } else {
-                map.setView([lat, lon], 10);
-            }
-        }, 300);
-    }
-
-    document.dispatchEvent(new Event('communeSelected'));
-}
-
-function drawRoute(startLatLng, endLatLng, options = {}) {
-    const { oaci, isUser, isLftwRoute, magneticBearing } = options;
-    const distance = calculateDistanceInNm(startLatLng[0], startLatLng[1], endLatLng[0], endLatLng[1]);
-    let labelText, color = 'var(--primary-color)', dashArray = '', layer = routesLayer;
-
-    if (isUser) {
-        labelText = `${Math.round(magneticBearing)}° / ${Math.round(distance)} Nm`;
-        color = 'var(--secondary-color)';
-        dashArray = '5, 10';
-        layer = userToTargetLayer;
-    } else if (isLftwRoute) {
-        labelText = `BASE ${selectedBaseOACI}: ${Math.round(magneticBearing)}° / ${Math.round(distance)} Nm`;
-        color = 'var(--success-color)';
-        dashArray = '5, 10';
-        layer = lftwRouteLayer;
-    } else if (oaci) {
-        const isSelected = selectedPelicanOACI === oaci;
-        color = isSelected ? 'var(--success-color)' : 'var(--primary-color)';
-        let tooltipClass = isSelected ? 'route-tooltip route-tooltip-selected' : 'route-tooltip';
-        labelText = `<b>${oaci}</b><br>${Math.round(distance)} Nm`;
-        L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8 }).addTo(layer);
-        const hitbox = L.polyline([startLatLng, endLatLng], { color: 'transparent', weight: 20, opacity: 0 }).addTo(layer);
-        hitbox.on('click', () => {
-            selectedPelicanOACI = oaci;
-            displayCommuneDetails(currentCommune, false);
-        });
-        L.tooltip({ permanent: true, direction: 'right', offset: [10, 0], className: tooltipClass }).setLatLng(endLatLng).setContent(labelText).addTo(layer);
-        return;
-    } else {
-        labelText = `${Math.round(distance)} Nm`;
-    }
-
-    const polyline = L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8, dashArray }).addTo(layer);
-
-    if (isUser) {
-        polyline.bindTooltip(labelText, { permanent: true, direction: 'center', className: 'route-tooltip route-tooltip-user', sticky: true });
-    } else if (oaci || isLftwRoute) {
-        L.tooltip({ permanent: true, direction: 'right', offset: [10, 0], className: 'route-tooltip' }).setLatLng(endLatLng).setContent(labelText).addTo(layer);
-    }
-}
-
-function getClosestAirports(lat, lon, count) { return pelicanAirports.filter(ap => !disabledAirports.has(ap.oaci)).map(ap => ({ ...ap, distance: calculateDistanceInNm(lat, lon, ap.lat, ap.lon) })).sort((a, b) => a.distance - b.distance).slice(0, count); }
-function getAirportByOaci(oaci) {
-    return [...pelicanAirports, ...otherAirports].find(ap => ap.oaci === oaci) || null;
-}
-function updateBaseLabels() {
-    const routeButton = document.getElementById('lftw-route-button');
-    if (routeButton) {
-        routeButton.textContent = `Route BASE (${selectedBaseOACI})`;
-        routeButton.title = `Afficher/Masquer la route vers la base ${selectedBaseOACI}`;
-    }
-    const csBaseLabel = document.getElementById('cs-base-label');
-    if (csBaseLabel) csBaseLabel.textContent = `CS BASE (${selectedBaseOACI})`;
-    document.querySelectorAll('.base-bingo-label').forEach(el => {
-        el.textContent = `BINGO BASE ${selectedBaseOACI}`;
-    });
-    const deroutFuelMiniBaseLabel = document.getElementById('derout-fuel-mini-base-label');
-    if (deroutFuelMiniBaseLabel) deroutFuelMiniBaseLabel.textContent = `Fuel mini 1 largage / BASE (${selectedBaseOACI}) :`;
-}
-function refreshUI() { drawPermanentAirportMarkers(); if (currentCommune) displayCommuneDetails(currentCommune, false); }
-function drawPermanentAirportMarkers() {
-    permanentAirportLayer.clearLayers();
-
-    otherAirports.forEach(airport => {
-        const isBase = selectedBaseOACI === airport.oaci;
-        const baseButtonText = isBase ? 'BASE ✓' : 'BASE';
-        const baseButtonClass = isBase ? 'base-btn base-btn-active' : 'base-btn';
-        const marker = L.circleMarker([airport.lat, airport.lon], {
-            radius: 2.5,
-            fillColor: 'black',
-            fillOpacity: 1,
-            color: 'transparent',
-            weight: 15,
-            opacity: 0
-        }).bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button></div></div>`);
-        marker.addTo(permanentAirportLayer);
-    });
-
-    pelicanAirports.forEach(airport => {
-        const isDisabled = disabledAirports.has(airport.oaci);
-        const isWater = waterAirports.has(airport.oaci);
-        let iconClass = "custom-marker-icon airport-marker-base ", iconHTML = "✈️";
-        isDisabled ? (iconClass += "airport-marker-disabled", iconHTML = "<b>+</b>") : isWater ? (iconClass += "airport-marker-water", iconHTML = "💧") : iconClass += "airport-marker-active";
-        const icon = L.divIcon({ className: iconClass, html: iconHTML });
-        const marker = L.marker([airport.lat, airport.lon], { icon: icon });
-        const disableButtonText = isDisabled ? "Activer" : "Désactiver";
-        const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
-        const waterButtonText = isWater ? "RETARDANT" : "EAU";
-        const waterButtonClass = isWater ? "water-btn water-btn-retardant" : "water-btn";
-        const isBase = selectedBaseOACI === airport.oaci;
-        const baseButtonText = isBase ? 'BASE ✓' : 'BASE';
-        const baseButtonClass = isBase ? 'base-btn base-btn-active' : 'base-btn';
-        marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button></div></div>`);
-        marker.addTo(permanentAirportLayer);
-    });
-}
-
-async function loadDepartmentsLayerData() {
-    const byDepartment = new Map();
-
-    allCommunes.forEach((commune) => {
-        const depCode = commune?.dep_code;
-        if (!depCode) return;
-
-        if (!byDepartment.has(depCode)) {
-            byDepartment.set(depCode, {
-                points: [],
-                latSum: 0,
-                lonSum: 0,
-                count: 0
-            });
-        }
-
-        const depData = byDepartment.get(depCode);
-
-        if (Number.isFinite(commune.latitude_centre) && Number.isFinite(commune.longitude_centre)) {
-            depData.points.push([commune.latitude_centre, commune.longitude_centre]);
-        }
-
-        if (Number.isFinite(commune.latitude_mairie) && Number.isFinite(commune.longitude_mairie)) {
-            depData.latSum += commune.latitude_mairie;
-            depData.lonSum += commune.longitude_mairie;
-            depData.count += 1;
-        }
-    });
-
-    byDepartment.forEach((depData, depCode) => {
-        if (!depData.points.length) return;
-
-        const sampleStep = Math.max(1, Math.floor(depData.points.length / 400));
-        const sampledPoints = depData.points.filter((_, idx) => idx % sampleStep === 0);
-        const hull = computeConvexHull(sampledPoints);
-        if (hull.length < 3) return;
-
-        const polygon = L.polygon(hull, {
-            color: '#111',
-            weight: 1,
-            opacity: 0.9,
-            fillColor: '#ffffff',
-            fillOpacity: 0.03
-        });
-        departmentsLayerGroup.addLayer(polygon);
-
-        const center = depData.count > 0
-            ? [depData.latSum / depData.count, depData.lonSum / depData.count]
-            : polygon.getBounds().getCenter();
-
-        departmentsLabelsLayer.addLayer(L.marker(center, {
-            icon: L.divIcon({
-                className: 'department-code-label',
-                html: `<span>${depCode}</span>`
-            }),
-            interactive: false,
-            keyboard: false
-        }));
-    });
-
-    hasLoadedDepartments = true;
-}
-
-async function toggleDepartmentsLayer(shouldShow) {
-    const departmentsLayerButton = document.getElementById('departments-layer-button');
-
-    if (shouldShow && !hasLoadedDepartments) {
-        try {
-            await loadDepartmentsLayerData();
-        } catch (error) {
-            console.error('Erreur de chargement du calque départements:', error);
-            alert("Impossible de générer le calque des départements.");
-            areDepartmentsVisible = false;
-            localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
-            if (departmentsLayerButton) departmentsLayerButton.classList.remove('active');
-            return;
-        }
-    }
-
-    areDepartmentsVisible = shouldShow;
-
-    if (areDepartmentsVisible) {
-        departmentsLayerGroup.addTo(map);
-        departmentsLabelsLayer.addTo(map);
-    } else {
-        map.removeLayer(departmentsLayerGroup);
-        map.removeLayer(departmentsLabelsLayer);
-    }
-
-    localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, String(areDepartmentsVisible));
-    if (departmentsLayerButton) departmentsLayerButton.classList.toggle('active', areDepartmentsVisible);
-}
-
-const loadState = () => {
-    const savedDisabled = localStorage.getItem('disabled_airports');
-    if (savedDisabled) disabledAirports = new Set(JSON.parse(savedDisabled));
-    const savedWater = localStorage.getItem('water_airports');
-    if (savedWater) waterAirports = new Set(JSON.parse(savedWater));
-    const savedBase = localStorage.getItem('selected_base_oaci');
-    if (savedBase && getAirportByOaci(savedBase)) {
-        selectedBaseOACI = savedBase;
-    }
-};
-const saveState = () => {
-    localStorage.setItem('disabled_airports', JSON.stringify([...disabledAirports]));
-    localStorage.setItem('water_airports', JSON.stringify([...waterAirports]));
-    localStorage.setItem('selected_base_oaci', selectedBaseOACI);
-};
-window.toggleAirport = oaci => { disabledAirports.has(oaci) ? disabledAirports.delete(oaci) : (disabledAirports.add(oaci), waterAirports.delete(oaci)), saveState(), refreshUI() };
-window.toggleWater = oaci => { waterAirports.has(oaci) ? waterAirports.delete(oaci) : (waterAirports.add(oaci), disabledAirports.delete(oaci)), saveState(), refreshUI() };
-window.setBaseAirport = oaci => {
-    if (!getAirportByOaci(oaci)) return;
-    selectedBaseOACI = oaci;
-    saveState();
-    updateBaseLabels();
-    updateCalculatorData();
-    if (typeof window.updateBaseSunsetDisplay === 'function') {
-        window.updateBaseSunsetDisplay();
-    }
-    refreshUI();
-    if (map) map.closePopup();
-};
-
-function toggleLiveGps() {
-    const liveGpsButton = document.getElementById('live-gps-button');
-    if (watchId) {
-        navigator.geolocation.clearWatch(watchId);
-        watchId = null;
-        liveGpsButton.classList.remove('active');
-        localStorage.setItem('liveGpsActive', 'false');
-    } else {
-        if (!navigator.geolocation) { alert("La géolocalisation n'est pas supportée."); return; }
-        watchId = navigator.geolocation.watchPosition(
-            updateUserPosition, 
-            (error) => { console.error("Erreur de suivi GPS:", error); alert("Impossible d'activer le suivi GPS. Vérifiez les autorisations."); if (watchId) toggleLiveGps(); }, 
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-        liveGpsButton.classList.add('active');
-        localStorage.setItem('liveGpsActive', 'true');
-    }
-}
-
-function drawUserToTargetRoute() {
-    userToTargetLayer.clearLayers();
-    if (currentCommune && userMarker && userMarker.getLatLng()) {
-        const { latitude_mairie: lat, longitude_mairie: lon } = currentCommune;
-        const userLatLng = userMarker.getLatLng();
-
-        const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, lat, lon);
-        const magneticBearing = (trueBearingToTarget - MAGNETIC_DECLINATION + 360) % 360;
-
-        drawRoute([userLatLng.lat, userLatLng.lng], [lat, lon], { isUser: true, magneticBearing: magneticBearing });
-    }
-}
-
-function updateNearestCommuneDisplay(lat, lon) {
-    const nearestDisplay = document.getElementById('nearest-commune-display');
-    if (!nearestDisplay) return;
-
-    const nearestCommune = findClosestCommune(lat, lon);
-    if (!nearestCommune) {
-        nearestDisplay.style.display = 'none';
-        nearestDisplay.innerHTML = '';
-        return;
-    }
-
-    nearestDisplay.style.display = 'block';
-    nearestDisplay.innerHTML = `📍 Plus proche: <b>${nearestCommune.nom_standard} (${nearestCommune.dep_code})</b>`;
-}
-
-function findClosestCommune(lat, lon, maxDistanceNm = null) {
-    if (!allCommunes || allCommunes.length === 0) return null;
-    let closestCommune = null;
-    let minDistance = Infinity;
-
-    for (const commune of allCommunes) {
-        const distance = calculateDistanceInNm(lat, lon, commune.latitude_mairie, commune.longitude_mairie);
-        if (distance < minDistance) {
-            minDistance = distance;
-            closestCommune = commune;
-        }
-    }
-
-    if (maxDistanceNm !== null && minDistance >= maxDistanceNm) {
-        return null;
-    }
-
-    return closestCommune;
-}
-
-function updateUserPosition(pos) {
-    const { latitude, longitude } = pos.coords;
-
-    if (!userMarker) {
-        // La classe 'user-marker' dans style.css définit déjà un rond rouge. 
-        // En laissant 'html' vide, on n'affiche que le fond.
-        const userIcon = L.divIcon({ className: 'custom-marker-icon user-marker', html: '' });
-        userMarker = L.marker([latitude, longitude], { icon: userIcon }).bindPopup('Votre position').addTo(map);
-    } else {
-        userMarker.setLatLng([latitude, longitude]);
-    }
-
-    updateNearestCommuneDisplay(latitude, longitude);
-
-    // Synchronise les calculs (dont GPS->Feu) dès qu'une position GPS est reçue.
-    if (currentCommune) {
-        updateCalculatorData();
-    }
-
-    // On appelle toujours la fonction qui redessine la route
-    drawUserToTargetRoute();
-}
-
-function findClosestCommuneName(lat, lon) {
-    const closestCommune = findClosestCommune(lat, lon, 27);
-    return closestCommune ? closestCommune.nom_standard : null;
-}
-
-function toggleLftwRoute() {
-    showLftwRoute = !showLftwRoute;
-    localStorage.setItem('showLftwRoute', showLftwRoute);
-    updateLftwButtonState();
-    if(currentCommune) { displayCommuneDetails(currentCommune, false); }
-}
-
-function updateLftwButtonState() {
-    const lftwRouteButton = document.getElementById('lftw-route-button');
-    lftwRouteButton.classList.toggle('active', showLftwRoute);
-}
-
-function drawLftwRoute() {
-    lftwRouteLayer.clearLayers();
-    if (!showLftwRoute || !currentCommune) return;
-    const baseAirport = getAirportByOaci(selectedBaseOACI);
-    if (!baseAirport) return;
-    const { latitude_mairie: lat, longitude_mairie: lon } = currentCommune;
-    const { lat: baseLat, lon: baseLon } = baseAirport;
-    const trueBearing = calculateBearing(lat, lon, baseLat, baseLon);
-    const magneticBearing = (trueBearing - MAGNETIC_DECLINATION + 360) % 360;
-    drawRoute([lat, lon], [baseLat, baseLon], { isLftwRoute: true, magneticBearing: magneticBearing });
-}
-
-function toggleGaarVisibility() { isGaarMode = !isGaarMode; updateGaarButtonState(); if (isGaarMode) { redrawGaarCircuits(); } else { gaarLayer.clearLayers(); if (isDrawingMode) { toggleGaarDrawingMode(); } } }
-function updateGaarButtonState() { const gaarButton = document.getElementById('gaar-mode-button'); const gaarControls = document.getElementById('gaar-controls'); gaarButton.classList.toggle('active', isGaarMode); gaarControls.style.display = isGaarMode ? 'flex' : 'none'; }
-function toggleGaarDrawingMode() { const editButton = document.getElementById('edit-circuits-button'); const mapContainer = document.getElementById('map'); const status = document.getElementById('gaar-status'); isDrawingMode = !isDrawingMode; editButton.classList.toggle('active', isDrawingMode); mapContainer.classList.toggle('crosshair-cursor', isDrawingMode); status.textContent = isDrawingMode ? 'Mode modification activé. Cliquez pour ajouter des points.' : ''; }
-async function handleGaarMapClick(e) { if (!isDrawingMode) return; let targetCircuit = gaarCircuits.find(c => c && c.isManual && c.points.length < 3); if (!targetCircuit) { const manualCircuitsCount = gaarCircuits.filter(c => c && c.isManual).length; targetCircuit = { points: [], color: manualCircuitColors[manualCircuitsCount % manualCircuitColors.length], isManual: true, }; gaarCircuits.push(targetCircuit); } const pointName = await reverseGeocode(e.latlng) || `Point Manuel`; targetCircuit.points.push({ lat: e.latlng.lat, lng: e.latlng.lng, name: pointName }); redrawGaarCircuits(); saveGaarCircuits(); }
-async function reverseGeocode(latlng) { document.getElementById('gaar-status').textContent = 'Recherche du nom...'; try { if (!navigator.onLine) { throw new Error("Application hors ligne."); } const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latlng.lat}&lon=${latlng.lng}&zoom=10`); if (!response.ok) throw new Error('La réponse du réseau n\'était pas OK.'); const data = await response.json(); const name = data.address.city || data.address.town || data.address.village || data.display_name.split(',')[0]; document.getElementById('gaar-status').textContent = `Point ajouté près de ${name}.`; return name; } catch (error) { const closestCommuneName = findClosestCommuneName(latlng.lat, latlng.lng); if (closestCommuneName) { document.getElementById('gaar-status').textContent = `Point ajouté près de ${closestCommuneName} (hors-ligne).`; return closestCommuneName; } else { document.getElementById('gaar-status').textContent = 'Nom non trouvé (hors-ligne).'; return null; } } }
-function redrawGaarCircuits() { gaarLayer.clearLayers(); gaarCircuits.forEach((circuit, circuitIndex) => { if (!circuit || circuit.points.length === 0) return; const latlngs = circuit.points.map(p => [p.lat, p.lng]); const styleOptions = { color: circuit.color, weight: 3, opacity: 0.6, fillColor: circuit.color, fillOpacity: 0.2 }; if (latlngs.length >= 3) { L.polygon(latlngs, styleOptions).addTo(gaarLayer); } else if (latlngs.length > 1) { L.polyline(latlngs, styleOptions).addTo(gaarLayer); } circuit.points.forEach((point, pointIndex) => { const marker = L.circleMarker([point.lat, point.lng], { radius: 8, fillColor: circuit.color, color: '#000', weight: 1, opacity: 1, fillOpacity: 0.8 }).addTo(gaarLayer); marker.bindTooltip(`${pointIndex + 1}. ${point.name}`, { permanent: true, direction: 'top', className: 'gaar-point-label' }); const popupContent = `<div class="gaar-popup-form"><input type="text" id="gaar-input-${circuitIndex}-${pointIndex}" value="${point.name}"><button onclick="updateGaarPoint(${circuitIndex}, ${pointIndex})">OK</button><button class="delete-point-btn" onclick="deleteGaarPoint(${circuitIndex}, ${pointIndex})">Supprimer</button></div>`; marker.bindPopup(popupContent); }); }); }
-window.updateGaarPoint = function(circuitIndex, pointIndex) { const input = document.getElementById(`gaar-input-${circuitIndex}-${pointIndex}`); const newName = input.value.trim(); if (newName) { gaarCircuits[circuitIndex].points[pointIndex].name = newName; redrawGaarCircuits(); saveGaarCircuits(); map.closePopup(); } };
-window.deleteGaarPoint = function(circuitIndex, pointIndex) { gaarCircuits[circuitIndex].points.splice(pointIndex, 1); if (gaarCircuits[circuitIndex].points.length === 0) { gaarCircuits.splice(circuitIndex, 1); } redrawGaarCircuits(); saveGaarCircuits(); };
-function clearAllGaarCircuits() { gaarCircuits = []; gaarLayer.clearLayers(); saveGaarCircuits(); }
-function saveGaarCircuits() { localStorage.setItem('gaarCircuits', JSON.stringify(gaarCircuits)); }
-
-function updateCalculatorData() {
-    if (!currentCommune) {
-        CALCULATOR_DATA = { distBaseFeu: 0, distPelicFeu: 0, csFeu: '--:--', distGpsFeu: 0 };
-    } else {
-        const baseAirport = getAirportByOaci(selectedBaseOACI);
-        const selectedPelican = pelicanAirports.find(ap => ap.oaci === selectedPelicanOACI);
-        const { latitude_mairie: feuLat, longitude_mairie: feuLon } = currentCommune;
-        let distBaseFeu = 0; if (baseAirport) { distBaseFeu = calculateDistanceInNm(baseAirport.lat, baseAirport.lon, feuLat, feuLon); }
-        let distPelicFeu = 0; if (selectedPelican) { distPelicFeu = calculateDistanceInNm(selectedPelican.lat, selectedPelican.lon, feuLat, feuLon); }
-        let csFeu = '--:--'; if (typeof SunCalc !== 'undefined') { try { const now = new Date(); const times = SunCalc.getTimes(now, feuLat, feuLon); csFeu = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' }); } catch (e) { /* ignore */ } }
-        let distGpsFeu = 0; if (userMarker && userMarker.getLatLng()) { const userLatLng = userMarker.getLatLng(); distGpsFeu = calculateDistanceInNm(userLatLng.lat, userLatLng.lng, feuLat, feuLon); }
-        CALCULATOR_DATA.distBaseFeu = Math.round(distBaseFeu);
-        CALCULATOR_DATA.distPelicFeu = Math.round(distPelicFeu);
-        CALCULATOR_DATA.csFeu = csFeu;
-        CALCULATOR_DATA.distGpsFeu = Math.round(distGpsFeu);
-    }
-    if (typeof masterRecalculate === 'function') { masterRecalculate(); }
-}
-
-function soundex(s) { if (!s) return ""; const a = s.toLowerCase().split(""), f = a.shift(); if (!f) return ""; let r = ""; const codes = { a: "", e: "", i: "", o: "", u: "", b: 1, f: 1, p: 1, v: 1, c: 2, g: 2, j: 2, k: 2, q: 2, s: 2, x: 2, z: 2, d: 3, t: 3, l: 4, m: 5, n: 5, r: 6 }; return r = f + a.map(v => codes[v]).filter((v, i, a) => 0 === i ? v !== codes[f] : v !== a[i - 1]).join(""), (r + "000").slice(0, 4).toUpperCase() }
-// =========================================================================
-// GESTION DES CARTES HORS-LIGNE
-// =========================================================================
-function initDB() {
-    return new Promise((resolve, reject) => {
-        if (typeof indexedDB === 'undefined') {
-            reject(new Error('IndexedDB indisponible'));
-            return;
-        }
-        const request = indexedDB.open('OfflineTilesDB', 2);
-        request.onupgradeneeded = event => {
-            const dbInstance = event.target.result;
-            const transaction = event.target.transaction;
-
-            if (!dbInstance.objectStoreNames.contains('tiles')) {
-                const store = dbInstance.createObjectStore('tiles', { keyPath: 'url' });
-                store.createIndex('packName', 'packName', { unique: false });
-            }
-
-            if (!dbInstance.objectStoreNames.contains('settings')) {
-                dbInstance.createObjectStore('settings', { keyPath: 'key' });
-            }
-
-            if (transaction && dbInstance.objectStoreNames.contains('settings')) {
-                transaction.objectStore('settings').put({ key: OFFLINE_TILES_ENABLED_KEY, value: DEFAULT_OFFLINE_TILES_ENABLED });
-            }
-        };
-        request.onsuccess = event => {
-            db = event.target.result;
-            db.onversionchange = () => {
-                try { db.close(); } catch (_) {}
-            };
-            console.log("[DB] Connexion réussie.");
-            resolve(db);
-        };
-        request.onerror = event => {
-            console.error("[DB] Erreur de connexion:", event.target.error);
-            reject(event.target.error);
-        };
-        request.onblocked = () => {
-            reject(new Error("IndexedDB bloquée par une autre instance de l'application"));
-        };
-    });
-}
-
-function getOfflineTilesEnabled() {
-    return new Promise((resolve) => {
-        if (!db) {
-            resolve(DEFAULT_OFFLINE_TILES_ENABLED);
-            return;
-        }
-
-        const transaction = db.transaction('settings', 'readonly');
-        const store = transaction.objectStore('settings');
-        const request = store.get(OFFLINE_TILES_ENABLED_KEY);
-
-        request.onsuccess = () => {
-            if (!request.result || typeof request.result.value !== 'boolean') {
-                resolve(DEFAULT_OFFLINE_TILES_ENABLED);
-                return;
-            }
-            resolve(request.result.value);
-        };
-        request.onerror = () => resolve(DEFAULT_OFFLINE_TILES_ENABLED);
-    });
-}
-
-function setOfflineTilesEnabled(enabled) {
-    return new Promise((resolve, reject) => {
-        if (!db) {
-            offlineTilesMode = !!enabled;
-            localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, String(offlineTilesMode));
-            notifyServiceWorkerOfflineTilesPreference(enabled);
-            resolve();
-            return;
-        }
-        const transaction = db.transaction('settings', 'readwrite');
-        const store = transaction.objectStore('settings');
-        store.put({ key: OFFLINE_TILES_ENABLED_KEY, value: enabled });
-        transaction.oncomplete = () => {
-            offlineTilesMode = !!enabled;
-            localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, String(offlineTilesMode));
-            notifyServiceWorkerOfflineTilesPreference(enabled);
-            resolve();
-        };
-        transaction.onerror = () => reject(transaction.error);
-    });
-}
-
-function notifyServiceWorkerOfflineTilesPreference(enabled) {
-    if (!('serviceWorker' in navigator)) return;
-    if (!navigator.serviceWorker.controller) return;
-    navigator.serviceWorker.controller.postMessage({
-        type: 'OFFLINE_TILES_ENABLED_CHANGED',
-        value: !!enabled
-    });
-}
-
-function notifyServiceWorkerOfflineOnlineFallback(enabled) {
-    if (!('serviceWorker' in navigator)) return;
-    if (!navigator.serviceWorker.controller) return;
-    navigator.serviceWorker.controller.postMessage({
-        type: 'OFFLINE_ONLINE_FALLBACK_CHANGED',
-        value: !!enabled
-    });
-}
-
-function notifyServiceWorkerActivePacks(packs) {
-    if (!('serviceWorker' in navigator)) return;
-    if (!navigator.serviceWorker.controller) return;
-    navigator.serviceWorker.controller.postMessage({
-        type: 'OFFLINE_ACTIVE_PACKS_CHANGED',
-        value: Array.isArray(packs) ? packs : []
-    });
-}
-
-async function setOfflineActivePacks(packs) {
-    activeOfflinePacks = Array.isArray(packs) ? packs.filter(Boolean) : [];
-    localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
-    if (db) {
-        try {
-            const tx = db.transaction('settings', 'readwrite');
-            tx.objectStore('settings').put({ key: OFFLINE_ACTIVE_PACKS_KEY, value: activeOfflinePacks });
-        } catch (_) {}
-    }
-    notifyServiceWorkerActivePacks(activeOfflinePacks);
-}
-
-function setOfflineOnlineFallbackMode(enabled) {
-    offlineOnlineFallbackMode = !!enabled;
-    localStorage.setItem(OFFLINE_ONLINE_FALLBACK_KEY, String(offlineOnlineFallbackMode));
-    if (db) {
-        try {
-            const tx = db.transaction('settings', 'readwrite');
-            tx.objectStore('settings').put({ key: OFFLINE_ONLINE_FALLBACK_KEY, value: offlineOnlineFallbackMode });
-        } catch (_) {}
-    }
-    notifyServiceWorkerOfflineOnlineFallback(offlineOnlineFallbackMode);
-}
-
-function updateMapSourceButtons() {
-    const onlineBtn = document.getElementById('map-source-online-btn');
-    const offlineBtn = document.getElementById('map-source-offline-btn');
-    if (!onlineBtn || !offlineBtn) return;
-    onlineBtn.classList.toggle('active', mapSourceMode !== 'offline');
-    offlineBtn.classList.toggle('active', mapSourceMode === 'offline');
-    onlineBtn.disabled = isMapSourceSwitching;
-    offlineBtn.disabled = isMapSourceSwitching;
-    onlineBtn.setAttribute('aria-pressed', String(mapSourceMode !== 'offline'));
-    offlineBtn.setAttribute('aria-pressed', String(mapSourceMode === 'offline'));
-}
-
-async function setMapSourceMode(mode) {
-    if (isMapSourceSwitching) return;
-    isMapSourceSwitching = true;
-    mapSourceMode = mode === 'offline' ? 'offline' : 'online';
-    localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
-    updateMapSourceButtons();
-    updateOfflineStatus();
-    try {
-        await setOfflineTilesEnabled(mapSourceMode === 'offline');
-        setOfflineOnlineFallbackMode(false);
-        notifyServiceWorkerActivePacks(activeOfflinePacks);
-        await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
-        if (map && baseTileLayer) setupBaseTileLayer();
-    } finally {
-        isMapSourceSwitching = false;
-        updateMapSourceButtons();
-        updateOfflineStatus();
-    }
-}
-
-function updateOfflineStatus() {
-    const status = document.getElementById('offline-status');
-    if (!status) return;
-    if (mapSourceMode !== 'offline') {
-        status.textContent = 'Mode ONLINE actif : seules les tuiles en ligne sont affichées.';
-        return;
-    }
-
-    const selectedLabel = activeOfflinePacks.length
-        ? `Packs actifs : ${activeOfflinePacks.join(', ')}.`
-        : 'Aucun pack actif.';
-    status.textContent = `Mode OFFLINE strict actif. ${selectedLabel}`;
-}
-
-async function initializeOfflineTilePreference() {
-    const enabled = mapSourceMode === 'offline';
-    await setOfflineTilesEnabled(enabled);
-    setOfflineOnlineFallbackMode(false);
-    notifyServiceWorkerOfflineTilesPreference(enabled);
-    notifyServiceWorkerOfflineOnlineFallback(false);
-    notifyServiceWorkerActivePacks(activeOfflinePacks);
-    updateMapSourceButtons();
-    updateOfflineStatus();
-}
-
-async function purgeInactivePacksCache() {
-    if (!db) {
-        alert('Base offline indisponible.');
-        return;
-    }
-    const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
-    const inactiveNames = installedPacks.map((p) => p.name).filter((name) => !activeOfflinePacks.includes(name));
-    if (!inactiveNames.length) {
-        alert('Aucun pack désélectionné à purger.');
-        return;
-    }
-    if (!confirm(`Supprimer définitivement le cache de ${inactiveNames.length} pack(s) désélectionné(s) ?`)) {
-        return;
-    }
-
-    const inactiveSet = new Set(inactiveNames);
-    let deletedCount = 0;
-    await new Promise((resolve, reject) => {
-        const tx = db.transaction('tiles', 'readwrite');
-        const store = tx.objectStore('tiles');
-        const request = store.openCursor();
-        request.onsuccess = (event) => {
-            const cursor = event.target.result;
-            if (!cursor) return;
-            if (inactiveSet.has(cursor.value?.packName || '')) {
-                cursor.delete();
-                deletedCount += 1;
-            }
-            cursor.continue();
-        };
-        request.onerror = () => reject(request.error || new Error('Erreur purge cache offline'));
-        tx.oncomplete = () => resolve();
-        tx.onerror = () => reject(tx.error || new Error('Erreur transaction purge offline'));
-    });
-
-    const updatedInstalled = installedPacks.filter((pack) => !inactiveSet.has(pack.name));
-    localStorage.setItem('installedMapPacks', JSON.stringify(updatedInstalled));
-    await updateBaseTileNativeZoomFromAvailability({ forceScan: mapSourceMode === 'offline' });
-    displayInstalledMaps();
-    alert(`Purge terminée: ${deletedCount} tuiles supprimées (${inactiveNames.length} pack(s)).`);
-}
-
-async function handleZipImport(file) {
-    if (!file) return;
-    if (isZipImportRunning) {
-        alert("Un import est déjà en cours. Veuillez attendre la fin avant d'importer un autre ZIP.");
-        return;
-    }
-    if (typeof JSZip === 'undefined') {
-        alert("ERREUR : La librairie d'importation (JSZip) n'est pas chargée.");
-        return;
-    }
-
-    if (!db) {
-        try {
-            await initDB();
-        } catch (error) {
-            alert(`ERREUR : Impossible d'ouvrir la base locale (${error.message || error}).`);
-            return;
-        }
-    }
-
-    const packName = file.name.replace(/\.zip$/i, '');
-    const progressSection = document.getElementById('import-progress-section');
-    const statusMessage = document.getElementById('import-status-message');
-    const progressBar = document.getElementById('import-progress-bar');
-
-    progressSection.style.display = 'block';
-    progressBar.style.width = '0%';
-    statusMessage.textContent = `Analyse du fichier ${packName}...`;
-    isZipImportRunning = true;
-
-    try {
-        if (file.size > 300 * 1024 * 1024) {
-            statusMessage.textContent = `Fichier volumineux (${Math.round(file.size / (1024 * 1024))} Mo) : import optimisé mémoire...`;
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-        const zip = await JSZip.loadAsync(file);
-        const zipEntries = Object.values(zip.files);
-        const validEntries = [];
-        let importedMaxZoom = 0;
-
-        for (let i = 0; i < zipEntries.length; i += 1) {
-            const fileEntry = zipEntries[i];
-            if (fileEntry.dir) continue;
-            const parsedTile = parseTilePathFromName(fileEntry.name);
-            if (!parsedTile) continue;
-            validEntries.push({ fileEntry, tilePath: parsedTile.tilePath });
-            importedMaxZoom = Math.max(importedMaxZoom, parsedTile.zoom);
-
-            if (i % 1000 === 0) {
-                statusMessage.textContent = `Préparation des tuiles... ${i} / ${zipEntries.length}`;
-                await new Promise((resolve) => setTimeout(resolve, 0));
-            }
-        }
-
-        const totalFiles = validEntries.length;
-
-        if (totalFiles === 0) {
-            throw new Error("Aucune tuile valide trouvée dans le ZIP. Formats acceptés : z/x/y.png (avec sous-dossiers possibles) ou z_x_y.png (z-y-x aussi accepté).");
-        }
-
-        statusMessage.textContent = `Préparation terminée. Importation de ${totalFiles} tuiles...`;
-
-        const batchSize = file.size > 300 * 1024 * 1024 ? 8 : 24;
-        let processedFiles = 0;
-
-        for (let i = 0; i < validEntries.length; i += batchSize) {
-            const batchEntries = validEntries.slice(i, i + batchSize);
-            const batch = await Promise.all(batchEntries.map(async ({ fileEntry, tilePath }) => {
-                const blob = await fileEntry.async('blob');
-                return {
-                    url: `https://a.tile.openstreetmap.org/${tilePath}`,
-                    tile: blob,
-                    packName: packName
-                };
-            }));
-            const transaction = db.transaction('tiles', 'readwrite');
-            const store = transaction.objectStore('tiles');
-            batch.forEach((tileData) => store.put(tileData));
-
-            await new Promise((resolve, reject) => {
-                transaction.oncomplete = () => {
-                    processedFiles += batchEntries.length;
-                    statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
-                    progressBar.style.width = `${(processedFiles / totalFiles) * 100}%`;
-                    resolve();
-                };
-                transaction.onerror = () => reject(transaction.error);
-            });
-
-            await new Promise((resolve) => setTimeout(resolve, 0));
-        }
-
-        statusMessage.textContent = `Importation de ${packName} terminée !`;
-
-        const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
-        if (!installedPacks.find(p => p.name === packName)) {
-            installedPacks.push({ name: packName, date: new Date().toLocaleDateString() });
-            localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
-        }
-        if (!activeOfflinePacks.includes(packName)) {
-            await setOfflineActivePacks([...activeOfflinePacks, packName]);
-        }
-        const currentOfflineMax = Number.parseInt(localStorage.getItem(OFFLINE_TILES_MAX_ZOOM_KEY) || '', 10);
-        const nextOfflineMax = Number.isFinite(currentOfflineMax) ? Math.max(currentOfflineMax, importedMaxZoom) : importedMaxZoom;
-        localStorage.setItem(OFFLINE_TILES_MAX_ZOOM_KEY, String(nextOfflineMax));
-        await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
-        displayInstalledMaps();
-
-    } catch (error) {
-        statusMessage.textContent = `Erreur: ${error.message}`;
-        console.error("Erreur d'importation ZIP:", error);
-    } finally {
-        isZipImportRunning = false;
-        setTimeout(() => { progressSection.style.display = 'none'; }, 5000);
-    }
-}
-
-function parseTilePathFromName(name) {
-    const normalizedName = String(name || '').replace(/\\/g, '/');
-    const xyzMatch = normalizedName.match(/(?:^|\/)(\d+)\/(\d+)\/(\d+)\.(png|jpg|jpeg)$/i);
-    const flatMatch = xyzMatch ? null : normalizedName.match(/(?:^|\/)(\d+)[-_](\d+)[-_](\d+)\.(png|jpg|jpeg)$/i);
-    const parts = xyzMatch || flatMatch;
-    if (!parts) return null;
-    const zoom = Number.parseInt(parts[1], 10);
-    if (!Number.isFinite(zoom)) return null;
-    return {
-        tilePath: `${parts[1]}/${parts[2]}/${parts[3]}.png`,
-        zoom
-    };
-}
-
-function displayInstalledMaps() {
-    const list = document.getElementById('installed-maps-list');
-    const select = document.getElementById('offline-pack-select');
-    const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
-    const installedPackNames = installedPacks.map((pack) => pack.name);
-    const previousActive = new Set(activeOfflinePacks);
-    list.innerHTML = '';
-
-    if (activeOfflinePacks.length === 0 && installedPacks.length > 0) {
-        activeOfflinePacks = [...installedPackNames];
-        localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
-        notifyServiceWorkerActivePacks(activeOfflinePacks);
-    } else {
-        const filtered = activeOfflinePacks.filter((pack) => installedPackNames.includes(pack));
-        if (filtered.length !== activeOfflinePacks.length) {
-            activeOfflinePacks = filtered;
-            localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
-            notifyServiceWorkerActivePacks(activeOfflinePacks);
-        }
-    }
-
-    if (installedPacks.length === 0) {
-        list.innerHTML = '<li class="no-maps-placeholder">Aucun pack de cartes installé.</li>';
-        updateOfflineStatus();
-        return;
-    }
-
-    installedPacks.forEach(pack => {
-        const li = document.createElement('li');
-        const checked = previousActive.has(pack.name) || activeOfflinePacks.includes(pack.name);
-        li.innerHTML = `
-            <span>
-                <label style="display:flex;align-items:center;gap:8px;">
-                    <input type="checkbox" class="offline-pack-active-toggle" data-pack-name="${pack.name}" ${checked ? 'checked' : ''}>
-                    <strong>${pack.name}</strong> (Installé le ${pack.date})
-                </label>
-            </span>
-            <button class="delete-map-btn" onclick="window.deleteMapPack('${pack.name}')">Supprimer</button>
-        `;
-        list.appendChild(li);
-    });
-
-    list.querySelectorAll('.offline-pack-active-toggle').forEach((checkbox) => {
-        checkbox.addEventListener('change', async () => {
-            const toggles = Array.from(list.querySelectorAll('.offline-pack-active-toggle'));
-            const nextActive = toggles.filter((el) => el.checked).map((el) => el.dataset.packName).filter(Boolean);
-            await setOfflineActivePacks(nextActive);
-            await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
-            setupBaseTileLayer();
-            updateOfflineStatus();
-        });
-    });
-    updateOfflineStatus();
-}
-
-window.deleteMapPack = async function(packName) {
-    if (!confirm(`Voulez-vous vraiment supprimer le pack de cartes "${packName}" ?\nCette opération peut prendre du temps.`)) {
-        return;
-    }
-
-    const withTimeout = (promise, timeoutMs, timeoutMessage) => new Promise((resolve, reject) => {
-        const timerId = setTimeout(() => reject(new Error(timeoutMessage)), timeoutMs);
-        promise.then(
-            (value) => { clearTimeout(timerId); resolve(value); },
-            (error) => { clearTimeout(timerId); reject(error); }
-        );
-    });
-
-    const collectPackKeysByIndex = (limit = 200) => new Promise((resolve, reject) => {
-        const keys = [];
-        const tx = db.transaction('tiles', 'readonly');
-        const store = tx.objectStore('tiles');
-        const index = store.index('packName');
-        const request = index.openCursor(IDBKeyRange.only(packName));
-
-        request.onsuccess = () => {
-            const cursor = request.result;
-            if (!cursor || keys.length >= limit) {
-                return;
-            }
-            keys.push(cursor.primaryKey);
-            cursor.continue();
-        };
-
-        request.onerror = () => reject(request.error || new Error('Erreur lecture des clés pack (index)'));
-        tx.oncomplete = () => resolve(keys);
-        tx.onerror = () => reject(tx.error || new Error('Erreur transaction lecture indexedDB (index)'));
-        tx.onabort = () => reject(tx.error || new Error('Transaction lecture indexedDB annulée (index)'));
-    });
-
-    const collectPackKeysByScan = (limit = 100) => new Promise((resolve, reject) => {
-        const keys = [];
-        const tx = db.transaction('tiles', 'readonly');
-        const store = tx.objectStore('tiles');
-        const request = store.openCursor();
-
-        request.onsuccess = () => {
-            const cursor = request.result;
-            if (!cursor || keys.length >= limit) {
-                return;
-            }
-
-            const value = cursor.value || {};
-            if (value.packName === packName) {
-                keys.push(cursor.primaryKey);
-            }
-            cursor.continue();
-        };
-
-        request.onerror = () => reject(request.error || new Error('Erreur lecture des clés pack (scan)'));
-        tx.oncomplete = () => resolve(keys);
-        tx.onerror = () => reject(tx.error || new Error('Erreur transaction lecture indexedDB (scan)'));
-        tx.onabort = () => reject(tx.error || new Error('Transaction lecture indexedDB annulée (scan)'));
-    });
-
-    const deleteKeysBatch = (keys) => new Promise((resolve, reject) => {
-        if (!keys.length) {
-            resolve(0);
-            return;
-        }
-
-        let deletedCount = 0;
-        const tx = db.transaction('tiles', 'readwrite');
-        const store = tx.objectStore('tiles');
-
-        keys.forEach((key) => {
-            const delReq = store.delete(key);
-            delReq.onsuccess = () => { deletedCount += 1; };
-            delReq.onerror = () => reject(delReq.error || new Error('Erreur suppression clé indexedDB'));
-        });
-
-        tx.oncomplete = () => resolve(deletedCount);
-        tx.onerror = () => reject(tx.error || new Error('Erreur transaction suppression indexedDB'));
-        tx.onabort = () => reject(tx.error || new Error('Transaction suppression indexedDB annulée'));
-    });
-
-    const purgeByCollector = async (collector, initialBatchSize) => {
-        let totalDeleted = 0;
-        let batchSize = initialBatchSize;
-
-        while (true) {
-            const keys = await withTimeout(
-                collector(batchSize),
-                30000,
-                'Lecture des clés du pack trop longue'
-            );
-
-            if (keys.length === 0) {
-                break;
-            }
-
-            try {
-                totalDeleted += await withTimeout(
-                    deleteKeysBatch(keys),
-                    45000,
-                    'Suppression du lot indexedDB trop longue'
-                );
-
-                if (batchSize < initialBatchSize) {
-                    batchSize = Math.min(initialBatchSize, batchSize * 2);
-                }
-            } catch (deleteError) {
-                if (batchSize === 1) {
-                    throw deleteError;
-                }
-                batchSize = Math.max(1, Math.floor(batchSize / 2));
-                console.warn(`Suppression pack: réduction batch à ${batchSize} suite à une erreur indexedDB.`);
-            }
-        }
-
-        return totalDeleted;
-    };
-
-    try {
-        if (!db) {
-            await withTimeout(initDB(), 15000, 'Initialisation indexedDB trop longue');
-        }
-
-        let deletedCount = await purgeByCollector(collectPackKeysByIndex, 200);
-        if (deletedCount === 0) {
-            deletedCount = await purgeByCollector(collectPackKeysByScan, 100);
-        }
-
-        alert(`${deletedCount} tuiles du pack "${packName}" ont été supprimées.`);
-
-        let installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
-        installedPacks = installedPacks.filter(p => p.name !== packName);
-        localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
-
-        if ('caches' in window) {
-            const cacheNames = await caches.keys();
-            await Promise.all(cacheNames
-                .filter(name => name.startsWith('test-communes-tile-cache-'))
-                .map(name => caches.delete(name))
-            );
-        }
-
-        await updateBaseTileNativeZoomFromAvailability({ forceScan: true });
-        displayInstalledMaps();
-
-    } catch (error) {
-        alert(`Erreur lors de la suppression du pack : ${error.message || error}`);
-        console.error('Erreur de suppression:', error);
-    }
+      SpreadsheetApp.getActive().toast("Clique dans une cellule puis réessaie.", "Coloration", 2);
+    } catch (e) {}
+  }
+
+  // Sinon: silence. Le pending fera le job au prochain onEdit (valeur commit).
 }
 
 
-// =========================================================================
-// LOGIQUE DU CALCULATEUR DE MISSION
-// =========================================================================
-let CALCULATOR_DATA = { distBaseFeu: 0, distPelicFeu: 0, csFeu: '--:--', distGpsFeu: 0 };
-const calculateBingo = (dist) => (dist <= 70) ? (dist * 5) + 700 : (dist * 4) + 700;
-const calculateFuelToGo = (dist) => (dist <= 70) ? (dist * 5) : (dist * 4);
-const calculateConsoRotation = (dist) => { const effectiveDist = Math.max(dist, 10); return (effectiveDist <= 70) ? (effectiveDist * 10) + 250 : (effectiveDist * 8) + 250; };
-const calculateTransitTime = (dist) => (dist <= 70) ? (dist * (60 / 210)) : (dist * (60 / 240));
-const calculateRotationTime = (dist) => {
-    const effectiveDist = Math.max(dist, 10);
-    const rotationDistance = effectiveDist * 2;
-    return (effectiveDist <= 50) ? (20 + (rotationDistance / 3.5)) : (20 + (rotationDistance / 4));
-};
-let masterRecalculate = () => {};
-let isFuelSurFeuManual = false, isSuiviConsoManual = false, isSuiviDureeManual = false;
-const parseTime = (timeString) => { if (!timeString || !timeString.includes(':')) return null; const parts = timeString.split(':'); return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10); };
-const formatTime = (totalMinutes) => { if (totalMinutes === null || isNaN(totalMinutes) || totalMinutes < 0) return ''; const roundedMinutes = Math.round(totalMinutes); const hours = Math.floor(roundedMinutes / 60); const minutes = roundedMinutes % 60; return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`; };
-const parseNumeric = (numericString) => { if (!numericString) return null; const value = parseInt(numericString.replace(/[^0-9]/g, ''), 10); return isNaN(value) ? null : value; };
 
-function updateAndSortRotations(container, current, params) {
-    const lines = Array.from(container.querySelectorAll('.result-line'));
-    const resultsData = [];
-    let minTimeLimit = Infinity;
-    let minFuelLimit = Infinity;
 
-    // --- Première passe : Calculer toutes les valeurs et trouver la limite temporelle ---
-    lines.forEach(line => {
-        const type = line.dataset.rotationType;
-        let value = null;
-        let formulaString = "Données insuffisantes pour le calcul.";
-
-        const canCalculateFuel = current.fuel !== null && params.consoRotation !== null && params.consoRotation > 0;
-        const canCalculateTime = current.time !== null && params.rotationTime !== null && params.rotationTime > 0;
-
-        const initialFuelForCheck = current.fuel + (params.transitTime && params.consoTransitFromGps ? (params.consoTransitFromGps || 0) : 0);
-        const fuelForFirstDropBase = (params.transitTime && params.consoTransitFromGps ? (params.consoTransitFromGps || 0) : 0) + 250 + params.bingoBase;
-        const fuelForFirstDropPelic = (params.transitTime && params.consoTransitFromGps ? (params.consoTransitFromGps || 0) : 0) + 250 + params.bingoPelic;
-
-        const hasFuelForFirstDropBase = initialFuelForCheck >= fuelForFirstDropBase;
-        const hasFuelForFirstDropPelic = initialFuelForCheck >= fuelForFirstDropPelic;
-
-        if (type === 'base') {
-            const plusOne = hasFuelForFirstDropBase ? 1 : 0;
-            formulaString = `Fuel sur Feu = ${current.fuel || 'N/A'} kg\n\nFormule : ((Fuel sur Feu - BINGO Base) / Conso. Rotation) [+1 si possible]\n\nCalcul : ((${current.fuel || 'N/A'} - ${params.bingoBase}) / ${params.consoRotation || 'N/A'}) + ${plusOne}`;
-            if (canCalculateFuel) value = ((current.fuel - params.bingoBase) / params.consoRotation) + plusOne;
-        }
-        if (type === 'pelic') {
-            const plusOne = hasFuelForFirstDropPelic ? 1 : 0;
-            formulaString = `Fuel sur Feu = ${current.fuel || 'N/A'} kg\n\nFormule : ((Fuel sur Feu - BINGO Pélic.) / Conso. Rotation) [+1 si possible]\n\nCalcul : ((${current.fuel || 'N/A'} - ${params.bingoPelic}) / ${params.consoRotation || 'N/A'}) + ${plusOne}`;
-            if (canCalculateFuel) value = ((current.fuel - params.bingoPelic) / params.consoRotation) + plusOne;
-        }
-        if (type === 'cs') {
-            const canDropOnArrivalBeforeCs = canCalculateTime && params.csFeuTime !== null && current.time < params.csFeuTime;
-            const plusOne = canDropOnArrivalBeforeCs ? 1 : 0;
-            formulaString = `Heure sur Feu = ${formatTime(current.time) || 'N/A'}
-
-Formule : ((Heure CS - Heure sur Feu) / Durée Rotation) [+1 si arrivée sur feu avant CS]
-
-Calcul : ((${formatTime(params.csFeuTime) || 'N/A'} - ${formatTime(current.time) || 'N/A'}) / ${params.rotationTime || 'N/A'} min) + ${plusOne}`;
-            if (canCalculateTime && params.csFeuTime !== null) value = ((params.csFeuTime - current.time) / params.rotationTime) + plusOne;
-        }
-        if (type === 'tmd') {
-            formulaString = `Heure sur Feu = ${formatTime(current.time) || 'N/A'}\n\nFormule : (Heure TMD - Heure sur Feu) / Durée Rotation\n\nCalcul : (${formatTime(params.tmdTime) || 'N/A'} - ${formatTime(current.time) || 'N/A'}) / ${params.rotationTime || 'N/A'} min`;
-            if (canCalculateTime && params.tmdTime !== null) value = (params.tmdTime - current.time) / params.rotationTime;
-        }
-        if (type === 'hdv') {
-            const hdvOnSite = (params.limiteHDV !== null) ? params.limiteHDV - (params.transitTime || 0) : null;
-            formulaString = `HDV sur Feu = ${formatTime(hdvOnSite) || 'N/A'}\n\nFormule : (HDV sur Feu) / Durée Rotation\n\nHDV sur Feu = ${formatTime(params.limiteHDV) || 'N/A'} - ${formatTime(params.transitTime || 0)} (transit)\n\nCalcul : ${formatTime(hdvOnSite) || 'N/A'} / ${params.rotationTime || 'N/A'} min`;
-            if (canCalculateTime && hdvOnSite !== null) value = hdvOnSite / params.rotationTime;
-        }
-
-        resultsData.push({ type, value, element: line, formulaString });
-        
-        if ((type === 'cs' || type === 'tmd' || type === 'hdv') && value !== null) {
-            minTimeLimit = Math.min(minTimeLimit, value);
-        }
-        if ((type === 'base' || type === 'pelic') && value !== null) {
-            minFuelLimit = Math.min(minFuelLimit, value);
-        }
-    });
-
-    // Si une limite temporelle est la première limite atteinte,
-    // toute valeur suivante (plus élevée) est impossible et passe en rouge.
-    const shouldForceTimeConstraint = minTimeLimit !== Infinity && minTimeLimit <= minFuelLimit;
-
-    // --- Deuxième passe : Appliquer les styles et mettre à jour le DOM ---
-    resultsData.forEach(result => {
-        const { type, value, element, formulaString } = result;
-        const valueCell = element.querySelector('.value');
-        const helpIcon = element.querySelector('.formula-help-icon');
-        const isTimeLimited = shouldForceTimeConstraint && value !== null && value > minTimeLimit;
-
-        if (value === null) {
-            valueCell.textContent = '--';
-        } else {
-            valueCell.textContent = value.toFixed(1); 
-        }
-
-        valueCell.classList.remove('rotation-value-default', 'rotation-value-green', 'rotation-value-yellow', 'rotation-value-red');
-        
-        if (isTimeLimited) {
-            // Si la valeur est supérieure à la limite de temps, on force le rouge
-            valueCell.classList.add('rotation-value-red');
-        } else {
-            // Sinon, on applique la logique de couleur standard
-            if (value === null) {
-                 valueCell.classList.add('rotation-value-default');
-                 valueCell.textContent = '--';
-            } else if (value > 1.5) {
-                valueCell.classList.add('rotation-value-green');
-            } else if (value >= 1.1) {
-                valueCell.classList.add('rotation-value-yellow');
-            } else {
-                valueCell.classList.add('rotation-value-red');
-            }
-        }
-
-        if (helpIcon) { helpIcon.onclick = () => alert(formulaString); }
-    });
-
-    // --- Trier et ré-insérer les éléments dans le DOM ---
-    resultsData.sort((a, b) => {
-        const valA = a.value !== null ? a.value : Infinity;
-        const valB = b.value !== null ? b.value : Infinity;
-        return valA - valB;
-    });
-
-    resultsData.forEach(item => container.appendChild(item.element));
+function _getMonthSheets_(ss) {
+  return ss.getSheets().filter(sh => _getMonthIndexFromSheetName_(sh.getName()) !== null);
 }
 
-function recalculateBlocFuel() {
-    const blocDepart = parseTime(document.getElementById('bloc-depart').querySelector('.display-input').value);
-    const fuelDepart = parseNumeric(document.getElementById('fuel-depart').querySelector('.display-input').value);
-    const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-
-    let previousBlocArrivee = blocDepart;
-    let previousFuelPelic = fuelDepart;
-    let cumulativeTpsVol = 0;
-
-    const tableRows = document.querySelectorAll('#bloc-fuel tbody tr');
-    tableRows.forEach((row) => {
-        const blocArrivee = parseTime(row.querySelector('.time-input-wrapper .display-input').value);
-        const fuelPelic = parseNumeric(row.querySelector('.numeric-input-wrapper .display-input').value);
-
-        let dureeRotation = null;
-        if (blocArrivee !== null && previousBlocArrivee !== null) {
-            dureeRotation = blocArrivee - previousBlocArrivee;
-        }
-        let fuelRotation = null;
-        if (fuelPelic !== null && previousFuelPelic !== null) {
-            fuelRotation = previousFuelPelic - fuelPelic;
-        }
-
-        row.querySelector('.duree-rotation-cell').textContent = formatTime(dureeRotation) || '--';
-        row.querySelector('.fuel-rotation-cell').textContent = (fuelRotation === null) ? '--' : fuelRotation;
-
-        if (blocArrivee !== null) {
-            if (dureeRotation !== null && dureeRotation > 0) {
-                cumulativeTpsVol += dureeRotation;
-            }
-            let tpsVolRestant = null;
-            if (limiteHDV !== null) {
-                tpsVolRestant = limiteHDV - cumulativeTpsVol;
-            }
-            row.querySelector('.tps-vol-cell').textContent = formatTime(cumulativeTpsVol) || '00:00';
-            row.querySelector('.tps-vol-restant-cell').textContent = formatTime(tpsVolRestant) || '--';
-        } else {
-            row.querySelector('.tps-vol-cell').textContent = '--';
-            row.querySelector('.tps-vol-restant-cell').textContent = '--';
-        }
-
-        if (blocArrivee !== null) previousBlocArrivee = blocArrivee;
-        if (fuelPelic !== null) previousFuelPelic = fuelPelic;
-    });
+function _getMonthIndexFromSheetName_(name) {
+  const n = (name || "").toLowerCase();
+  if (n === "janvier") return 0;
+  if (n === "février" || n === "fevrier") return 1;
+  if (n === "mars") return 2;
+  if (n === "avril") return 3;
+  if (n === "mai") return 4;
+  if (n === "juin") return 5;
+  if (n === "juillet") return 6;
+  if (n === "août" || n === "aout") return 7;
+  if (n === "septembre") return 8;
+  if (n === "octobre") return 9;
+  if (n === "novembre") return 10;
+  if (n === "décembre" || n === "decembre") return 11;
+  return null;
 }
 
-function updatePreviTab() {
-    const defaultFormula = "Données insuffisantes pour le calcul.";
-    const setHelp = (id, formula) => {
-        const icon = document.getElementById(id);
-        if (icon) { icon.onclick = () => alert(formula || defaultFormula); }
-    };
-
-    if (!currentCommune) {
-        document.getElementById('previ-bingo-base').innerHTML = '-- kg';
-        document.getElementById('previ-bingo-pelic').innerHTML = '-- kg';
-        document.querySelectorAll('#previ-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-        document.getElementById('heure-sur-feu').textContent = '--:--';
-        document.getElementById('duree-transit').textContent = '--:--';
-        document.getElementById('conso-aller-feu').textContent = '-- kg';
-        document.getElementById('fuel-sur-feu-wrapper').querySelector('.display-input').value = '';
-        document.getElementById('duree-rotation').textContent = '--:--';
-        document.getElementById('conso-par-rotation').textContent = '-- kg';
-        document.getElementById('cs-sur-feu').textContent = '--:--';
-        setHelp('heure-sur-feu-help'); setHelp('duree-transit-help'); setHelp('conso-aller-feu-help');
-        setHelp('fuel-sur-feu-help'); setHelp('duree-rotation-help'); setHelp('conso-par-rotation-help');
-        return;
-    }
-
-    const bingoBase = calculateBingo(CALCULATOR_DATA.distBaseFeu);
-    const bingoPelic = calculateBingo(CALCULATOR_DATA.distPelicFeu);
-    const bingoBaseDisplay = document.getElementById('previ-bingo-base');
-    if (bingoBase === 700) { bingoBaseDisplay.innerHTML = '-- kg'; } else { bingoBaseDisplay.innerHTML = `${CALCULATOR_DATA.distBaseFeu} Nm /&nbsp;<b>${bingoBase} kg</b>`; }
-    const bingoPelicDisplay = document.getElementById('previ-bingo-pelic');
-    if (bingoPelic === 700 || !selectedPelicanOACI) { bingoPelicDisplay.innerHTML = '-- kg'; } else { bingoPelicDisplay.innerHTML = `${selectedPelicanOACI} / ${CALCULATOR_DATA.distPelicFeu} Nm /&nbsp;<b>${bingoPelic} kg</b>`; }
-
-    const blocDepart = parseTime(document.getElementById('bloc-depart').querySelector('.display-input').value);
-    const fuelDepart = parseNumeric(document.getElementById('fuel-depart').querySelector('.display-input').value);
-    const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-    const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-    const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
-
-    const transitTime = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
-    const rotationTime = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
-    const consoRotation = calculateConsoRotation(CALCULATOR_DATA.distPelicFeu);
-    const consoAller = calculateFuelToGo(CALCULATOR_DATA.distBaseFeu);
-    const heureSurFeu = blocDepart !== null ? blocDepart + transitTime : null;
-
-    document.getElementById('duree-transit').textContent = formatTime(transitTime) || '--:--';
-    setHelp('duree-transit-help', `Formule : Distance * (60 / Vitesse)\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} Nm * (60 / ${CALCULATOR_DATA.distBaseFeu <= 70 ? 210 : 240})`);
-
-    document.getElementById('heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
-    setHelp('heure-sur-feu-help', `Formule : BLOC Départ + Durée transit\n\nCalcul : ${formatTime(blocDepart) || 'N/A'} + ${formatTime(transitTime)}`);
-
-    document.getElementById('conso-aller-feu').textContent = `${consoAller} kg`;
-    setHelp('conso-aller-feu-help', `Formule : Distance * Conso. au Nm\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} Nm * ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} kg/Nm`);
-
-    document.getElementById('duree-rotation').textContent = rotationTime === 20 ? '--:--' : formatTime(rotationTime);
-    setHelp('duree-rotation-help', `Formule : 20min + ((Distance effective × 2) / Vitesse Sol)\n\nCalcul : 20 + ((${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm × 2) / ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 50 ? 3.5 : 4})`);
-
-    document.getElementById('conso-par-rotation').textContent = consoRotation === 250 ? '-- kg' : `${consoRotation} kg`;
-    setHelp('conso-par-rotation-help', `Formule : (Distance * Conso. au Nm) + Forfait\n\nCalcul : (${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm * ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 70 ? 10 : 8}) + 250`);
-
-    const fuelSurFeuInput = document.getElementById('fuel-sur-feu-wrapper').querySelector('.display-input');
-    const fuelEstime = fuelDepart ? fuelDepart - consoAller : null;
-    if (!isFuelSurFeuManual) { fuelSurFeuInput.value = fuelEstime ? `${fuelEstime} kg` : ''; }
-    setHelp('fuel-sur-feu-help', `Formule (AUTO) : FUEL Départ - Conso. transit\n\nCalcul : ${fuelDepart || 'N/A'} - ${consoAller}`);
-
-    const fuelSurFeu = parseNumeric(fuelSurFeuInput.value);
-
-    document.getElementById('cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
-    document.getElementById('tmd-display').textContent = formatTime(tmdTime);
-    document.getElementById('hdv-restant-display').textContent = formatTime(limiteHDV);
-
-    updateAndSortRotations(document.getElementById('previ-rotation-results-container'), { fuel: fuelSurFeu, time: heureSurFeu }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV, transitTime, consoTransitFromGps: consoAller });
+function _monthNameFromIndex_(i) {
+  const names = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
+  return names[i] || "";
 }
 
-function updateSuiviTab() {
-    const suiviConsoInput = document.getElementById('suivi-conso-rotation-wrapper').querySelector('.display-input');
-    const suiviDureeInput = document.getElementById('suivi-duree-rotation-wrapper').querySelector('.display-input');
-
-    if (!currentCommune) {
-        document.getElementById('suivi-bingo-base').innerHTML = '-- kg';
-        document.getElementById('suivi-bingo-pelic').innerHTML = '-- kg';
-        document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-        document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
-        document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
-        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
-        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
-        suiviConsoInput.value = '';
-        suiviDureeInput.value = '';
-        return;
-    }
-    const bingoBase = calculateBingo(CALCULATOR_DATA.distBaseFeu);
-    const bingoPelic = calculateBingo(CALCULATOR_DATA.distPelicFeu);
-    const bingoBaseDisplay = document.getElementById('suivi-bingo-base');
-    if (bingoBase === 700) { bingoBaseDisplay.innerHTML = '-- kg'; } else { bingoBaseDisplay.innerHTML = `${CALCULATOR_DATA.distBaseFeu} Nm /&nbsp;<b>${bingoBase} kg</b>`; }
-    const bingoPelicDisplay = document.getElementById('suivi-bingo-pelic');
-    if (bingoPelic === 700 || !selectedPelicanOACI) { bingoPelicDisplay.innerHTML = '-- kg'; } else { bingoPelicDisplay.innerHTML = `${selectedPelicanOACI} / ${CALCULATOR_DATA.distPelicFeu} Nm /&nbsp;<b>${bingoPelic} kg</b>`; }
-
-    if (!isSuiviConsoManual) {
-        const previConso = document.getElementById('conso-par-rotation').textContent;
-        suiviConsoInput.value = previConso.includes('--') ? '' : previConso;
-    }
-    if (!isSuiviDureeManual) {
-        const previDuree = document.getElementById('duree-rotation').textContent;
-        suiviDureeInput.value = previDuree.includes('--') ? '' : previDuree;
-    }
-
-    const allRows = document.querySelectorAll('#bloc-fuel tbody tr');
-    let lastFilledRow = null;
-    allRows.forEach(row => { if (parseTime(row.querySelector('.time-input-wrapper .display-input').value) !== null || parseNumeric(row.querySelector('.numeric-input-wrapper .display-input').value) !== null) { lastFilledRow = row; } });
-
-    if (!lastFilledRow) {
-        document.getElementById('suivi-fuel-actuel').textContent = '-- kg';
-        document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
-        document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
-        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
-        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
-        document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-    } else {
-        const currentFuel = parseNumeric(lastFilledRow.querySelector('.numeric-input-wrapper .display-input').value);
-        const currentTime = parseTime(lastFilledRow.querySelector('.time-input-wrapper .display-input').value);
-        const currentHdv = parseTime(lastFilledRow.querySelector('.tps-vol-restant-cell').textContent);
-        document.getElementById('suivi-fuel-actuel').textContent = currentFuel ? `${currentFuel} kg` : '--';
-
-        const consoRotation = parseNumeric(suiviConsoInput.value);
-        const rotationTime = parseTime(suiviDureeInput.value);
-
-        const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
-        const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-        const transitTimeVersFeu = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
-        const heureSurFeu = currentTime !== null ? currentTime + transitTimeVersFeu : null;
-        document.getElementById('suivi-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
-        document.getElementById('suivi-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
-        const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
-        if (suiviHeureHelpIcon) {
-            suiviHeureHelpIcon.onclick = () => alert(`Formule : Heure bloc arrivée + Durée transit base->Feu\n\nCalcul : ${formatTime(currentTime) || 'N/A'} + ${formatTime(transitTimeVersFeu) || 'N/A'}`);
-        }
-        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: heureSurFeu }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: transitTimeVersFeu });
-    }
+function _isTrigram_(s) {
+  return /^[A-Z]{3}$/.test((s || "").toString().trim().toUpperCase());
 }
 
-function updateDeroutementTab() {
-    const resultsContainer = document.getElementById('derout-rotation-results-container');
-    const setHelp = (id, formula) => {
-        const icon = document.getElementById(id);
-        if (icon) { icon.onclick = () => alert(formula || "Données insuffisantes pour le calcul."); }
-    };
-
-    if (!currentCommune) {
-        document.getElementById('derout-bingo-base').innerHTML = '-- kg';
-        document.getElementById('derout-bingo-pelic').innerHTML = '-- kg';
-        resultsContainer.querySelectorAll('.value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-        document.getElementById('derout-fuel-mini-base').textContent = '-- kg';
-        document.getElementById('derout-fuel-mini-pelic').textContent = '-- kg';
-        document.getElementById('derout-heure-sur-feu').textContent = '--:--';
-        document.getElementById('derout-cs-sur-feu').textContent = '--:--';
-        setHelp('derout-fuel-mini-base-help'); setHelp('derout-fuel-mini-pelic-help'); setHelp('derout-heure-sur-feu-help');
-        return;
-    }
-
-    const fuelActuel = parseNumeric(document.getElementById('deroutement-fuel-wrapper').querySelector('.display-input').value);
-    const heureActuelle = parseTime(document.getElementById('deroutement-heure-wrapper').querySelector('.display-input').value);
-
-    const bingoBase = calculateBingo(CALCULATOR_DATA.distBaseFeu);
-    const bingoPelic = calculateBingo(CALCULATOR_DATA.distPelicFeu);
-    const rotationTime = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
-    const consoRotation = calculateConsoRotation(CALCULATOR_DATA.distPelicFeu);
-    const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
-    const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-    const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-    const hasGpsPosition = !!(userMarker && userMarker.getLatLng());
-    const distGpsFeu = hasGpsPosition ? CALCULATOR_DATA.distGpsFeu : null;
-    const transitTimeFromGps = distGpsFeu !== null ? Math.round(calculateTransitTime(distGpsFeu)) : null;
-    const consoTransitFromGps = distGpsFeu !== null ? calculateFuelToGo(distGpsFeu) : null;
-
-    const bingoBaseDisplay = document.getElementById('derout-bingo-base');
-    if (bingoBase === 700) { bingoBaseDisplay.innerHTML = '-- kg'; } else { bingoBaseDisplay.innerHTML = `${CALCULATOR_DATA.distBaseFeu} Nm /&nbsp;<b>${bingoBase} kg</b>`; }
-    const bingoPelicDisplay = document.getElementById('derout-bingo-pelic');
-    if (bingoPelic === 700 || !selectedPelicanOACI) { bingoPelicDisplay.innerHTML = '-- kg'; } else { bingoPelicDisplay.innerHTML = `${selectedPelicanOACI} / ${CALCULATOR_DATA.distPelicFeu} Nm /&nbsp;<b>${bingoPelic} kg</b>`; }
-
-    const fuelMiniBase = consoTransitFromGps !== null ? consoTransitFromGps + 250 + bingoBase : null;
-    const fuelMiniPelic = consoTransitFromGps !== null ? consoTransitFromGps + 250 + bingoPelic : null;
-    document.getElementById('derout-fuel-mini-base').textContent = fuelMiniBase !== null ? `${fuelMiniBase} kg` : '-- kg';
-    document.getElementById('derout-fuel-mini-pelic').textContent = fuelMiniPelic !== null ? `${fuelMiniPelic} kg` : '-- kg';
-    setHelp('derout-fuel-mini-base-help', consoTransitFromGps !== null
-        ? `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Base\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoBase}`
-        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
-    setHelp('derout-fuel-mini-pelic-help', consoTransitFromGps !== null
-        ? `Formule: Conso(GPS->Feu) + Forfait Largage + BINGO Pélic.\n\nCalcul: ${consoTransitFromGps} + 250 + ${bingoPelic}`
-        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
-
-    const heureSurFeu = (heureActuelle !== null && transitTimeFromGps !== null) ? heureActuelle + transitTimeFromGps : null;
-    document.getElementById('derout-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
-    document.getElementById('derout-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
-    setHelp('derout-heure-sur-feu-help', transitTimeFromGps !== null
-        ? `Formule : Heure actuelle + Durée transit GPS->Feu\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'}`
-        : 'Distance GPS->Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
-
-    if (fuelActuel === null || heureActuelle === null || consoTransitFromGps === null || transitTimeFromGps === null) {
-        resultsContainer.querySelectorAll('.value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-        resultsContainer.querySelectorAll('.formula-help-icon').forEach(icon => icon.onclick = () => alert("Données insuffisantes pour le calcul."));
-        return;
-    }
-
-    const fuelSurFeu = fuelActuel - consoTransitFromGps;
-
-    updateAndSortRotations(
-        resultsContainer,
-        { fuel: fuelSurFeu, time: heureSurFeu },
-        { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV, transitTime: transitTimeFromGps, consoTransitFromGps: consoTransitFromGps }
-    );
+function _toNumberHours_(v) {
+  if (typeof v === "number") return v;
+  const n = parseFloat((v || "").toString().replace(",", "."));
+  return isNaN(n) ? 0 : n;
 }
 
-
-function initializeTeamChat() {
-    const panel = document.getElementById('team-chat-panel');
-    const toggleButton = document.getElementById('chat-toggle-button');
-    const minimizeButton = document.getElementById('chat-minimize-button');
-    const clearButton = document.getElementById('chat-clear-button');
-    const alertBadge = document.getElementById('chat-alert-badge');
-    const offlineBadge = document.getElementById('chat-offline-badge');
-    const roomInput = document.getElementById('chat-room-input');
-    const userInput = document.getElementById('chat-user-input');
-    const connectButton = document.getElementById('chat-connect-button');
-    const sendButton = document.getElementById('chat-send-button');
-    const messageInput = document.getElementById('chat-message-input');
-    const messagesBox = document.getElementById('chat-messages');
-    const connectionState = document.getElementById('chat-connection-state');
-    const onlineUsersLabel = document.getElementById('chat-online-users');
-    const clearModal = document.getElementById('chat-clear-modal');
-    const clearLocalButton = document.getElementById('chat-clear-local-button');
-    const clearChannelButton = document.getElementById('chat-clear-channel-button');
-    const clearCancelButton = document.getElementById('chat-clear-cancel-button');
-    if (!panel || !toggleButton || !minimizeButton || !clearButton || !alertBadge || !offlineBadge || !roomInput || !userInput || !connectButton || !sendButton || !messageInput || !messagesBox || !connectionState || !onlineUsersLabel || !clearModal || !clearLocalButton || !clearChannelButton || !clearCancelButton) return;
-
-    const CHAT_CLIENT_ID_KEY = 'teamChatClientId';
-    const CHAT_OUTBOX_KEY = 'teamChatOutbox';
-    const CHAT_SEEN_IDS_KEY = 'teamChatSeenIds';
-    let unreadCount = 0;
-    let reconnectAfterOnlineTimeout = null;
-    let isChatConnecting = false;
-    let hasAnnouncedConnection = true;
-    const pendingChatMessages = [];
-    const renderedMessageIds = new Set();
-    const sentMessageElements = new Map();
-    const activeUsers = new Map();
-    const myClientId = getOrCreateClientId();
-    minimizeButton.textContent = '—';
-
-    const defaultConfig = { room: 'Milan', user: '' };
-    const savedConfig = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || 'null') || defaultConfig;
-    roomInput.value = savedConfig.room || defaultConfig.room;
-    userInput.value = savedConfig.user || defaultConfig.user;
-
-    const persistedSeenIds = new Set(JSON.parse(localStorage.getItem(CHAT_SEEN_IDS_KEY) || '[]'));
-    const history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-    history.forEach((item) => {
-        if (item?.id) renderedMessageIds.add(item.id);
-        appendChatMessage(item.user, item.text, item.time, item.system === true, item);
-    });
-
-    const setConnectionState = (isOnline, label = null) => {
-        chatConnected = isOnline;
-        connectionState.textContent = label || (isOnline ? 'Connecté' : 'Hors ligne');
-        connectionState.classList.toggle('online', isOnline);
-        connectionState.classList.toggle('offline', !isOnline);
-        offlineBadge.style.display = isOnline ? 'none' : 'flex';
-    };
-    setConnectionState(false);
-
-    const persistConfig = () => {
-        localStorage.setItem(CHAT_STORAGE_KEY, JSON.stringify({
-            room: (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, ''),
-            user: (userInput.value || '').trim().slice(0, 24)
-        }));
-    };
-
-    const saveMessageInHistory = (entry) => {
-        const current = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-        if (entry?.id && current.some((msg) => msg.id === entry.id)) return;
-        current.push(entry);
-        const recent = current.slice(-200);
-        localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(recent));
-    };
-
-    function getOrCreateClientId() {
-        const stored = localStorage.getItem(CHAT_CLIENT_ID_KEY);
-        if (stored && stored.trim()) return stored;
-        const created = `pelic_device_${Math.random().toString(16).slice(2, 10)}_${Date.now()}`;
-        localStorage.setItem(CHAT_CLIENT_ID_KEY, created);
-        return created;
-    }
-
-    const updateUnreadBadge = () => {
-        if (!unreadCount) {
-            alertBadge.style.display = 'none';
-            return;
-        }
-        alertBadge.style.display = 'flex';
-        alertBadge.textContent = unreadCount > 99 ? '99+' : `${unreadCount}`;
-    };
-
-    const shouldWarnUnread = () => panel.style.display !== 'flex';
-
-    const notifyWhenInBackground = (title, body, tag = 'pelic-chat') => {
-        if (typeof document === 'undefined' || !document.hidden) return;
-        if (typeof Notification === 'undefined' || Notification.permission !== 'granted') return;
-        try {
-            new Notification(title, { body, tag });
-        } catch (_) {}
-    };
-
-    const refreshOnlineUsersLabel = () => {
-        const users = Array.from(activeUsers.values())
-            .filter((name) => typeof name === 'string' && name.trim())
-            .sort((a, b) => a.localeCompare(b, 'fr'));
-        if (!users.length) {
-            onlineUsersLabel.textContent = 'En ligne: 0';
-            return;
-        }
-        const preview = users.slice(0, 4).join(', ');
-        const suffix = users.length > 4 ? ` +${users.length - 4}` : '';
-        onlineUsersLabel.textContent = `En ligne: ${users.length} (${preview}${suffix})`;
-    };
-
-    const publishPresence = (status, explicitUser = null) => {
-        if (!chatClient || !chatPresenceTopic || !myClientId) return;
-        const username = (explicitUser || userInput.value || '').trim();
-        chatClient.publish(`${chatPresenceTopic}/${myClientId}`, JSON.stringify({
-            type: 'presence',
-            senderClientId: myClientId,
-            user: username || 'inconnu',
-            status,
-            time: new Date().toISOString()
-        }), { qos: 1, retain: true });
-    };
-
-    const persistSeenIds = () => {
-        localStorage.setItem(CHAT_SEEN_IDS_KEY, JSON.stringify(Array.from(persistedSeenIds).slice(-400)));
-    };
-
-    const updateMessageStatus = (messageId, nextStatus) => {
-        if (!messageId || !sentMessageElements.has(messageId)) return;
-        const statusEl = sentMessageElements.get(messageId);
-        if (!statusEl) return;
-        const isRead = nextStatus === 'read';
-        statusEl.textContent = isRead ? '✓✓' : (nextStatus === 'sent' ? '✓' : '⏳');
-        statusEl.classList.toggle('read', isRead);
-
-        const current = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-        const index = current.findIndex((m) => m.id === messageId);
-        if (index >= 0) {
-            current[index].status = nextStatus;
-            localStorage.setItem(CHAT_HISTORY_KEY, JSON.stringify(current));
-        }
-    };
-
-    const addToOutbox = (payload) => {
-        const outbox = JSON.parse(localStorage.getItem(CHAT_OUTBOX_KEY) || '[]');
-        outbox.push(payload);
-        localStorage.setItem(CHAT_OUTBOX_KEY, JSON.stringify(outbox.slice(-100)));
-    };
-
-    const publishChatPayload = (payload, onLiveAck = null) => {
-        if (!chatClient || !chatTopic || !chatHistoryTopic) return;
-        chatClient.publish(chatTopic, JSON.stringify(payload), { qos: 1 }, (err) => {
-            if (!err && typeof onLiveAck === 'function') onLiveAck();
-        });
-        chatClient.publish(`${chatHistoryTopic}/${payload.id}`, JSON.stringify(payload), { qos: 1, retain: true });
-    };
-
-    const flushOutbox = () => {
-        if (!chatClient || !chatConnected || !chatTopic) return;
-        const outbox = JSON.parse(localStorage.getItem(CHAT_OUTBOX_KEY) || '[]');
-        if (!outbox.length) return;
-        outbox.forEach((payload) => {
-            publishChatPayload(payload, () => updateMessageStatus(payload.id, 'sent'));
-        });
-        localStorage.removeItem(CHAT_OUTBOX_KEY);
-        appendChatMessage('Système', `${outbox.length} message(s) hors-ligne envoyé(s).`, new Date().toISOString(), true);
-    };
-
-    const renderIncomingChatMessage = (parsed, isCurrentChatTopic) => {
-        if (!parsed || !parsed.id || !parsed.user || !parsed.text || !parsed.time) return;
-        if (renderedMessageIds.has(parsed.id) || persistedSeenIds.has(parsed.id)) return;
-
-        renderedMessageIds.add(parsed.id);
-        persistedSeenIds.add(parsed.id);
-        persistSeenIds();
-        const isOwnMessage = parsed.senderClientId === myClientId;
-        appendChatMessage(parsed.user, parsed.text, parsed.time, false, { ...parsed, isOwnMessage, status: isOwnMessage ? 'sent' : 'read' });
-        saveMessageInHistory({ ...parsed, status: isOwnMessage ? 'sent' : 'read' });
-
-        if (!isOwnMessage) {
-            chatClient.publish(chatTopic, JSON.stringify({
-                type: 'read_receipt',
-                messageId: parsed.id,
-                reader: (userInput.value || '').trim() || 'inconnu',
-                time: new Date().toISOString()
-            }), { qos: 1 });
-        }
-
-        if (!isOwnMessage && shouldWarnUnread()) {
-            unreadCount += 1;
-            updateUnreadBadge();
-        }
-
-        if (!isOwnMessage && isCurrentChatTopic) {
-            notifyWhenInBackground(`Pelic Chat • ${(roomInput.value || '').trim() || 'canal'}`, `${parsed.user}: ${parsed.text}`, `pelic-chat-${chatTopic}`);
-        }
-    };
-
-    const reconnectIfNeeded = (reasonLabel = 'Reconnexion...') => {
-        const roomName = (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, '');
-        const userName = (userInput.value || '').trim();
-        if (!roomName || !userName) return;
-        if (chatConnected || isChatConnecting) return;
-        appendChatMessage('Système', reasonLabel, new Date().toISOString(), true);
-        connectToChat();
-    };
-
-    function connectToChat() {
-        if (isChatConnecting) return;
-        isChatConnecting = true;
-
-        if (typeof mqtt === 'undefined') {
-            isChatConnecting = false;
-            appendChatMessage('Système', 'Client MQTT introuvable (connexion impossible).', new Date().toISOString(), true);
-            return;
-        }
-        const roomName = (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, '');
-        const userName = (userInput.value || '').trim();
-        if (!roomName || !userName) {
-            appendChatMessage('Système', 'Canal et pseudo obligatoires.', new Date().toISOString(), true);
-            isChatConnecting = false;
-            return;
-        }
-        persistConfig();
-        const previousUser = activeUsers.get(myClientId) || (userInput.value || '').trim();
-        publishPresence('offline', previousUser);
-        if (chatClient) {
-            try { chatClient.end(true); } catch (_) {}
-            chatClient = null;
-        }
-        activeUsers.clear();
-        refreshOnlineUsersLabel();
-
-        chatTopic = `pelic/chat/${roomName}`;
-        chatHistoryTopic = `pelic/chat_history/${roomName}`;
-        chatPresenceTopic = `pelic/chat_presence/${roomName}`;
-        setConnectionState(false, 'Connexion...');
-        hasAnnouncedConnection = false;
-        pendingChatMessages.length = 0;
-        chatClient = mqtt.connect(CHAT_BROKER_URL, {
-            keepalive: 45,
-            reconnectPeriod: 5000,
-            connectTimeout: 20000,
-            clean: true, // session non persistante: évite de conserver des abonnements d'anciens canaux
-            protocolVersion: 4,
-            clientId: myClientId,
-            will: {
-                topic: `${chatPresenceTopic}/${myClientId}`,
-                payload: JSON.stringify({
-                    type: 'presence',
-                    senderClientId: myClientId,
-                    user: userName,
-                    status: 'offline',
-                    time: new Date().toISOString()
-                }),
-                qos: 1,
-                retain: true
-            }
-        });
-
-        chatClient.on('connect', () => {
-            const announceConnection = () => {
-                if (hasAnnouncedConnection) return;
-                hasAnnouncedConnection = true;
-                setConnectionState(true);
-                isChatConnecting = false;
-                appendChatMessage('Système', `Connecté au canal "${roomName}" (${CHAT_BROKER_URL}).`, new Date().toISOString(), true);
-
-                while (pendingChatMessages.length) {
-                    const pendingItem = pendingChatMessages.shift();
-                    renderIncomingChatMessage(pendingItem.parsed, pendingItem.isCurrentChatTopic);
-                }
-            };
-
-            chatClient.subscribe(chatTopic, { qos: 1 }, (err) => {
-                if (err) {
-                    setConnectionState(false, 'Erreur abonnement');
-                    isChatConnecting = false;
-                    appendChatMessage('Système', `Abonnement impossible: ${err.message}`, new Date().toISOString(), true);
-                    return;
-                }
-
-                // On annonce la connexion dès que le canal de chat principal est prêt,
-                // pour conserver un ordre visuel cohérent avec les messages reçus juste après reconnexion.
-                announceConnection();
-                if (typeof Notification !== 'undefined' && Notification.permission === 'default') {
-                    Notification.requestPermission().catch(() => {});
-                }
-
-                chatClient.subscribe(`${chatHistoryTopic}/#`, { qos: 1 }, (historyErr) => {
-                    if (historyErr) {
-                        setConnectionState(false, 'Erreur historique');
-                        isChatConnecting = false;
-                        appendChatMessage('Système', `Abonnement historique impossible: ${historyErr.message}`, new Date().toISOString(), true);
-                        return;
-                    }
-                    chatClient.subscribe(`${chatPresenceTopic}/#`, { qos: 1 }, (presenceErr) => {
-                        if (presenceErr) {
-                            setConnectionState(false, 'Erreur présence');
-                            isChatConnecting = false;
-                            appendChatMessage('Système', `Abonnement présence impossible: ${presenceErr.message}`, new Date().toISOString(), true);
-                            return;
-                        }
-                        announceConnection();
-                        publishPresence('online', userName);
-                        flushOutbox();
-                    });
-                });
-            });
-        });
-
-        chatClient.on('message', (receivedTopic, payload) => {
-            try {
-                const isCurrentChatTopic = receivedTopic === chatTopic;
-                const isCurrentHistoryTopic = receivedTopic.startsWith(`${chatHistoryTopic}/`);
-                const isCurrentPresenceTopic = receivedTopic.startsWith(`${chatPresenceTopic}/`);
-                if (!isCurrentChatTopic && !isCurrentHistoryTopic && !isCurrentPresenceTopic) return;
-
-                const parsed = JSON.parse(payload.toString());
-                if (!parsed || !parsed.type) return;
-
-                if (parsed.type === 'read_receipt' && parsed.messageId) {
-                    updateMessageStatus(parsed.messageId, 'read');
-                    return;
-                }
-
-                if (parsed.type === 'presence' && parsed.senderClientId) {
-                    if (parsed.status === 'offline') {
-                        activeUsers.delete(parsed.senderClientId);
-                    } else {
-                        activeUsers.set(parsed.senderClientId, (parsed.user || '').trim() || 'inconnu');
-                    }
-                    refreshOnlineUsersLabel();
-                    return;
-                }
-
-                if (parsed.type !== 'chat' || !parsed.user || !parsed.text || !parsed.time || !parsed.id) return;
-                if (receivedTopic.startsWith(chatHistoryTopic)) {
-                    const ageHours = Math.abs(Date.now() - new Date(parsed.time).getTime()) / 3600000;
-                    if (Number.isFinite(ageHours) && ageHours > 12) {
-                        // Nettoyage automatique des messages retenus trop anciens (>12h) sur le canal.
-                        if (parsed.id && chatClient && chatHistoryTopic) {
-                            chatClient.publish(`${chatHistoryTopic}/${parsed.id}`, '', { qos: 1, retain: true });
-                        }
-                        return;
-                    }
-                }
-
-                if (!hasAnnouncedConnection) {
-                    pendingChatMessages.push({ parsed, isCurrentChatTopic });
-                    return;
-                }
-
-                renderIncomingChatMessage(parsed, isCurrentChatTopic);
-            } catch (_) {}
-        });
-
-        chatClient.on('reconnect', () => {
-            hasAnnouncedConnection = false;
-            setConnectionState(false, 'Reconnexion...');
-        });
-        chatClient.on('close', () => {
-            hasAnnouncedConnection = false;
-            isChatConnecting = false;
-            setConnectionState(false);
-            activeUsers.clear();
-            refreshOnlineUsersLabel();
-        });
-        chatClient.on('offline', () => {
-            hasAnnouncedConnection = false;
-            isChatConnecting = false;
-            setConnectionState(false, 'Hors ligne');
-            activeUsers.clear();
-            refreshOnlineUsersLabel();
-        });
-        chatClient.on('error', (err) => {
-            isChatConnecting = false;
-            setConnectionState(false, 'Erreur réseau');
-            appendChatMessage('Système', `Erreur réseau: ${err.message}`, new Date().toISOString(), true);
-        });
-    }
-
-    function sendCurrentMessage() {
-        const text = (messageInput.value || '').trim();
-        const user = (userInput.value || '').trim();
-        if (!text) return;
-        const payload = {
-            type: 'chat',
-            id: `msg_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
-            senderClientId: myClientId,
-            user,
-            text: text.slice(0, 280),
-            time: new Date().toISOString()
-        };
-        renderedMessageIds.add(payload.id);
-        persistedSeenIds.add(payload.id);
-        persistSeenIds();
-        appendChatMessage(payload.user, payload.text, payload.time, false, { ...payload, isOwnMessage: true, status: 'pending' });
-        saveMessageInHistory({ ...payload, status: 'pending' });
-
-        if (!chatClient || !chatConnected || !chatTopic) {
-            addToOutbox(payload);
-            appendChatMessage('Système', 'Réseau indisponible: message mis en file hors-ligne.', new Date().toISOString(), true);
-            messageInput.value = '';
-            return;
-        }
-
-        publishChatPayload(payload, () => updateMessageStatus(payload.id, 'sent'));
-        messageInput.value = '';
-    }
-
-    const toggleChatPanel = () => {
-        const visible = panel.style.display === 'flex';
-        panel.style.display = visible ? 'none' : 'flex';
-        if (!visible) {
-            unreadCount = 0;
-            updateUnreadBadge();
-        }
-    };
-    toggleButton.addEventListener('click', toggleChatPanel);
-
-    minimizeButton.addEventListener('click', () => {
-        toggleChatPanel();
-    });
-
-    const clearLocalHistory = () => {
-        messagesBox.innerHTML = '';
-        localStorage.removeItem(CHAT_HISTORY_KEY);
-        localStorage.removeItem(CHAT_SEEN_IDS_KEY);
-        renderedMessageIds.clear();
-        persistedSeenIds.clear();
-        sentMessageElements.clear();
-        unreadCount = 0;
-        updateUnreadBadge();
-    };
-
-    const openClearModal = () => {
-        clearModal.style.display = 'flex';
-    };
-
-    const closeClearModal = () => {
-        clearModal.style.display = 'none';
-    };
-
-    clearButton.addEventListener('click', openClearModal);
-    clearCancelButton.addEventListener('click', closeClearModal);
-    clearModal.addEventListener('click', (event) => {
-        if (event.target === clearModal) closeClearModal();
-    });
-
-    clearLocalButton.addEventListener('click', () => {
-        clearLocalHistory();
-        appendChatMessage('Système', 'Historique local supprimé.', new Date().toISOString(), true);
-        closeClearModal();
-    });
-
-    clearChannelButton.addEventListener('click', () => {
-        const history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
-        if (!chatClient || !chatConnected || !chatHistoryTopic) {
-            alert('Connexion au canal requise pour supprimer les messages enregistrés du canal.');
-            return;
-        }
-        const historyIds = Array.from(new Set(history.map((item) => item?.id).filter(Boolean)));
-        historyIds.forEach((messageId) => {
-            chatClient.publish(`${chatHistoryTopic}/${messageId}`, '', { qos: 1, retain: true });
-        });
-        clearLocalHistory();
-        appendChatMessage('Système', `Historique local supprimé + ${historyIds.length} message(s) canal nettoyé(s).`, new Date().toISOString(), true);
-        closeClearModal();
-    });
-
-    connectButton.addEventListener('click', connectToChat);
-    sendButton.addEventListener('click', sendCurrentMessage);
-    messageInput.addEventListener('keydown', (e) => {
-        if (e.key === 'Enter') {
-            e.preventDefault();
-            sendCurrentMessage();
-        }
-    });
-
-    window.addEventListener('online', () => {
-        if (reconnectAfterOnlineTimeout) clearTimeout(reconnectAfterOnlineTimeout);
-        reconnectAfterOnlineTimeout = setTimeout(() => {
-            reconnectIfNeeded('Réseau récupéré, tentative de reconnexion.');
-        }, 400);
-    });
-    window.addEventListener('offline', () => {
-        if (reconnectAfterOnlineTimeout) {
-            clearTimeout(reconnectAfterOnlineTimeout);
-            reconnectAfterOnlineTimeout = null;
-        }
-        setConnectionState(false, 'Hors ligne');
-        appendChatMessage('Système', 'Réseau perdu, les messages sortants seront mis en file.', new Date().toISOString(), true);
-    });
-
-    document.addEventListener('visibilitychange', () => {
-        if (!document.hidden) {
-            if (reconnectAfterOnlineTimeout) clearTimeout(reconnectAfterOnlineTimeout);
-            reconnectAfterOnlineTimeout = setTimeout(() => {
-                reconnectIfNeeded('Retour au premier plan, reconnexion du chat.');
-            }, 200);
-        }
-    });
-
-    window.addEventListener('beforeunload', () => {
-        publishPresence('offline');
-    });
-
-    function appendChatMessage(user, text, isoTime, isSystemMessage = false, meta = null) {
-        const row = document.createElement('div');
-        row.className = 'chat-message';
-        const time = new Date(isoTime || Date.now());
-        const hh = `${time.getHours()}`.padStart(2, '0');
-        const mm = `${time.getMinutes()}`.padStart(2, '0');
-        const isOwnMessage = meta?.isOwnMessage === true;
-        const baseStatus = meta?.status || 'sent';
-        const statusSymbol = baseStatus === 'read' ? '✓✓' : (baseStatus === 'sent' ? '✓' : '⏳');
-        const statusClass = baseStatus === 'read' ? 'chat-message-status read' : 'chat-message-status';
-        const statusMarkup = (!isSystemMessage && isOwnMessage) ? `<span class="${statusClass}" data-message-status="${meta?.id || ''}">${statusSymbol}</span>` : '';
-        if (!isSystemMessage) {
-            row.classList.add(isOwnMessage ? 'chat-message-own' : 'chat-message-remote');
-        }
-        row.innerHTML = `<b>${isSystemMessage ? 'Système' : escapeHtml(user)}</b> <span style="color:#7a7a7a">(${hh}:${mm})</span>${statusMarkup}<br>${escapeHtml(text)}`;
-        messagesBox.appendChild(row);
-        messagesBox.scrollTop = messagesBox.scrollHeight;
-        if (meta?.id && isOwnMessage) {
-            const statusEl = row.querySelector(`[data-message-status=\"${meta.id}\"]`);
-            if (statusEl) sentMessageElements.set(meta.id, statusEl);
-        }
-    }
+function _stripTime_(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
 }
 
-function escapeHtml(value) {
-    return String(value || '')
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;')
-        .replace(/'/g, '&#39;');
+function _round1_(n) {
+  return Math.round((Number(n) || 0) * 10) / 10;
 }
 
-function initializeCalculator() {
-    const resetButton = document.getElementById('reset-all-btn');
-    const onglets = document.querySelectorAll('.onglet-bouton');
-    const csLftwDisplay = document.getElementById('cs-lftw-display');
-    const refreshGpsBtn = document.getElementById('refresh-gps-btn');
-    refreshGpsBtn.addEventListener('click', () => {
-        if (!navigator.geolocation) {
-            alert("La géolocalisation n'est pas supportée par votre navigateur.");
-            return;
-        }
-
-        navigator.geolocation.getCurrentPosition(
-            (pos) => {
-                updateUserPosition(pos);
-            },
-            () => {
-                alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
-            },
-            { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
-        );
-    });
-
-    function updateLftwSunset() {
-        const baseAirport = getAirportByOaci(selectedBaseOACI);
-        if (baseAirport && typeof SunCalc !== 'undefined') {
-            try {
-                const now = new Date();
-                const times = SunCalc.getTimes(now, baseAirport.lat, baseAirport.lon);
-                const sunsetString = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
-                csLftwDisplay.value = sunsetString;
-                return;
-            } catch (e) {
-                // ignore
-            }
-        }
-        csLftwDisplay.value = '--:--';
-    }
-    window.updateBaseSunsetDisplay = updateLftwSunset;
-    updateLftwSunset();
-    setInterval(updateLftwSunset, 60000);
-
-    onglets.forEach(onglet => { onglet.addEventListener('click', () => { document.querySelectorAll('.onglet-bouton').forEach(btn => btn.classList.remove('active')); document.querySelectorAll('.onglet-panneau').forEach(p => p.classList.remove('active')); onglet.classList.add('active'); document.getElementById(onglet.dataset.onglet).classList.add('active'); resetButton.style.display = (onglet.dataset.onglet === 'bloc-fuel') ? 'flex' : 'none'; }); });
-
-    function saveCalculatorState() {
-        const state = {};
-        document.querySelectorAll('#calculator-modal .input-wrapper').forEach(wrapper => {
-            if (wrapper.id) {
-                state[wrapper.id] = wrapper.querySelector('.display-input').value;
-            }
-        });
-        const tableData = [];
-        document.querySelectorAll('#bloc-fuel tbody tr').forEach(row => {
-            tableData.push({
-                time: row.querySelector('.time-input-wrapper .display-input').value,
-                fuel: row.querySelector('.numeric-input-wrapper .display-input').value
-            });
-        });
-        state.calculator_table_data = tableData;
-        localStorage.setItem('calculator_state', JSON.stringify(state));
-    }
-
-    function initializeTimeInput(wrapper, initialValue = '') {
-        const displayInput = wrapper.querySelector('.display-input');
-        const engineInput = wrapper.querySelector('.engine-input');
-        const clearBtn = wrapper.querySelector('.clear-btn');
-
-        const setTimeValue = (time) => {
-            displayInput.value = time;
-            if (engineInput) {
-                if (String(time).match(/^\d{2}:\d{2}$/)) {
-                    engineInput.value = time;
-                } else {
-                    engineInput.value = '';
-                }
-            }
-        };
-
-        setTimeValue(initialValue);
-
-        displayInput.addEventListener('dblclick', (e) => {
-            e.preventDefault();
-            let timeString;
-            if (wrapper.id === 'tmd') {
-                timeString = '21:30';
-            } else if (wrapper.id === 'limite-hdv') {
-                timeString = '08:00';
-            } else {
-                const now = new Date();
-                timeString = `${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}`;
-            }
-            setTimeValue(timeString);
-            masterRecalculate();
-            saveCalculatorState();
-        });
-
-        if (engineInput) {
-            engineInput.addEventListener('change', () => {
-                if (engineInput.value) {
-                    displayInput.value = engineInput.value;
-                    masterRecalculate();
-                    saveCalculatorState();
-                }
-            });
-        }
-
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                const defaultValue = wrapper.id === 'tmd' ? '21:30' : wrapper.id === 'limite-hdv' ? '08:00' : '';
-                setTimeValue(defaultValue);
-                masterRecalculate();
-                saveCalculatorState();
-            });
-        }
-    }
-
-    function initializeNumericInput(wrapper, initialValue = '') {
-        const displayInput = wrapper.querySelector('.display-input');
-        const clearBtn = wrapper.querySelector('.clear-btn');
-        const unit = wrapper.dataset.unit || '';
-        let shouldClearOnNextInput = false;
-        displayInput.value = initialValue;
-        displayInput.addEventListener('focus', () => { if (displayInput.readOnly) return; if (displayInput.value) { shouldClearOnNextInput = true; } displayInput.value = displayInput.value.replace(/[^0-9]/g, ''); });
-        displayInput.addEventListener('blur', () => { if (displayInput.readOnly) return; shouldClearOnNextInput = false; let v = displayInput.value.replace(/[^0-9]/g, ''); if (v) { displayInput.value = `${v} ${unit}`; } else { displayInput.value = ''; } masterRecalculate(); saveCalculatorState(); });
-        displayInput.addEventListener('input', (e) => { if (displayInput.readOnly) return; if (shouldClearOnNextInput && e.data) { displayInput.value = e.data.replace(/[^0-9]/g, ''); shouldClearOnNextInput = false; } else { displayInput.value = displayInput.value.replace(/[^0-9]/g, ''); } masterRecalculate(); });
-        displayInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); displayInput.blur(); } });
-        if (clearBtn) { clearBtn.addEventListener('click', () => { displayInput.value = ''; masterRecalculate(); saveCalculatorState(); }); }
-    }
-
-    const addNewRow = (tableBody, data, isLastRow = false) => {
-        const row = document.createElement('tr');
-        row.innerHTML = `<td><div class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></td><td><div class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></td><td class="duree-rotation-cell"></td><td class="fuel-rotation-cell"></td><td class="tps-vol-cell"></td><td class="tps-vol-restant-cell"></td>`;
-        tableBody.appendChild(row);
-
-        const timeWrapper = row.querySelector('.time-input-wrapper');
-        const numericWrapper = row.querySelector('.numeric-input-wrapper');
-
-        initializeTimeInput(timeWrapper, data ? data.time : '');
-        initializeNumericInput(numericWrapper, data ? data.fuel : '');
-
-        const checkAndAddRow = () => {
-            if (row.nextSibling) {
-                timeWrapper.querySelector('.engine-input').removeEventListener('change', checkAndAddRow);
-                numericWrapper.querySelector('.display-input').removeEventListener('blur', checkAndAddRow);
-                return;
-            }
-            if (timeWrapper.querySelector('.display-input').value || numericWrapper.querySelector('.display-input').value) {
-                addNewRow(tableBody, null, true);
-            }
-        };
-
-        if (isLastRow) {
-            timeWrapper.querySelector('.engine-input').addEventListener('change', checkAndAddRow);
-            numericWrapper.querySelector('.display-input').addEventListener('blur', checkAndAddRow);
-        }
-    };
-
-    function loadCalculatorState() {
-        const tableBody = document.querySelector('#bloc-fuel tbody');
-        tableBody.innerHTML = '';
-        const savedStateJSON = localStorage.getItem('calculator_state');
-        let state = {};
-        if (savedStateJSON) { state = JSON.parse(savedStateJSON); }
-        initializeTimeInput(document.getElementById('bloc-depart'), state['bloc-depart']);
-        initializeNumericInput(document.getElementById('fuel-depart'), state['fuel-depart'] || '3400 kg');
-        initializeTimeInput(document.getElementById('tmd'), state['tmd'] || '21:30');
-        initializeTimeInput(document.getElementById('limite-hdv'), state['limite-hdv'] || '08:00');
-        initializeTimeInput(document.getElementById('deroutement-heure-wrapper'), state['deroutement-heure-wrapper']);
-        initializeNumericInput(document.getElementById('deroutement-fuel-wrapper'), state['deroutement-fuel-wrapper']);
-        initializeNumericInput(document.getElementById('fuel-sur-feu-wrapper'), state['fuel-sur-feu-wrapper']);
-        initializeNumericInput(document.getElementById('suivi-conso-rotation-wrapper'), state['suivi-conso-rotation-wrapper']);
-        initializeTimeInput(document.getElementById('suivi-duree-rotation-wrapper'), state['suivi-duree-rotation-wrapper']);
-
-        const tableData = state.calculator_table_data || [];
-        tableData.forEach(rowData => {
-            addNewRow(tableBody, rowData, false);
-        });
-
-        const rowsToAdd = Math.max(6, tableBody.rows.length + 1) - tableBody.rows.length;
-        for (let i = 0; i < rowsToAdd; i++) {
-             const isLastRow = (i === rowsToAdd - 1);
-             addNewRow(tableBody, null, isLastRow);
-        }
-    }
-
-    loadCalculatorState();
-
-    function setupManualButton(btnId, wrapperId, flagSetter) {
-        const btn = document.getElementById(btnId); const input = document.getElementById(wrapperId).querySelector('.display-input');
-        btn.addEventListener('click', () => { const isManual = flagSetter(); if (isManual) { btn.textContent = 'MANUEL'; btn.classList.add('active'); input.readOnly = false; } else { btn.textContent = 'AUTO'; btn.classList.remove('active'); input.readOnly = true; } masterRecalculate(); });
-    }
-    setupManualButton('fuel-sur-feu-manual-btn', 'fuel-sur-feu-wrapper', () => isFuelSurFeuManual = !isFuelSurFeuManual);
-    setupManualButton('suivi-conso-rotation-manual-btn', 'suivi-conso-rotation-wrapper', () => isSuiviConsoManual = !isSuiviConsoManual);
-    setupManualButton('suivi-duree-rotation-manual-btn', 'suivi-duree-rotation-wrapper', () => isSuiviDureeManual = !isSuiviDureeManual);
-
-    resetButton.addEventListener('click', () => {
-        if (confirm("Voulez-vous vraiment remettre tout le tableau à zéro ?")) {
-            localStorage.removeItem('calculator_state');
-            loadCalculatorState();
-            masterRecalculate();
-        }
-    });
-
-    masterRecalculate = () => { recalculateBlocFuel(); updatePreviTab(); updateSuiviTab(); updateDeroutementTab(); };
-
-    masterRecalculate();
+function _sumLastNDays_(entries, today, n) {
+  const start = _stripTime_(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (n - 1)));
+  let sum = 0;
+  for (let i = 0; i < entries.length; i++) {
+    const d = entries[i].d;
+    if (d >= start && d <= today) sum += entries[i].h;
+  }
+  return sum;
 }
 
-document.addEventListener('DOMContentLoaded', () => {
-    if (document.getElementById('calculator-modal')) {
-        initializeCalculator();
+function _normHeaderText_(v) {
+  let s = (v || "").toString().toLowerCase();
+  s = s.replace(/[\r\n\t]+/g, " ");
+  try { s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch (e) {}
+  s = s.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
+  s = s.replace(/\b3 j\b/g, "3j").replace(/\b7 j\b/g, "7j").replace(/\b30 j\b/g, "30j");
+  return s;
+}
+
+function _ensureMinColumns_(sh, minCols) {
+  const cur = sh.getMaxColumns();
+  if (cur >= minCols) return;
+  sh.insertColumnsAfter(cur, minCols - cur);
+}
+
+function _findTrigramColumns_(sh, startRow, numRows, maxScanCol) {
+  const maxCol = Math.min(sh.getMaxColumns(), maxScanCol || sh.getMaxColumns());
+  if (maxCol < 1 || numRows <= 0) return [];
+
+  const data = sh.getRange(startRow, 1, numRows, maxCol).getValues();
+  const cols = [];
+
+  for (let c = 0; c < maxCol; c++) {
+    let nonEmpty = 0;
+    let trig = 0;
+
+    for (let r = 0; r < numRows; r++) {
+      const v = (data[r][c] || "").toString().trim().toUpperCase();
+      if (v === "") continue;
+      nonEmpty++;
+      if (_isTrigram_(v)) trig++;
     }
-});
+
+    if (trig >= 1 && (trig / Math.max(1, nonEmpty)) >= 0.2) cols.push(c + 1);
+  }
+
+  return cols;
+}
+
+/* =========================
+   LOGS (onglet "LOG")
+   ========================= */
+function _logOnEdit_(msg, e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const sh = ss.getSheetByName("LOG");
+    if (!sh) return;
+
+    const r = sh.getLastRow() + 1;
+    const sheetName = (e && e.range) ? e.range.getSheet().getName() : "";
+    const a1 = (e && e.range) ? e.range.getA1Notation() : "";
+    const user = (Session.getActiveUser && Session.getActiveUser().getEmail)
+      ? (Session.getActiveUser().getEmail() || "")
+      : "";
+
+    sh.getRange(r, 1, 1, 5).setValues([[
+      new Date(),
+      msg,
+      sheetName,
+      a1,
+      user
+    ]]);
+  } catch (err) {
+    // silence volontaire
+  }
+}
+
+/* =========================
+   TEST
+   ========================= */
+function testHook() {
+  SpreadsheetApp.getActive().toast("TEST HOOK OK ✅", "TEST", 3);
+  _logOnEdit_("testHook() appelé", null);
+}
