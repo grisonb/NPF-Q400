@@ -1,1076 +1,846 @@
-/***************************************************
- * LIMITES HDV + SYNC PILOTES + SYNCS SÉPARÉES
- *
- * Onglets mois :
- *   Janvier, Février, Mars, Avril, Mai, Juin,
- *   Juillet, Août, Septembre, Octobre, Novembre, Décembre
- *
- * Onglet "Socle" :
- *  - Doit être l’onglet ouvert à l’ouverture du fichier
- *  - Ne doit JAMAIS être touché par les synchronisations
- *
- * Zone calendrier intouchable :
- *   B1:AF2 (ligne 1-2, colonnes jours)
- *
- * HDV :
- *  - Écrit dans le tableau "Limites Hdv" via détection par en-têtes :
- *      "3j / 20h max", "7j / 35h max", "30j / 80h max"
- *    (si tu changes "max" en rien, ça marche toujours car on détecte "3j"+"20", etc.)
- *
- * Synchros séparées (fiables) :
- *  - Sync PILOTES (structure)
- *  - Sync FORMAT (bordures/couleurs/polices)
- *  - Sync LARGEURS/HAUTEURS
- *  - Sync TITRES (textes) hors zone calendrier
- *  - Sync TITRES HDV (3j/7j/30j)
- ***************************************************/
-
-const CFG = {
-  SOCLE_SHEET: "Socle",
-  FIRST_ROW: 3,
-
-  // Grille heures (jours) : B..AF
-  GRID_COL_START: 2,        // B
-  GRID_COL_COUNT: 31,       // B..AF
-  GRID_COL_END: 2 + 31 - 1, // AF = 32
-
-  PILOT_COL: 1, // A
-
-  // Zone calendrier intouchable
-  CALENDAR_A1: "B1:AF2",
-
-  TEMPLATE_MAX_ROWS: 250,
-  TEMPLATE_MAX_COLS: 0,
-
-  LIMITS: {
-    D3:  { max: 20, orangeAt: 12, redAt: 16 },
-    D7:  { max: 35, orangeAt: 19, redAt: 27 },
-    D30: { max: 80, orangeAt: 64, redAt: 72 }
-  },
-
-  STYLE: {
-    ORANGE_BG: "#ff9900",
-    RED_BG: "#ff0000",
-    WHITE_BG: "#ffffff",
-    FONT_WHITE: "#ffffff",
-    FONT_BLACK: "#000000",
-    FONT_FAMILY: "Comfortaa",
-    WEIGHT_BOLD: "bold",
-    WEIGHT_NORMAL: "normal"
-  },
-
-  BTN: {
-  EntOPS:     "#ff9900",
-  FeuGAAR:    "#ff3333",
-  GAAR:       "#f66a6a",     // ✅ rosée (sans alpha)
-  MiFrance:   "#00ccff",
-  MiEtranger: "#4a86e8",
-  EntNAV:     "#ccff00",
-  EntVDN:     "#ff33ff",
-  VolTech:    "#cccccc"
-},
-
-
-  TEMPLATE_TIME_BUDGET_MS: 5.2 * 60 * 1000
-};
-
-/* =========================
-   MENUS + OUVERTURE (Socle)
-   ========================= */
-function onOpen() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const ui = SpreadsheetApp.getUi();
-
-
-  ui.createMenu("HDV")
-  .addItem("Recalculer Limites HDV", "updateHdvLimitsAllSheets")
-  .addSeparator()
-  .addItem("Synchroniser PILOTES (depuis Janvier)", "syncPilotsFromJanuary")
-  .addItem("Synchroniser BORDURES + LARGEURS/HAUTEURS", "syncTemplateBordersAndDimensionsFromJanuaryFast")
-  .addItem("Synchroniser COULEURS", "syncTemplateColorsFromJanuaryFast")
-  .addItem("Synchroniser TITRES (textes)", "syncTemplateTitlesFromJanuaryFast")
-  .addSeparator()
-  .addItem("Débloquer HDV (reset lock)", "resetHdvLock")
-  .addSeparator()
-  .addItem("TEST : Hook", "testHook")
-  .addToUi();
-}
-function onSelectionChange(e) {
-  try {
-    if (!e || !e.range) return;
-    const sh = e.range.getSheet();
-    const cell = e.range.getSheet().getActiveCell();
-const a1 = cell ? cell.getA1Notation() : e.range.getA1Notation();
-
-    const p = PropertiesService.getDocumentProperties();
-    p.setProperty("LAST_SEL_SHEET", sh.getName());
-    p.setProperty("LAST_SEL_A1", a1);
-    p.setProperty("LAST_SEL_TS", String(Date.now()));
-  } catch (err) {
-    // silence volontaire
-  }
+:root {
+    --primary-color: #005a9c;
+    --secondary-color: #e3001b;
+    --background-color: #f5f7fa;
+    --card-background-color: #ffffff;
+    --text-color: #333333;
+    --light-text-color: #6c757d;
+    --border-color: #dee2e6;
+    --shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    --border-radius: 12px;
+    --success-color: #28a745;
+    --water-color: #007bff;
+    --retardant-color: #ff5a3d;
+    --base-color: #005a9c;
+    --safe-area-top: 22px; /* Marge supérieure pour les appareils mobiles */
 }
 
-function resetHdvLock() {
-  const props = PropertiesService.getDocumentProperties();
-  props.deleteProperty("HDV_LOCK");
-  props.deleteProperty("HDV_LOCK_TS");
-  SpreadsheetApp.getActive().toast("HDV_LOCK réinitialisé", "HDV", 3);
+html, body {
+    width: 100%; height: 100%; margin: 0; padding: 0; overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 }
 
-/* =========================
-   BOUTON MANUEL "Recalculer Limites Hdv"
-   ========================= */
-function btnRecalculerLimitesHdv() {
-  updateHdvLimitsAllSheets();
+#map {
+    width: 100%; height: 100%; background-color: #eef2f5; z-index: 0;
+    -webkit-user-select: none; -moz-user-select: none; -ms-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
 
-/* =========================
-   HDV : UPDATE (Menu)
-   ========================= */
-function updateHdvLimitsAllSheets() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const sh = ss.getActiveSheet();
-  if (!sh) return;
-
-  const mi = _getMonthIndexFromSheetName_(sh.getName());
-  if (mi === null) return;
-
-  _updateHdvForSheetAndPrev_(sh);
+#ui-overlay {
+    position: absolute; top: var(--safe-area-top); left: 10px; right: 10px;
+    z-index: 1000; max-width: 500px; margin: auto;
+    background-color: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    padding: 15px; border-radius: var(--border-radius); box-shadow: var(--shadow);
 }
 
-/* =========================
-   HDV : UPDATE (onglet donné + précédent)
-   + PROPAGATION ALERTE TRIGRAMMES SUR TOUS LES MOIS
-   ========================= */
-function _updateHdvForSheetAndPrev_(sh) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const mi = _getMonthIndexFromSheetName_(sh.getName());
-  if (mi === null) return;
-
-  const today = _stripTime_(new Date());
-
-  const sheets = [sh];
-  if (mi > 0) {
-    const prev = ss.getSheetByName(_monthNameFromIndex_(mi - 1));
-    if (prev) sheets.push(prev);
-  }
-
-  const index = _buildFlightsIndex_(sheets, today, 30);
-
-  sheets.forEach(s => _writeLimitsForSheet_(s, index, today));
-
-  _applyPilotAlertsAllMonthSheetsGlobal_(ss, today);
+#status-message { color: var(--light-text-color); font-style: italic; text-align: center; }
+#boot-force-update-button {
+    margin: 12px auto 0;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    max-width: 240px;
+    height: 42px;
+    border: 1px solid #c9d3e1;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #0d4f8b;
+    font-weight: 600;
+    cursor: pointer;
+}
+#boot-force-update-button:disabled { opacity: 0.65; cursor: default; }
+.controls-container { display: flex; align-items: center; gap: 10px; }
+.search-wrapper { position: relative; flex-grow: 1; }
+.search-wrapper::before { content: '🔍'; position: absolute; left: 18px; top: 50%; transform: translateY(-50%); font-size: 1.2em; opacity: 0.5; pointer-events: none; }
+#search-input { width: 100%; padding: 15px 40px 15px 50px; font-size: 16px; border: 1px solid var(--border-color); border-radius: var(--border-radius); box-sizing: border-box; -webkit-appearance: none; }
+#clear-search {
+    position: absolute;
+    right: 10px;
+    top: 50%;
+    transform: translateY(-60%);
+    width: 36px;
+    height: 44px;
+    line-height: 44px;
+    text-align: center;
+    font-size: 24px;
+    color: #999;
+    cursor: pointer;
+    display: none;
+    user-select: none;
+    touch-action: manipulation;
+}
+.airport-controls { display: flex; flex-direction: column; align-items: center; font-size: 0.8em; color: var(--light-text-color); }
+#airport-count { width: 60px; padding: 8px; font-size: 16px; border: 1px solid var(--border-color); border-radius: 8px; text-align: center; margin-top: 4px; }
+#results-list { list-style-type: none; padding: 0; margin-top: 5px; max-height: 40vh; overflow-y: auto; text-align: left; border-top: 1px solid var(--border-color); }
+#results-list li { padding: 15px 20px; border-bottom: 1px solid #f1f3f5; cursor: pointer; }
+#results-list li:hover { background-color: #e9f5ff; }
+.custom-marker-icon { text-align: center; border-radius: 50%; color: white; font-weight: bold; font-size: 1.2em; width: 32px; height: 32px; line-height: 32px; box-shadow: 0 2px 5px rgba(0,0,0,0.4); border: 2px solid white; }
+.user-marker { background-color: var(--secondary-color); }
+.fire-marker { background-color: orangered; }
+.airport-marker-base { font-size: 1em; width: 24px; height: 24px; line-height: 24px; opacity: 0.9; }
+.airport-marker-active { background-color: var(--success-color); }
+.airport-marker-water { background-color: var(--water-color); }
+.airport-marker-disabled { background-color: rgba(255, 255, 255, 0.8); border: 2px solid var(--secondary-color); color: var(--secondary-color); font-size: 1.8em; font-weight: bold; line-height: 20px; opacity: 0.8; }
+.leaflet-tooltip.route-tooltip { background-color: rgba(255, 255, 255, 0.9); border: 1px solid #777; border-radius: 4px; box-shadow: none; padding: 4px 8px; font-size: 14px; font-weight: bold; color: #333; }
+.airport-popup .popup-buttons { display: flex; gap: 5px; margin-top: 10px; }
+.airport-popup button { flex-grow: 1; padding: 8px; border: none; border-radius: 5px; color: white; font-weight: bold; cursor: pointer; }
+.airport-popup .water-btn { background-color: var(--water-color); }
+.airport-popup .water-btn-retardant { background-color: var(--retardant-color); }
+.airport-popup .enable-btn { background-color: var(--success-color); }
+.airport-popup .disable-btn { background-color: var(--secondary-color); }
+.airport-popup .base-btn { background-color: var(--base-color); }
+.airport-popup .base-btn-active { background-color: var(--success-color); }
+#bingo-map-display {
+    position: absolute;
+    top: var(--safe-area-top);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1000;
+    background-color: rgba(255, 226, 230, 0.95); /* Fond rouge clair */
+    border: 3px solid var(--secondary-color); /* Bordure un peu plus épaisse */
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 30px; /* Espace augmenté entre les deux bingos */
+    box-shadow: 0 2px 8px rgba(0,0,0,0.4);
+    border-radius: 18px; /* Rayon augmenté (12px * 1.5) */
+    height: 60px; /* Hauteur augmentée (40px * 1.5) */
+    padding: 0 27px; /* Padding augmenté (18px * 1.5) */
+    font-size: 24px; /* Police augmentée (16px * 1.5) */
+    font-weight: 500;
+    white-space: nowrap;
+    color: var(--text-color);
+}
+#bingo-map-display b {
+    color: var(--secondary-color);
+}
+#commune-info-display { position: absolute; top: calc(var(--safe-area-top) + 75px); /* Poussé encore plus bas */ left: 50%; transform: translateX(-50%); z-index: 1000; background-color: white; display: none; align-items: center; box-shadow: 0 1px 5px rgba(0,0,0,0.4); border-radius: var(--border-radius); border: 1px solid rgba(0,0,0,0.2); height: 52px; padding: 0 10px 0 18px; font-size: 18px; font-weight: 500; white-space: nowrap; max-width: calc(100vw - 130px); overflow: hidden; color: var(--text-color); gap: 12px; }
+#commune-info-display > .commune-name { overflow: hidden; text-overflow: ellipsis; }
+#commune-info-display .sunset-info { display: flex; align-items: center; font-size: 15px; color: var(--light-text-color); margin-left: auto; white-space: nowrap; }
+.clear-commune-btn {
+    font-size: 30px;
+    color: #999;
+    cursor: pointer;
+    font-weight: bold;
+    margin-left: 8px;
+    line-height: 1;
+    padding: 0 5px;
+    transition: color 0.2s;
+}
+.clear-commune-btn:hover {
+    color: #333;
+}
+#nearest-commune-display {
+    position: absolute;
+    bottom: 16px;
+    right: 16px;
+    z-index: 1000;
+    background-color: rgba(255, 255, 255, 0.95);
+    border: 1px solid rgba(0, 0, 0, 0.2);
+    border-radius: var(--border-radius);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.4);
+    padding: 10px 14px;
+    font-size: 18px;
+    color: var(--text-color);
+    max-width: min(360px, calc(100vw - 32px));
 }
 
-/* =========================
-   DISPATCHER UNIQUE onEdit(e)
-   - Socle => _onEditSocle_(e)
-   - Mois  => _onEditHdv_(e)
-   ========================= */
-function onEdit(e) {
-  try {
-    if (!e || !e.range) return;
-
-    const shName = e.range.getSheet().getName();
-    _logOnEdit_("onEdit déclenché", e);
-
-    // Nom SOCLE (via Config si dispo, sinon fallback "Socle")
-    const c = (typeof CFG_ === "function") ? CFG_() : {};
-    const socleName = (c && c.SOCLE_SHEET) ? c.SOCLE_SHEET : "Socle";
-
-    // 1) SOCLE
-    if (shName === socleName) {
-      _logOnEdit_("branche SOCLE", e);
-
-      if (typeof _onEditSocle_ === "function") {
-        _onEditSocle_(e);
-        _logOnEdit_("_onEditSocle_ OK", e);
-      } else {
-        _logOnEdit_("_onEditSocle_ introuvable", e);
-        SpreadsheetApp.getActive().toast("_onEditSocle_ introuvable (Socle.gs ?)", "SOCLE", 6);
-      }
-      return;
-    }
-
-    // 2) HDV
-    _logOnEdit_("branche HDV", e);
-    _onEditHdv_(e);
-
-  } catch (err) {
-    _logOnEdit_("Erreur onEdit global : " + err.message, e);
-  }
+#nearest-commune-display b {
+    color: var(--primary-color);
 }
 
-/* =========================
-   AUTO À CHAQUE SAISIE
-   - heures B..AF => HDV (onglet édité + précédent)
-   + FIX : si tu VIDES une cellule, on efface la couleur manuelle
-   ========================= */
-function _onEditHdv_(e) {
-  if (!e || !e.range) return;
-
-  const sh = e.range.getSheet();
-  const mi = _getMonthIndexFromSheetName_(sh.getName());
-  if (mi === null) return;
-
-  if (e.range.getRow() < CFG.FIRST_ROW) return;
-
-  const c1 = e.range.getColumn();
-  const c2 = c1 + e.range.getNumColumns() - 1;
-  if (c2 < CFG.GRID_COL_START || c1 > CFG.GRID_COL_END) return;
-
-  // ✅ 0) Si un bouton de coloration vient d’être cliqué,
-  // on colore la cellule éditée au moment où la valeur est enfin commit.
-  const pendingBg = _consumePendingBtnColor_();
-  if (pendingBg) {
-    try {
-      // on ne fait ça que sur une cellule unique
-      if (e.range.getNumRows() === 1 && e.range.getNumColumns() === 1) {
-        const v = e.range.getValue();
-        if (v !== "" && v !== null) {
-          e.range.setBackground(pendingBg);
-        }
-      }
-    } catch (err) {}
-  }
-
-  // 1) Si l'utilisateur efface des cellules => on supprime la mise en forme manuelle
-  _clearManualColorWhenEmpty_(e.range);
-
-  // 2) Recalcul HDV avec lock
-  const props = PropertiesService.getDocumentProperties();
-  const now = Date.now();
-  const lockVal = props.getProperty("HDV_LOCK");
-  const lockTs = Number(props.getProperty("HDV_LOCK_TS") || "0");
-
-  if (lockVal === "1" && lockTs && (now - lockTs) > 90 * 1000) {
-    props.deleteProperty("HDV_LOCK");
-    props.deleteProperty("HDV_LOCK_TS");
-  }
-  if (props.getProperty("HDV_LOCK") === "1") return;
-
-  const lock = LockService.getDocumentLock();
-  if (!lock.tryLock(2000)) return;
-
-  props.setProperty("HDV_LOCK", "1");
-  props.setProperty("HDV_LOCK_TS", String(now));
-
-  try {
-    _updateHdvForSheetAndPrev_(sh);
-  } finally {
-    props.deleteProperty("HDV_LOCK");
-    props.deleteProperty("HDV_LOCK_TS");
-    lock.releaseLock();
-  }
+#live-gps-button { flex-shrink: 0; width: 48px; height: 48px; padding: 0; border: 1px solid var(--border-color); border-radius: var(--border-radius); background-color: var(--card-background-color); color: var(--primary-color); font-size: 24px; cursor: pointer; display: flex; align-items: center; justify-content: center; line-height: 1; transition: background-color 0.2s, color 0.2s; }
+#live-gps-button:hover { background-color: #e9f5ff; }
+#main-action-buttons { position: absolute; top: var(--safe-area-top); right: 20px; z-index: 1001; display: flex; flex-direction: column; gap: 15px; align-items: center; }
+#toggle-search-button, #calculator-button, #gps-feu-button { width: 90px; height: 90px; font-size: 48px; border: 2px solid var(--border-color); border-radius: 20px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); color: var(--primary-color); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); padding: 0; line-height: 1; }
+#chat-toggle-button { width: 90px; height: 90px; font-size: 48px; border: 2px solid var(--border-color); border-radius: 20px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); color: var(--primary-color); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); padding: 0; line-height: 1; position: relative; }
+#chat-alert-badge {
+    position: absolute;
+    top: 6px;
+    right: 6px;
+    min-width: 22px;
+    height: 22px;
+    border-radius: 999px;
+    background: var(--secondary-color);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 0 6px;
+    border: 2px solid #fff;
+}
+#chat-offline-badge {
+    position: absolute;
+    top: 6px;
+    left: 6px;
+    width: 24px;
+    height: 24px;
+    border-radius: 999px;
+    background: #d8232a;
+    color: #fff;
+    border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+    font-size: 14px;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+}
+#toggle-search-button.active { border-color: var(--primary-color); background-color: rgba(233, 245, 255, 0.9); }
+.version-display { font-size: 14px; font-weight: bold; color: #333; text-shadow: 0 0 3px white, 0 0 3px white; background-color: rgba(255, 255, 255, 0.6); padding: 2px 8px; border-radius: 6px; margin-top: -5px; }
+.force-update-button {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--primary-color);
+    background: rgba(255, 255, 255, 0.9);
+    border: 1px solid var(--primary-color);
+    border-radius: 8px;
+    padding: 6px 8px;
+    cursor: pointer;
+}
+#live-gps-button.active { background-color: var(--primary-color); color: white; border-color: var(--primary-color); animation: pulse 2s infinite; }
+/* --- Chat équipe --- */
+#team-chat-panel {
+    position: fixed;
+    left: 50%;
+    top: calc(var(--safe-area-top) + 8px);
+    transform: translateX(-50%);
+    z-index: 1100;
+    width: min(980px, calc(100vw - 24px));
+    height: min(88dvh, calc(100dvh - var(--safe-area-top) - 16px));
+    max-height: min(88dvh, calc(100dvh - var(--safe-area-top) - 16px));
+    background: rgba(255, 255, 255, 0.95);
+    border: 1px solid var(--border-color);
+    border-radius: 0;
+    box-shadow: var(--shadow);
+    padding: 12px 12px calc(12px + env(safe-area-inset-bottom));
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+}
+.chat-header-actions { display: flex; align-items: center; gap: 8px; }
+#chat-minimize-button {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    border-radius: 8px;
+    font-size: 16px;
+    width: 30px;
+    height: 30px;
+    line-height: 1;
+    cursor: pointer;
+}
+#chat-clear-button {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    border-radius: 8px;
+    font-size: 16px;
+    width: 34px;
+    height: 30px;
+    line-height: 1;
+    cursor: pointer;
+}
+.chat-header { display: flex; align-items: center; justify-content: space-between; font-size: 14px; color: #555; }
+#chat-connection-state.online { color: var(--success-color); font-weight: 700; }
+#chat-connection-state.offline { color: var(--secondary-color); font-weight: 700; }
+.chat-online-users {
+    font-size: 12px;
+    color: #4d5d7a;
+    background: #eef4ff;
+    border: 1px solid #d4e2ff;
+    border-radius: 999px;
+    padding: 3px 8px;
+}
+.chat-config-row, .chat-send-row { display: grid; gap: 8px; }
+.chat-config-row { grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) auto; }
+.chat-send-row { grid-template-columns: 1fr auto; }
+#chat-room-input, #chat-user-input, #chat-message-input {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 10px;
+    font-size: 14px;
+    width: 100%;
+    box-sizing: border-box;
+}
+#chat-connect-button, #chat-send-button {
+    border: 1px solid var(--primary-color);
+    border-radius: 10px;
+    background: var(--primary-color);
+    color: #fff;
+    font-weight: 700;
+    padding: 10px 12px;
+    cursor: pointer;
+}
+#chat-messages {
+    background: #f7f9fc;
+    border: 1px solid #e9edf3;
+    border-radius: 10px;
+    min-height: 140px;
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px;
+}
+.chat-message {
+    margin-bottom: 8px;
+    padding: 6px 8px;
+    border-radius: 8px;
+    background: #fff;
+    border: 1px solid #ecf0f6;
+    font-size: 13px;
+    line-height: 1.35;
+}
+.chat-message-own {
+    background: #e8f5ff;
+    border-color: #b9e3ff;
+}
+.chat-message-remote {
+    background: #fff4e8;
+    border-color: #ffd8ad;
+}
+.chat-message b { color: var(--primary-color); }
+.chat-message-status { font-size: 12px; color: #76829a; margin-left: 6px; font-weight: 700; }
+.chat-message-status.read { color: #13a1ff; }
+.chat-clear-modal {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.45);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 2100;
+}
+.chat-clear-modal-content {
+    width: min(420px, calc(100vw - 32px));
+    background: #fff;
+    border-radius: 12px;
+    border: 1px solid var(--border-color);
+    box-shadow: var(--shadow);
+    padding: 16px;
+}
+.chat-clear-modal-content h3 {
+    margin: 0 0 8px;
+    color: var(--primary-color);
+    font-size: 18px;
+}
+.chat-clear-modal-content p {
+    margin: 0 0 12px;
+    font-size: 14px;
+    color: #4d5d7a;
+}
+.chat-clear-modal-actions {
+    display: grid;
+    gap: 8px;
+}
+.chat-clear-option {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 700;
+    padding: 10px;
+    cursor: pointer;
+}
+.chat-clear-option-danger {
+    border-color: var(--secondary-color);
+    color: var(--secondary-color);
+}
+@keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(0, 90, 156, 0.7); } 70% { box-shadow: 0 0 0 10px rgba(0, 90, 156, 0); } 100% { box-shadow: 0 0 0 0 rgba(0, 90, 156, 0); } }
+.extra-controls, #gaar-controls { margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); display: flex; justify-content: center; gap: 15px; }
+.toggle-button { padding: 8px 16px; font-size: 14px; font-weight: bold; border: 1px solid var(--primary-color); border-radius: var(--border-radius); cursor: pointer; background-color: transparent; color: var(--primary-color); transition: background-color 0.2s, color 0.2s; }
+.toggle-button.active { background-color: var(--primary-color); color: white; }
+.department-code-label {
+    background: transparent;
+    border: 0;
 }
 
-function _clearManualColorWhenEmpty_(range) {
-  const sheet = range.getSheet();
-
-  const r1 = range.getRow();
-  const c1 = range.getColumn();
-  const nr = range.getNumRows();
-  const nc = range.getNumColumns();
-
-  // travaille uniquement sur l'intersection avec B..AF
-  const left = Math.max(c1, CFG.GRID_COL_START);
-  const right = Math.min(c1 + nc - 1, CFG.GRID_COL_END);
-  if (right < left) return;
-
-  const width = right - left + 1;
-  const sub = sheet.getRange(r1, left, nr, width);
-
-  const vals = sub.getValues();
-  const bgs = sub.getBackgrounds();
-  const fcs = sub.getFontColors();
-  const fws = sub.getFontWeights();
-  const ffs = sub.getFontFamilies();
-
-  let changed = false;
-
-  for (let r = 0; r < nr; r++) {
-    for (let c = 0; c < width; c++) {
-      const v = vals[r][c];
-      const empty = (v === "" || v === null);
-      if (empty) {
-        if (bgs[r][c] !== CFG.STYLE.WHITE_BG) { bgs[r][c] = CFG.STYLE.WHITE_BG; changed = true; }
-        if (fcs[r][c] !== CFG.STYLE.FONT_BLACK) { fcs[r][c] = CFG.STYLE.FONT_BLACK; changed = true; }
-        if (fws[r][c] !== CFG.STYLE.WEIGHT_NORMAL) { fws[r][c] = CFG.STYLE.WEIGHT_NORMAL; changed = true; }
-        if (ffs[r][c] !== CFG.STYLE.FONT_FAMILY) { ffs[r][c] = CFG.STYLE.FONT_FAMILY; changed = true; }
-      }
-    }
-  }
-
-  if (changed) {
-    sub.setBackgrounds(bgs);
-    sub.setFontColors(fcs);
-    sub.setFontWeights(fws);
-    sub.setFontFamilies(ffs);
-  }
+.department-code-label span {
+    color: #121212;
+    font-weight: 700;
+    font-size: 12px;
+    text-shadow: 0 0 2px #fff, 0 0 2px #fff;
 }
 
-/* =========================
-   LIMITES HDV : détection colonnes par en-têtes
-   ========================= */
-function findLimitesHdvColumns_(sheet) {
-  const lastCol = sheet.getLastColumn();
-  const maxRows = Math.min(50, sheet.getMaxRows());
+/* --- STYLES POUR LA MODALE DU CALCULATEUR --- */
+#calculator-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: rgba(0, 0, 0, 0.6); backdrop-filter: blur(5px); z-index: 2000; display: none; justify-content: center; align-items: center; }
+#close-calculator-btn {
+    position: absolute;
+    top: -0px;      /* Décalé encore moins vers le haut */
+    right: -0px;     /* Décalé encore moins vers la droite */
+    width: 52px;
+    height: 52px;
+    background-color: var(--secondary-color); /* Fond rouge */
+    color: white;                             /* Croix blanche */
+    border: 3px solid white;                  /* Bordure blanche pour le détacher */
+    border-radius: 50%;                       /* Forme de cercle */
+    box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+    font-size: 32px;
+    font-weight: bold;
+    cursor: pointer;
+    z-index: 1060;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    line-height: 1;
+    transition: transform 0.2s ease;
+}
+#close-calculator-btn::before {
+    content: '';
+    position: absolute;
+    inset: -10px;
+}
+#close-calculator-btn:hover {
+    transform: scale(1.1); /* Effet de grossissement au survol */
+}
+.main-container { width: 100%; max-width: 1000px; height: 100%; max-height: 95vh; background-color: #fff; border-radius: var(--border-radius); box-shadow: var(--shadow); overflow: hidden; display: flex; flex-direction: column; position: relative; }
+.onglets-navigation { display: flex; align-items: stretch; background-color: var(--background-color); border-bottom: 1px solid var(--border-color); }
+.onglet-bouton { flex: 1; min-height: 56px; padding: 16px 10px; border: none; background: transparent; font-size: 16px; font-weight: 500; color: var(--light-text-color); cursor: pointer; border-bottom: 3px solid transparent; transition: all 0.2s; white-space: nowrap; display: flex; align-items: center; justify-content: center; touch-action: manipulation; }
+.onglet-bouton.active { color: var(--primary-color); border-bottom-color: var(--primary-color); }
+.onglets-conteneur { flex-grow: 1; position: relative; overflow: hidden; }
+.onglet-panneau { display: none; flex-direction: column; height: 100%; }
+.onglet-panneau.active { display: flex; }
+.header-section { display: grid; grid-template-columns: 1.2fr 1.2fr 1fr 1.2fr 1.2fr; gap: 20px; padding: 20px; background-color: var(--background-color); border-bottom: 2px solid var(--border-color); align-items: center; }
+.header-item { display: flex; flex-direction: column; align-items: center; text-align: center; }
+.header-item label { font-weight: bold; color: var(--primary-color); margin-bottom: 10px; font-size: 17px; text-transform: uppercase; }
+.input-wrapper .display-input { width: 100%; padding: 12px; font-size: 19px; text-align: center; border: 1px solid var(--border-color); border-radius: 7px; box-sizing: border-box; background-color: #fff; user-select: none; -webkit-user-select: none; }
+.table-wrapper { flex-grow: 1; overflow-y: auto; }
+.table-section { width: 100%; border-collapse: collapse; table-layout: fixed; }
 
-  for (let r = 1; r <= maxRows; r++) {
-    const row = sheet.getRange(r, 1, 1, lastCol).getDisplayValues()[0];
-    let c3 = null, c7 = null, c30 = null;
-
-    for (let i = 0; i < row.length; i++) {
-      const t = _normHeaderText_(row[i]);
-      if (!c3  && t.includes("3j")  && t.includes("20")) c3  = i + 1;
-      if (!c7  && t.includes("7j")  && t.includes("35")) c7  = i + 1;
-      if (!c30 && t.includes("30j") && t.includes("80")) c30 = i + 1;
-    }
-    if (c3 && c7 && c30) return { headerRow: r, col3: c3, col7: c7, col30: c30 };
-  }
-
-  // fallback (à ajuster si besoin)
-  return { headerRow: 2, col3: 41, col7: 42, col30: 43 };
+/* Styles généraux pour les en-têtes et cellules */
+.table-section th,
+.table-section td {
+    text-align: center;
+    vertical-align: middle;
+    padding: 5px;
 }
 
-/* =========================
-   LIMITES HDV : écriture + styles
-   ========================= */
-function _writeLimitsForSheet_(sh, index, today) {
-  const cols = findLimitesHdvColumns_(sh);
-  const FIRST_ROW = Math.max(CFG.FIRST_ROW, cols.headerRow + 1);
-
-  const lastRow = sh.getLastRow();
-  if (lastRow < FIRST_ROW) return;
-  const rows = lastRow - FIRST_ROW + 1;
-
-  const miSheet = _getMonthIndexFromSheetName_(sh.getName());
-  const miToday = today.getMonth();
-  const isCurrentMonthSheet = (miSheet === miToday);
-
-  const pilots = sh.getRange(FIRST_ROW, CFG.PILOT_COL, rows, 1).getValues();
-
-  const out3 = [], out7 = [], out30 = [];
-  const bg3 = [], fc3 = [], fw3 = [];
-  const bg7 = [], fc7 = [], fw7 = [];
-  const bg30 = [], fc30 = [], fw30 = [];
-
-  for (let i = 0; i < rows; i++) {
-    const code = (pilots[i][0] || "").toString().trim().toUpperCase();
-
-    if (!_isTrigram_(code)) {
-      out3.push([""]); out7.push([""]); out30.push([""]);
-      const n = _styleNormal_();
-      bg3.push([n.bg]);  fc3.push([n.fc]);  fw3.push([n.fw]);
-      bg7.push([n.bg]);  fc7.push([n.fc]);  fw7.push([n.fw]);
-      bg30.push([n.bg]); fc30.push([n.fc]); fw30.push([n.fw]);
-      continue;
-    }
-
-    const entries = index[code] || [];
-    const v3  = _round1_(_sumLastNDays_(entries, today, 3));
-    const v7  = _round1_(_sumLastNDays_(entries, today, 7));
-    const v30 = _round1_(_sumLastNDays_(entries, today, 30));
-
-    const s3  = _styleForLimit_(v3,  CFG.LIMITS.D3);
-    const s7  = _styleForLimit_(v7,  CFG.LIMITS.D7);
-    const s30 = _styleForLimit_(v30, CFG.LIMITS.D30);
-
-    if (isCurrentMonthSheet) {
-      out3.push([v3]); out7.push([v7]); out30.push([v30]);
-      bg3.push([s3.bg]);   fc3.push([s3.fc]);   fw3.push([s3.fw]);
-      bg7.push([s7.bg]);   fc7.push([s7.fc]);   fw7.push([s7.fw]);
-      bg30.push([s30.bg]); fc30.push([s30.fc]); fw30.push([s30.fw]);
-    } else {
-      out3.push([""]); out7.push([""]); out30.push([""]);
-      const n = _styleNormal_();
-      bg3.push([n.bg]);  fc3.push([n.fc]);  fw3.push([n.fw]);
-      bg7.push([n.bg]);  fc7.push([n.fc]);  fw7.push([n.fw]);
-      bg30.push([n.bg]); fc30.push([n.fc]); fw30.push([n.fw]);
-    }
-  }
-
-  sh.getRange(FIRST_ROW, cols.col3,  rows, 1).setValues(out3);
-  sh.getRange(FIRST_ROW, cols.col7,  rows, 1).setValues(out7);
-  sh.getRange(FIRST_ROW, cols.col30, rows, 1).setValues(out30);
-
-  _applyStyleColumn_(sh, FIRST_ROW, cols.col3,  rows, bg3,  fc3,  fw3);
-  _applyStyleColumn_(sh, FIRST_ROW, cols.col7,  rows, bg7,  fc7,  fw7);
-  _applyStyleColumn_(sh, FIRST_ROW, cols.col30, rows, bg30, fc30, fw30);
+/* Styles spécifiques aux en-têtes */
+.table-section th {
+    font-size: 17px;
+    background-color: var(--background-color);
+    text-transform: uppercase;
+    position: sticky;
+    top: 0;
+    z-index: 5;
+    padding: 12px 5px;
+    white-space: normal; /* Permet au texte de passer à la ligne si besoin */
 }
 
-/* =========================
-   PROPAGATION ALERTE TRIGRAMMES SUR TOUS LES MOIS
-   ========================= */
-function _applyPilotAlertsAllMonthSheetsGlobal_(ss, today) {
-  const monthSheets = _getMonthSheets_(ss);
-  const indexAll = _buildFlightsIndex_(monthSheets, today, 30);
-  const styleMap = _computePilotAlertStyleMap_(indexAll, today);
-  monthSheets.forEach(sh => _applyPilotAlertStyleToOneSheet_(sh, styleMap));
+/* --- Contrôle de la largeur des colonnes --- */
+.table-section th:nth-child(1), .table-section td:nth-child(1),
+.table-section th:nth-child(2), .table-section td:nth-child(2) {
+    width: 155px; /* Largeur fixe élargie pour les 2 premières colonnes */
+}
+.table-section td:nth-child(1) .display-input,
+.table-section td:nth-child(2) .display-input {
+    font-weight: bold;
+}
+/* Styles spécifiques aux cellules */
+.table-section td { font-size: 19px; }
+
+/* --- Correction alignement des inputs --- */
+.table-section .input-wrapper .display-input { text-align: center; }
+
+/* Styles pour les cellules de résultats calculés */
+.table-section td.duree-rotation-cell { font-weight: bold; color: #000080; font-size: 28px; }
+.table-section td.fuel-rotation-cell { font-weight: bold; color: #008000; font-size: 28px; }
+
+/* Alternance de couleur pour les lignes */
+.table-section tbody tr:nth-child(odd) {
+    background-color: var(--background-color);
+}
+.analyse-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 30px 50px; padding: 25px; overflow-y: auto; flex-grow: 1; height: 100%; box-sizing: border-box; }
+.result-line { display: grid; grid-template-columns: 1fr auto; align-items: center; margin-bottom: 25px; font-size: 19px; }
+.result-line .label { font-weight: 500; text-align: left; }
+.result-line .value { font-weight: bold; background-color: #e9f5ff; padding: 8px 15px; border-radius: 6px; text-align: right; }
+.result-line .input-wrapper { max-width: 180px; }
+.bingo-group { margin-bottom: 20px; }
+.bingo-group .result-line .label { font-size: 22px; font-weight: bold; }
+.bingo-group .result-line .value { border: 2px solid var(--secondary-color); background-color: #fff0f3; margin-top: 5px; width: 100%; box-sizing: border-box; height: auto; min-height: 45px; display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; white-space: nowrap; font-size: 17px; padding: 10px 8px; }
+.analyse-separator { border: 0; height: 1px; background-color: var(--border-color); margin: 0 0 20px 0; }
+.manual-btn, #refresh-gps-btn { padding: 8px 12px; font-size: 14px; font-weight: bold; border: 1px solid var(--border-color); border-radius: 6px; background-color: #fff; cursor: pointer; }
+#refresh-gps-btn {
+    grid-column: 1 / -1; /* Pour qu'il prenne toute la largeur de sa colonne */
+    margin-top: 15px;
+    padding: 15px; /* Plus grand */
+    font-size: 24px; /* Icône plus grande */
+    font-weight: bold;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+#refresh-gps-btn:hover {
+    background-color: #004a80;
+}
+.manual-btn { margin-left: 10px; }
+.manual-btn.active { background-color: var(--primary-color); color: #fff; border-color: var(--primary-color); }
+.analyse-col-title { font-size: 20px; font-weight: bold; color: var(--primary-color); text-transform: uppercase; margin-bottom: 15px; text-align: center; }
+#tmd .display-input, #limite-hdv .display-input { font-weight: bold; }
+.leaflet-tooltip.route-tooltip-selected { background-color: var(--success-color); color: white; border-color: #1a7431; }
+.result-line .value.rotation-value-default { background-color: #e9f5ff; color: var(--text-color); }
+.result-line .value.rotation-value-green { background-color: var(--success-color); color: white; }
+.result-line .value.rotation-value-yellow { background-color: #ffc107; color: #333; }
+.result-line .value.rotation-value-red { background-color: var(--secondary-color); color: white; }
+#reset-all-btn {
+    position: absolute;
+    bottom: 2px;    /* Décalé un peu moins vers le bas (donc plus haut) */
+    right: 2px;     /* Décalé un peu moins vers la droite (donc plus à gauche) */
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    background-color: var(--secondary-color);
+    color: white;
+    font-size: 36px;
+    border: 4px solid white;
+    cursor: pointer;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.35);
+    z-index: 1050;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: transform 0.2s ease;
+}
+#reset-all-btn:hover {
+    transform: scale(1.1);
 }
 
-function _computePilotAlertStyleMap_(index, today) {
-  const map = {};
-  for (const code in index) {
-    if (!Object.prototype.hasOwnProperty.call(index, code)) continue;
-    if (!_isTrigram_(code)) continue;
+/* --- STYLES POUR L'ERGONOMIE DES CHAMPS DE SAISIE --- */
+.input-wrapper { position: relative; width: 100%; }
+.input-wrapper.time-input-wrapper .display-input { padding-left: 45px; padding-right: 45px; }
+.input-wrapper .clear-btn { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); font-size: 30px; font-weight: bold; color: var(--light-text-color); cursor: pointer; z-index: 2; }
+.time-input-wrapper .clock-icon { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); font-size: 26px; pointer-events: none; }
+.time-input-wrapper .engine-input { position: absolute; top: 0; right: 0; width: 48px; height: 100%; opacity: 0; cursor: pointer; border: none; z-index: 3; }
 
-    const entries = index[code] || [];
-    const v3  = _round1_(_sumLastNDays_(entries, today, 3));
-    const v7  = _round1_(_sumLastNDays_(entries, today, 7));
-    const v30 = _round1_(_sumLastNDays_(entries, today, 30));
-
-    const s3  = _styleForLimit_(v3,  CFG.LIMITS.D3);
-    const s7  = _styleForLimit_(v7,  CFG.LIMITS.D7);
-    const s30 = _styleForLimit_(v30, CFG.LIMITS.D30);
-    const sp  = _mergeWorstStyle_(s3, s7, s30);
-
-    map[code] = { bg: sp.bg, fc: sp.fc };
-  }
-  return map;
+#refresh-gps-btn {
+    grid-column: 1 / -1; /* Pour qu'il prenne toute la largeur de sa colonne */
+    margin-top: 15px;
+    padding: 15px; /* Plus grand */
+    font-size: 24px; /* Icône plus grande */
+    font-weight: bold;
+    background-color: var(--primary-color);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: background-color 0.2s;
+}
+#refresh-gps-btn:hover {
+    background-color: #004a80;
+}
+.formula-help-icon {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    line-height: 18px;
+    text-align: center;
+    background-color: var(--primary-color);
+    color: white;
+    font-weight: bold;
+    font-size: 14px;
+    border-radius: 50%;
+    cursor: pointer;
+    margin-left: 8px;
+    transition: transform 0.2s, background-color 0.2s;
+    user-select: none; /* Empêche la sélection du texte "?" */
+    -webkit-user-select: none;
 }
 
-function _applyPilotAlertStyleToOneSheet_(sh, styleMap) {
-  const lastTriRow = _findLastTrigramRow_(sh);
-  if (lastTriRow < CFG.FIRST_ROW) return;
-
-  const rows = lastTriRow - CFG.FIRST_ROW + 1;
-
-  const trigCols = _findTrigramColumns_(sh, CFG.FIRST_ROW, rows, 45);
-  if (!trigCols.length) return;
-
-  trigCols.forEach(col => {
-    const rng = sh.getRange(CFG.FIRST_ROW, col, rows, 1);
-    const vals = rng.getValues();
-
-    const bgs = [];
-    const fcs = [];
-
-    for (let i = 0; i < rows; i++) {
-      const code = (vals[i][0] || "").toString().trim().toUpperCase();
-      if (_isTrigram_(code) && styleMap[code]) {
-        bgs.push([styleMap[code].bg]);
-        fcs.push([styleMap[code].fc]);
-      } else {
-        bgs.push([CFG.STYLE.WHITE_BG]);
-        fcs.push([CFG.STYLE.FONT_BLACK]);
-      }
-    }
-
-    rng.setBackgrounds(bgs);
-    rng.setFontColors(fcs);
-  });
-
-  // sécurité : si une autre colonne “cible” ne fait pas partie des trigCols, on la remet neutre
-  if (sh.getMaxColumns() >= 45 && trigCols.indexOf(45) === -1) {
-    sh.getRange(CFG.FIRST_ROW, 45, rows, 1)
-      .setBackground(CFG.STYLE.WHITE_BG)
-      .setFontColor(CFG.STYLE.FONT_BLACK);
-  }
+.formula-help-icon:hover {
+    background-color: #004a80;
+    transform: scale(1.1);
 }
 
-/* =========================
-   INDEX DES VOLS (jours ligne 2)
-   ========================= */
-function _buildFlightsIndex_(sheets, today, daysWindow) {
-  const start = _stripTime_(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (daysWindow - 1)));
-  const idx = {};
-  const year = today.getFullYear();
-
-  sheets.forEach(sh => {
-    const mi = _getMonthIndexFromSheetName_(sh.getName());
-    if (mi === null) return;
-
-    const dayNums = sh.getRange(2, CFG.GRID_COL_START, 1, CFG.GRID_COL_COUNT).getValues()[0];
-
-    const last = sh.getLastRow();
-    if (last < CFG.FIRST_ROW) return;
-
-    const rows = last - CFG.FIRST_ROW + 1;
-
-    const pilots = sh.getRange(CFG.FIRST_ROW, CFG.PILOT_COL, rows, 1).getValues();
-    const grid = sh.getRange(CFG.FIRST_ROW, CFG.GRID_COL_START, rows, CFG.GRID_COL_COUNT).getValues();
-
-    for (let r = 0; r < rows; r++) {
-      const code = (pilots[r][0] || "").toString().trim().toUpperCase();
-      if (!_isTrigram_(code)) continue;
-
-      for (let c = 0; c < CFG.GRID_COL_COUNT; c++) {
-        const day = parseInt(dayNums[c], 10);
-        if (!day || day < 1 || day > 31) continue;
-
-        const dt = _stripTime_(new Date(year, mi, day));
-        if (dt < start || dt > today) continue;
-
-        const h = _toNumberHours_(grid[r][c]);
-        if (!h || h <= 0) continue;
-
-        if (!idx[code]) idx[code] = [];
-        idx[code].push({ d: dt, h: h });
-      }
-    }
-  });
-
-  return idx;
+.result-line .label {
+    display: inline-flex; /* Assure l'alignement vertical du texte et de l'icône */
+    align-items: center;
+}
+/* --- STYLES POUR LA MODALE DES CARTES HORS-LIGNE --- */
+#offline-map-modal {
+    position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+    background-color: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(5px);
+    z-index: 2000;
+    display: none;
+    justify-content: center;
+    align-items: center;
 }
 
-/* =========================
-   STYLES (cumuls)
-   ========================= */
-function _styleForLimit_(v, lim) {
-  const n = Number(v) || 0;
-  if (n >= lim.redAt) {
-    return { level: 2, bg: CFG.STYLE.RED_BG, fc: CFG.STYLE.FONT_WHITE, fw: CFG.STYLE.WEIGHT_BOLD };
-  }
-  if (n >= lim.orangeAt) {
-    return { level: 1, bg: CFG.STYLE.ORANGE_BG, fc: CFG.STYLE.FONT_WHITE, fw: CFG.STYLE.WEIGHT_BOLD };
-  }
-  return _styleNormal_();
-}
-function _styleNormal_() {
-  return { level: 0, bg: CFG.STYLE.WHITE_BG, fc: CFG.STYLE.FONT_BLACK, fw: CFG.STYLE.WEIGHT_NORMAL };
-}
-function _mergeWorstStyle_(a, b, c) {
-  let m = a;
-  if (b.level > m.level) m = b;
-  if (c.level > m.level) m = c;
-  return m;
-}
-function _applyStyleColumn_(sh, startRow, col, rows, bgs, fcs, fws) {
-  const g = sh.getRange(startRow, col, rows, 1);
-  g.setBackgrounds(bgs);
-  g.setFontColors(fcs);
-  g.setFontWeights(fws);
+#offline-map-modal .main-container {
+    width: 90%;
+    max-width: 600px;
+    max-height: 80vh;
+    padding: 20px 30px;
 }
 
-/* ============================================================
-   SYNC PILOTES (depuis Janvier)
-   ============================================================ */
-function syncPilotsFromJanuary() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jan = ss.getSheetByName("Janvier");
-  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
-
-  const monthSheets = _getMonthSheets_(ss);
-  const ref = _getPilotStructureFromSheet_(jan);
-  const desiredRows = ref.pattern.length;
-
-  monthSheets.forEach(sh => {
-    if (sh.getName() === "Janvier") return;
-    _syncPilotsOneSheet_(sh, ref, desiredRows);
-  });
-
-  updateHdvLimitsAllSheets();
+#offline-map-modal h2 {
+    text-align: center;
+    color: var(--primary-color);
+    margin-top: 10px;
+    margin-bottom: 25px;
 }
 
-function _syncPilotsOneSheet_(sh, ref, desiredRows) {
-  const startRow = CFG.FIRST_ROW;
-  const numCols = CFG.GRID_COL_END;
-
-  const currentLastTriRow = _findLastTrigramRow_(sh);
-  const currentEndRow = (currentLastTriRow >= startRow) ? currentLastTriRow : (startRow + desiredRows - 1);
-  const currentRows = Math.max(0, currentEndRow - startRow + 1);
-
-  let snap = { values: [], bgs: [], notes: [] };
-  if (currentRows > 0) {
-    const rng = sh.getRange(startRow, 1, currentRows, numCols);
-    snap = { values: rng.getValues(), bgs: rng.getBackgrounds(), notes: rng.getNotes() };
-  }
-
-  const delta = desiredRows - currentRows;
-  if (delta > 0) {
-    sh.insertRowsAfter(Math.max(currentEndRow, startRow - 1), delta);
-  } else if (delta < 0) {
-    const deleteStart = startRow + desiredRows;
-    const deleteCount = -delta;
-    if (deleteStart >= startRow) sh.deleteRows(deleteStart, deleteCount);
-  }
-
-  const map = {};
-  for (let i = 0; i < snap.values.length; i++) {
-    const tri = (snap.values[i][0] || "").toString().trim().toUpperCase();
-    if (_isTrigram_(tri)) map[tri] = { v: snap.values[i].slice(), bg: snap.bgs[i].slice(), n: snap.notes[i].slice() };
-  }
-
-  const outV = [], outBG = [], outN = [];
-  for (let i = 0; i < ref.pattern.length; i++) {
-    const tri = (ref.pattern[i].tri || "").toString().trim().toUpperCase();
-    if (_isTrigram_(tri) && map[tri]) {
-      outV.push(map[tri].v);
-      outBG.push(map[tri].bg);
-      outN.push(map[tri].n);
-    } else if (_isTrigram_(tri)) {
-      const rowV = new Array(numCols).fill("");
-      rowV[0] = tri;
-      outV.push(rowV);
-      outBG.push(new Array(numCols).fill(CFG.STYLE.WHITE_BG));
-      outN.push(new Array(numCols).fill(""));
-    } else {
-      outV.push(new Array(numCols).fill(""));
-      outBG.push(new Array(numCols).fill(CFG.STYLE.WHITE_BG));
-      outN.push(new Array(numCols).fill(""));
-    }
-  }
-
-  const dst = sh.getRange(startRow, 1, outV.length, numCols);
-  dst.setValues(outV);
-  dst.setBackgrounds(outBG);
-  dst.setNotes(outN);
+#offline-map-modal #close-offline-map-btn {
+    position: absolute; top: 10px; right: 15px; width: 52px; height: 52px;
+    font-size: 36px; font-weight: bold; color: var(--light-text-color);
+    background: transparent; border: none; cursor: pointer; line-height: 1;
+}
+#offline-map-modal #close-offline-map-btn::before {
+    content: '';
+    position: absolute;
+    inset: -6px;
 }
 
-function _getPilotStructureFromSheet_(sh) {
-  const lastRow = sh.getLastRow();
-  if (lastRow < CFG.FIRST_ROW) return { pattern: [] };
-
-  const colA = sh.getRange(CFG.FIRST_ROW, 1, lastRow - CFG.FIRST_ROW + 1, 1).getValues();
-  let lastTriOffset = -1;
-
-  for (let i = 0; i < colA.length; i++) {
-    const s = (colA[i][0] || "").toString().trim().toUpperCase();
-    if (_isTrigram_(s)) lastTriOffset = i;
-  }
-  if (lastTriOffset < 0) return { pattern: [] };
-
-  const endRow = CFG.FIRST_ROW + lastTriOffset;
-  const pattern = [];
-  for (let r = CFG.FIRST_ROW; r <= endRow; r++) {
-    const v = (sh.getRange(r, 1).getValue() || "").toString().trim().toUpperCase();
-    pattern.push({ tri: _isTrigram_(v) ? v : "" });
-  }
-  return { pattern };
+.modal-content {
+    display: flex;
+    flex-direction: column;
+    gap: 30px;
 }
 
-function _findLastTrigramRow_(sh) {
-  const lastRow = sh.getLastRow();
-  if (lastRow < CFG.FIRST_ROW) return CFG.FIRST_ROW - 1;
-
-  const colA = sh.getRange(CFG.FIRST_ROW, 1, lastRow - CFG.FIRST_ROW + 1, 1).getValues();
-  let last = CFG.FIRST_ROW - 1;
-
-  for (let i = 0; i < colA.length; i++) {
-    const s = (colA[i][0] || "").toString().trim().toUpperCase();
-    if (_isTrigram_(s)) last = CFG.FIRST_ROW + i;
-  }
-  return last;
+.import-section p {
+    margin-top: 0;
+    text-align: center;
+    color: var(--light-text-color);
 }
 
-/* ============================================================
-   SYNC TEMPLATE : désactivé (volontairement)
-   ============================================================ */
-function syncTemplateFromJanuary() {
-  SpreadsheetApp.getActive().toast(
-    "Synchroniser TEMPLATE est désactivé. Utilise : PILOTES / FORMAT / LARGEURS-HAUTEURS / TITRES.",
-    "HDV",
-    6
-  );
+.import-button {
+    display: block;
+    width: min(100%, 420px);
+    margin: 0 auto;
+    padding: 15px;
+    background-color: var(--primary-color);
+    color: white;
+    text-align: center;
+    font-size: 18px;
+    font-weight: bold;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background-color 0.2s;
 }
 
-/* ============================================================
-   SYNC LARGEURS/HAUTEURS (rapide)
-   ============================================================ */
-function syncTemplateBordersAndDimensionsFromJanuaryFast() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jan = ss.getSheetByName("Janvier");
-  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
-
-  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
-  const lastColRef = 45;
-
-  const refEndRow = Math.max(_findLastTrigramRow_(jan), jan.getLastRow());
-  const lastRowRef = (CFG.TEMPLATE_MAX_ROWS && CFG.TEMPLATE_MAX_ROWS > 0)
-    ? Math.min(refEndRow, CFG.TEMPLATE_MAX_ROWS)
-    : refEndRow;
-
-  const widths = [];
-  for (let c = 1; c <= lastColRef; c++) widths.push(jan.getColumnWidth(c));
-
-  const heights = [];
-  for (let r = 1; r <= lastRowRef; r++) heights.push(jan.getRowHeight(r));
-
-  const t0 = Date.now();
-
-  monthSheets.forEach(sh => {
-    _ensureMinColumns_(sh, lastColRef);
-
-    // 1) Largeurs / hauteurs
-    for (let c = 1; c <= lastColRef; c++) sh.setColumnWidth(c, widths[c - 1]);
-    for (let r = 1; r <= lastRowRef; r++) sh.setRowHeight(r, heights[r - 1]);
-
-    // 2) Bordures + alignements + formats SANS écraser les couleurs
-    // A1:A2
-    _copyBordersAndStructureOnly_(jan.getRange(1, 1, 2, 1), sh.getRange(1, 1, 2, 1));
-
-    // AG..AS lignes 1-2
-    const rightStart = CFG.GRID_COL_END + 1; // AG
-    if (lastColRef >= rightStart) {
-      const w = lastColRef - rightStart + 1;
-      _copyBordersAndStructureOnly_(
-        jan.getRange(1, rightStart, 2, w),
-        sh.getRange(1, rightStart, 2, w)
-      );
-    }
-
-    // A3..fin
-    if (lastRowRef >= 3) {
-      _copyBordersAndStructureOnly_(
-        jan.getRange(3, 1, lastRowRef - 2, lastColRef),
-        sh.getRange(3, 1, lastRowRef - 2, lastColRef)
-      );
-    }
-
-    if ((Date.now() - t0) > CFG.TEMPLATE_TIME_BUDGET_MS) {
-      SpreadsheetApp.getActive().toast("Synchroniser BORDURES + LARGEURS/HAUTEURS : interrompu (anti-timeout). Relance.", "HDV", 5);
-      throw new Error("Timeout (anti-timeout) pendant syncTemplateBordersAndDimensionsFromJanuaryFast()");
-    }
-  });
-
-  SpreadsheetApp.getActive().toast("Bordures + largeurs/hauteurs synchronisées ✅", "HDV", 4);
-}
-function _copyBordersAndStructureOnly_(src, dst) {
-  // Sauvegarde des couleurs déjà présentes sur la destination
-  const dstBackgrounds = dst.getBackgrounds();
-  const dstFontColors = dst.getFontColors();
-
-  // Copie tout le format depuis la source
-  // (bordures, alignements, formats, wrap, police, gras, etc.)
-  src.copyTo(dst, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
-
-  // Restaure uniquement les couleurs de la destination
-  // => on garde les bordures/structure de Janvier
-  // => sans écraser les couleurs déjà présentes
-  dst.setBackgrounds(dstBackgrounds);
-  dst.setFontColors(dstFontColors);
-}
-/* ============================================================
-   SYNC FORMAT (bordures/couleurs/polices)
-   ============================================================ */
-function syncTemplateColorsFromJanuaryFast() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jan = ss.getSheetByName("Janvier");
-  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
-
-  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
-  const lastColRef = 45;
-
-  const refEndRow = Math.max(_findLastTrigramRow_(jan), jan.getLastRow());
-  const lastRowRef = (CFG.TEMPLATE_MAX_ROWS && CFG.TEMPLATE_MAX_ROWS > 0)
-    ? Math.min(refEndRow, CFG.TEMPLATE_MAX_ROWS)
-    : refEndRow;
-
-  const t0 = Date.now();
-
-  monthSheets.forEach(sh => {
-    _ensureMinColumns_(sh, lastColRef);
-
-    // A1:A2 : couleurs uniquement
-    _copyColorsOnly_(jan.getRange(1, 1, 2, 1), sh.getRange(1, 1, 2, 1));
-
-    // AG..AS lignes 1-2 : couleurs uniquement
-    const rightStart = CFG.GRID_COL_END + 1; // AG
-    if (lastColRef >= rightStart) {
-      const w = lastColRef - rightStart + 1;
-      _copyColorsOnly_(
-        jan.getRange(1, rightStart, 2, w),
-        sh.getRange(1, rightStart, 2, w)
-      );
-    }
-
-    // A3..fin : couleurs uniquement
-    if (lastRowRef >= 3) {
-      _copyColorsOnly_(
-        jan.getRange(3, 1, lastRowRef - 2, lastColRef),
-        sh.getRange(3, 1, lastRowRef - 2, lastColRef)
-      );
-    }
-
-    if ((Date.now() - t0) > CFG.TEMPLATE_TIME_BUDGET_MS) {
-      SpreadsheetApp.getActive().toast("Synchroniser COULEURS : interrompu (anti-timeout). Relance.", "HDV", 5);
-      throw new Error("Timeout (anti-timeout) pendant syncTemplateColorsFromJanuaryFast()");
-    }
-  });
-
-  SpreadsheetApp.getActive().toast("Couleurs synchronisées ✅", "HDV", 4);
-}
-function _copyColorsOnly_(src, dst) {
-  dst.setBackgrounds(src.getBackgrounds());
-  dst.setFontColors(src.getFontColors());
-}
-/* ============================================================
-   SYNC TITRES (textes) — hors B1:AF2
-   ============================================================ */
-function syncTemplateTitlesFromJanuaryFast() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jan = ss.getSheetByName("Janvier");
-  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
-
-  const monthSheets = _getMonthSheets_(ss).filter(s => s.getName() !== "Janvier");
-  const lastColRef = 45;
-
-  const headerRows = [1, 2];
-
-  monthSheets.forEach(sh => _ensureMinColumns_(sh, lastColRef));
-
-  monthSheets.forEach(sh => {
-    headerRows.forEach(r => {
-      // A en valeurs
-      jan.getRange(r, 1, 1, 1)
-        .copyTo(sh.getRange(r, 1, 1, 1), SpreadsheetApp.CopyPasteType.PASTE_VALUES, false);
-
-      // AG..AS en valeurs
-      const rightStart = CFG.GRID_COL_END + 1; // AG
-      if (lastColRef >= rightStart) {
-        const w = lastColRef - rightStart + 1;
-        jan.getRange(r, rightStart, 1, w)
-          .copyTo(sh.getRange(r, rightStart, 1, w), SpreadsheetApp.CopyPasteType.PASTE_VALUES, false);
-      }
-    });
-  });
-
-  SpreadsheetApp.getActive().toast("TITRES synchronisés ✅ (textes)", "HDV", 4);
+.import-button:hover {
+    background-color: #004a80;
 }
 
-/* ============================================================
-   SYNC TITRES HDV (3j/7j/30j)
-   ============================================================ */
-function syncHdvHeaderTitlesFromJanuary() {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const jan = ss.getSheetByName("Janvier");
-  if (!jan) throw new Error("Onglet 'Janvier' introuvable.");
-
-  const refCols = findLimitesHdvColumns_(jan);
-
-  const title3  = jan.getRange(refCols.headerRow, refCols.col3).getDisplayValue();
-  const title7  = jan.getRange(refCols.headerRow, refCols.col7).getDisplayValue();
-  const title30 = jan.getRange(refCols.headerRow, refCols.col30).getDisplayValue();
-
-  const monthSheets = _getMonthSheets_(ss).filter(sh => sh.getName() !== "Janvier");
-
-  monthSheets.forEach(sh => {
-    const cols = findLimitesHdvColumns_(sh);
-    sh.getRange(cols.headerRow, cols.col3).setValue(title3);
-    sh.getRange(cols.headerRow, cols.col7).setValue(title7);
-    sh.getRange(cols.headerRow, cols.col30).setValue(title30);
-  });
-
-  SpreadsheetApp.getActive().toast("Titres HDV synchronisés ✅ (3j/7j/30j)", "HDV", 4);
+.import-button-secondary {
+    margin-top: 10px;
+    background-color: #5f6b7a;
 }
 
-/***************************************************
- * BOUTONS DE COLORATION MANUELLE (via Dessins)
- * - Ne touche JAMAIS aux lignes 1–2
- * - IMPORTANT : ne recalcule PAS HDV
- * - ✅ Ne colore QUE si la cellule n'est pas vide
- * - ✅ Clic sur dessin OK (dernière sélection via onSelectionChange)
- * - ✅ Anti double-clic / anti exécutions concurrentes (Lock)
- ***************************************************/
-function _setPendingBtnColor_(bg) {
-  // ✅ par utilisateur (si plusieurs personnes utilisent le fichier)
-  PropertiesService.getUserProperties().setProperty("PENDING_BTN_BG", String(bg || ""));
+.import-button-secondary:hover {
+    background-color: #4a5562;
 }
 
-function _consumePendingBtnColor_() {
-  const up = PropertiesService.getUserProperties();
-  const bg = up.getProperty("PENDING_BTN_BG");
-  if (bg) up.deleteProperty("PENDING_BTN_BG");
-  return bg || "";
+.progress-bar-container {
+    width: 100%;
+    height: 20px;
+    background-color: var(--border-color);
+    border-radius: 10px;
+    overflow: hidden;
 }
 
-function btnColorEntOPS()     { _applyBtnColor_(CFG.BTN.EntOPS); }
-function btnColorFeuGAAR()    { _applyBtnColor_(CFG.BTN.FeuGAAR); }
-function btnColorGAAR()       { _applyBtnColor_(CFG.BTN.GAAR); }
-function btnColorMission()    { _applyBtnColor_(CFG.BTN.MiFrance); }
-function btnColorMiEtranger() { _applyBtnColor_(CFG.BTN.MiEtranger); }
-function btnColorEntNAV()     { _applyBtnColor_(CFG.BTN.EntNAV); }
-function btnColorEntVDN()     { _applyBtnColor_(CFG.BTN.EntVDN); }
-function btnColorVolTech()    { _applyBtnColor_(CFG.BTN.VolTech); }
-function _tryColorOnce_(bg) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+.progress-bar {
+    width: 0%; /* Sera modifié par JS */
+    height: 100%;
+    background-color: var(--success-color);
+    transition: width 0.3s ease;
+}
 
-  // ✅ lock par utilisateur (pas de conflit avec HDV)
-  const lock = LockService.getUserLock();
-  if (!lock.tryLock(200)) return 0; // 0 = pas prêt (lock)
-
-  try {
-    // feuille + cellule active
-    const sh = ss.getActiveSheet();
-    let cell = sh ? sh.getActiveCell() : null;
-
-    // fallback dernière cellule mémorisée (clic sur dessin)
-    if (!cell) {
-      const p = PropertiesService.getDocumentProperties();
-      const lastSheetName = p.getProperty("LAST_SEL_SHEET");
-      const lastA1 = p.getProperty("LAST_SEL_A1");
-      const sh2 = lastSheetName ? ss.getSheetByName(lastSheetName) : null;
-      if (sh2 && lastA1) cell = sh2.getRange(lastA1);
-    }
-
-    if (!cell) return -1; // -1 = aucune cellule => vrai problème utilisateur
-    if (cell.getRow() < 3) return 1; // 1 = OK (rien à faire)
-
-    // ne colorer que si non vide
-    const v = cell.getValue();
-    if (v === "" || v === null) return 0; // 0 = pas prêt (valeur pas commit)
-
-    cell.setBackground(bg);
-    SpreadsheetApp.flush();
-    return 1; // 1 = coloré
-  } finally {
-    lock.releaseLock();
-  }
+#import-status-message {
+    text-align: center;
+    font-style: italic;
 }
 
 
-function _applyBtnColor_(bg) {
-  _setPendingBtnColor_(bg); // ✅ la couleur sera appliquée au commit via onEdit si besoin
-
-  // ✅ 3 tentatives rapides
-  let lastCode = 0;
-  for (let i = 0; i < 3; i++) {
-    lastCode = _tryColorOnce_(bg);
-    if (lastCode === 1) return;      // OK (coloré ou rien à faire)
-    if (lastCode === -1) break;      // aucune cellule => on sort pour toaster
-    Utilities.sleep(200);
-  }
-
-  // ✅ On ne toaster QUE si on n'a vraiment aucune cellule sélectionnée/mémorisée
-  if (lastCode === -1) {
-    try {
-      SpreadsheetApp.getActive().toast("Clique dans une cellule puis réessaie.", "Coloration", 2);
-    } catch (e) {}
-  }
-
-  // Sinon: silence. Le pending fera le job au prochain onEdit (valeur commit).
+.offline-toggle-row {
+    margin: 10px 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #f7fbff;
+    color: var(--primary-color);
+    font-weight: 600;
 }
 
-
-
-
-function _getMonthSheets_(ss) {
-  return ss.getSheets().filter(sh => _getMonthIndexFromSheetName_(sh.getName()) !== null);
+.offline-toggle-row label {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
 }
 
-function _getMonthIndexFromSheetName_(name) {
-  const n = (name || "").toLowerCase();
-  if (n === "janvier") return 0;
-  if (n === "février" || n === "fevrier") return 1;
-  if (n === "mars") return 2;
-  if (n === "avril") return 3;
-  if (n === "mai") return 4;
-  if (n === "juin") return 5;
-  if (n === "juillet") return 6;
-  if (n === "août" || n === "aout") return 7;
-  if (n === "septembre") return 8;
-  if (n === "octobre") return 9;
-  if (n === "novembre") return 10;
-  if (n === "décembre" || n === "decembre") return 11;
-  return null;
+.map-source-buttons {
+    display: flex;
+    gap: 8px;
 }
 
-function _monthNameFromIndex_(i) {
-  const names = ["Janvier","Février","Mars","Avril","Mai","Juin","Juillet","Août","Septembre","Octobre","Novembre","Décembre"];
-  return names[i] || "";
+.map-source-btn {
+    border: 1px solid var(--border-color);
+    background: #fff;
+    color: var(--primary-color);
+    border-radius: 8px;
+    min-width: 108px;
+    min-height: 42px;
+    padding: 8px 14px;
+    font-size: 16px;
+    font-weight: 700;
+    cursor: pointer;
 }
 
-function _isTrigram_(s) {
-  return /^[A-Z]{3}$/.test((s || "").toString().trim().toUpperCase());
+.map-source-btn:disabled {
+    opacity: 0.6;
+    cursor: wait;
 }
 
-function _toNumberHours_(v) {
-  if (typeof v === "number") return v;
-  const n = parseFloat((v || "").toString().replace(",", "."));
-  return isNaN(n) ? 0 : n;
+.map-source-btn.active {
+    background: var(--primary-color);
+    color: #fff;
+    border-color: transparent;
+    box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.08) inset;
 }
 
-function _stripTime_(d) {
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+.map-source-btn-online.active {
+    background: #117a37;
 }
 
-function _round1_(n) {
-  return Math.round((Number(n) || 0) * 10) / 10;
+.map-source-btn-offline.active {
+    background: #bf5d00;
 }
 
-function _sumLastNDays_(entries, today, n) {
-  const start = _stripTime_(new Date(today.getFullYear(), today.getMonth(), today.getDate() - (n - 1)));
-  let sum = 0;
-  for (let i = 0; i < entries.length; i++) {
-    const d = entries[i].d;
-    if (d >= start && d <= today) sum += entries[i].h;
-  }
-  return sum;
+.danger-inline-btn {
+    width: 100%;
+    margin: 0 0 10px 0;
+    border: none;
+    border-radius: 8px;
+    background: var(--secondary-color);
+    color: #fff;
+    padding: 9px 10px;
+    font-weight: 700;
+    cursor: pointer;
 }
 
-function _normHeaderText_(v) {
-  let s = (v || "").toString().toLowerCase();
-  s = s.replace(/[\r\n\t]+/g, " ");
-  try { s = s.normalize("NFD").replace(/[\u0300-\u036f]/g, ""); } catch (e) {}
-  s = s.replace(/[^a-z0-9]+/g, " ").replace(/\s+/g, " ").trim();
-  s = s.replace(/\b3 j\b/g, "3j").replace(/\b7 j\b/g, "7j").replace(/\b30 j\b/g, "30j");
-  return s;
+.neutral-inline-btn {
+    width: 100%;
+    margin: 0 0 10px 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: #eef3f8;
+    color: var(--primary-color);
+    padding: 9px 10px;
+    font-weight: 700;
+    cursor: pointer;
 }
 
-function _ensureMinColumns_(sh, minCols) {
-  const cur = sh.getMaxColumns();
-  if (cur >= minCols) return;
-  sh.insertColumnsAfter(cur, minCols - cur);
+.neutral-inline-btn:disabled {
+    opacity: 0.7;
+    cursor: wait;
 }
 
-function _findTrigramColumns_(sh, startRow, numRows, maxScanCol) {
-  const maxCol = Math.min(sh.getMaxColumns(), maxScanCol || sh.getMaxColumns());
-  if (maxCol < 1 || numRows <= 0) return [];
-
-  const data = sh.getRange(startRow, 1, numRows, maxCol).getValues();
-  const cols = [];
-
-  for (let c = 0; c < maxCol; c++) {
-    let nonEmpty = 0;
-    let trig = 0;
-
-    for (let r = 0; r < numRows; r++) {
-      const v = (data[r][c] || "").toString().trim().toUpperCase();
-      if (v === "") continue;
-      nonEmpty++;
-      if (_isTrigram_(v)) trig++;
-    }
-
-    if (trig >= 1 && (trig / Math.max(1, nonEmpty)) >= 0.2) cols.push(c + 1);
-  }
-
-  return cols;
+.offline-toggle-row {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
 }
 
-/* =========================
-   LOGS (onglet "LOG")
-   ========================= */
-function _logOnEdit_(msg, e) {
-  try {
-    const ss = SpreadsheetApp.getActiveSpreadsheet();
-    const sh = ss.getSheetByName("LOG");
-    if (!sh) return;
-
-    const r = sh.getLastRow() + 1;
-    const sheetName = (e && e.range) ? e.range.getSheet().getName() : "";
-    const a1 = (e && e.range) ? e.range.getA1Notation() : "";
-    const user = (Session.getActiveUser && Session.getActiveUser().getEmail)
-      ? (Session.getActiveUser().getEmail() || "")
-      : "";
-
-    sh.getRange(r, 1, 1, 5).setValues([[
-      new Date(),
-      msg,
-      sheetName,
-      a1,
-      user
-    ]]);
-  } catch (err) {
-    // silence volontaire
-  }
+.map-source-buttons {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
 }
 
-/* =========================
-   TEST
-   ========================= */
-function testHook() {
-  SpreadsheetApp.getActive().toast("TEST HOOK OK ✅", "TEST", 3);
-  _logOnEdit_("testHook() appelé", null);
+#installed-maps-list li {
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+#installed-maps-list li > span {
+    min-width: 0;
+    flex: 1;
+}
+
+#offline-status {
+    margin-top: 8px;
+    color: var(--light-text-color);
+    font-size: 13px;
+    text-align: center;
+}
+
+#installed-maps-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    overflow: hidden;
+    max-height: 260px;
+    overflow-y: auto;
+}
+
+#installed-maps-list li {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+#installed-maps-list li:last-child {
+    border-bottom: none;
+}
+
+.no-maps-placeholder {
+    color: var(--light-text-color);
+    justify-content: center !important;
+    font-style: italic;
+}
+
+.delete-map-btn {
+    padding: 6px 12px;
+    background-color: var(--secondary-color);
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-weight: bold;
+}
+
+/* --- STYLES POUR LE NOUVEAU MARQUEUR UTILISATEUR --- */
+.user-heading-icon {
+    /* On enlève les styles par défaut de .custom-marker-icon */
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.time-marker-tooltip {
+    background-color: rgba(255, 255, 255, 0.8);
+    border: 1px solid #005a9c;
+    color: #005a9c;
+    font-weight: bold;
+    font-size: 12px;
+    padding: 2px 5px;
+    box-shadow: none;
+}
+
+/* --- STYLE POUR LE BOUTON D'EFFACEMENT DU FEU --- */
+.clear-commune-btn {
+    font-size: 28px;
+    font-weight: bold;
+    color: var(--light-text-color);
+    cursor: pointer;
+    margin-left: 15px;
+    padding: 0 5px;
+    line-height: 1;
+    transition: color 0.2s;
+}
+
+.clear-commune-btn:hover {
+    color: var(--secondary-color);
 }
