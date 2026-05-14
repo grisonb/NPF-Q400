@@ -1,4 +1,4 @@
-:root {
+ :root {
     --primary-color: #005a9c;
     --secondary-color: #e3001b;
     --background-color: #f5f7fa;
@@ -153,6 +153,16 @@ html, body {
 #live-gps-button:hover { background-color: #e9f5ff; }
 #main-action-buttons { position: absolute; top: var(--safe-area-top); right: 20px; z-index: 1001; display: flex; flex-direction: column; gap: 15px; align-items: center; }
 #toggle-search-button, #calculator-button, #gps-feu-button, #center-gps-button { width: 90px; height: 90px; font-size: 48px; border: 2px solid var(--border-color); border-radius: 20px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); color: var(--primary-color); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); padding: 0; line-height: 1; }
+
+#calculator-button .calculator-fun-icon {
+    width: 64px;
+    height: 76px;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 145'%3E%3Crect x='3' y='3' width='114' height='139' rx='24' fill='%23fff' stroke='%23211f26' stroke-width='6'/%3E%3Crect x='12' y='12' width='96' height='121' rx='18' fill='%23e8f5ff' stroke='%23211f26' stroke-width='6'/%3E%3Crect x='24' y='24' width='72' height='30' rx='7' fill='%23ffd100' stroke='%23211f26' stroke-width='6'/%3E%3Ccircle cx='84' cy='39' r='6' fill='none' stroke='%23211f26' stroke-width='6'/%3E%3Cg stroke='%23211f26' stroke-width='6'%3E%3Crect x='24' y='67' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='49' y='67' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='74' y='67' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='24' y='92' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='49' y='92' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='24' y='117' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='49' y='117' width='22' height='20' rx='5' fill='%232d8cff'/%3E%3Crect x='74' y='92' width='22' height='45' rx='7' fill='%23f32034'/%3E%3C/g%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-size: contain;
+    background-position: center;
+}
+
 #chat-toggle-button { width: 90px; height: 90px; font-size: 48px; border: 2px solid var(--border-color); border-radius: 20px; background-color: rgba(255, 255, 255, 0.8); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px); color: var(--primary-color); cursor: pointer; display: flex; align-items: center; justify-content: center; box-shadow: var(--shadow); padding: 0; line-height: 1; position: relative; }
 #chat-alert-badge {
     position: absolute;
@@ -455,6 +465,27 @@ html, body {
 .result-line .label { font-weight: 500; text-align: left; }
 .result-line .value { font-weight: bold; background-color: #e9f5ff; padding: 8px 15px; border-radius: 6px; text-align: right; }
 .result-line .input-wrapper { max-width: 180px; }
+
+#offline-maps-button {
+    border-color: #1f8f35;
+    background: rgba(42, 179, 74, 0.2);
+    color: #0f6d24;
+    font-weight: 700;
+}
+#offline-maps-button:hover {
+    background: rgba(42, 179, 74, 0.3);
+}
+
+.rotations-group {
+    border: 2px solid #d9e3ef;
+    border-radius: 12px;
+    background: #f7fbff;
+    padding: 14px 14px 8px;
+    margin-bottom: 14px;
+}
+.rotations-group .analyse-col-title {
+    margin-top: 0;
+}
 .bingo-group { margin-bottom: 20px; }
 .bingo-group .result-line .label { font-size: 22px; font-weight: bold; }
 .bingo-group .result-line .value { border: 2px solid var(--secondary-color); background-color: #fff0f3; margin-top: 5px; width: 100%; box-sizing: border-box; height: auto; min-height: 45px; display: flex; align-items: center; justify-content: center; text-align: center; line-height: 1.2; white-space: nowrap; font-size: 17px; padding: 10px 8px; }
@@ -514,8 +545,21 @@ html, body {
 .input-wrapper { position: relative; width: 100%; }
 .input-wrapper.time-input-wrapper .display-input { padding-left: 45px; padding-right: 45px; }
 .input-wrapper .clear-btn { position: absolute; top: 50%; left: 12px; transform: translateY(-50%); font-size: 30px; font-weight: bold; color: var(--light-text-color); cursor: pointer; z-index: 2; }
-.time-input-wrapper .clock-icon { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); font-size: 26px; pointer-events: none; }
+.time-input-wrapper .clock-icon { position: absolute; top: 50%; right: 12px; transform: translateY(-50%); font-size: 26px; pointer-events: auto; cursor: pointer; z-index: 4; }
 .time-input-wrapper .engine-input { position: absolute; top: 0; right: 0; width: 48px; height: 100%; opacity: 0; cursor: pointer; border: none; z-index: 3; }
+
+@media (hover: none) and (pointer: coarse) {
+    .time-input-wrapper .engine-input {
+        left: 0;
+        right: 0;
+        width: 100%;
+        z-index: 5;
+    }
+    .time-input-wrapper .clock-icon {
+        pointer-events: none;
+    }
+}
+
 
 #refresh-gps-btn {
     grid-column: 1 / -1; /* Pour qu'il prenne toute la largeur de sa colonne */
@@ -843,4 +887,77 @@ html, body {
 
 .clear-commune-btn:hover {
     color: var(--secondary-color);
+}
+/* =====================================================
+   CORRECTION IPAD DEFINITIVE - CELLULES HEURES
+   Objectif :
+   - le X reste cliquable
+   - la cellule ne déclenche pas le sélecteur horaire au simple clic
+   - le sélecteur horaire iPad s'ouvre par toucher direct sur le vrai input type="time"
+   - l'horloge reste visible mais ne capte pas le toucher
+   ===================================================== */
+
+#calculator-modal .time-input-wrapper {
+    position: relative;
+}
+
+#calculator-modal .time-input-wrapper .display-input {
+    position: relative;
+    z-index: 1;
+}
+
+#calculator-modal .time-input-wrapper .clear-btn {
+    position: absolute;
+    z-index: 30;
+    pointer-events: auto;
+}
+
+#calculator-modal .time-input-wrapper .clock-icon {
+    position: absolute;
+    z-index: 20;
+    pointer-events: none;
+}
+
+#calculator-modal .time-input-wrapper .engine-input {
+    position: absolute !important;
+    top: 0 !important;
+    right: 0 !important;
+    left: auto !important;
+    bottom: auto !important;
+    width: 48px !important;
+    height: 100% !important;
+    opacity: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    border: 0 !important;
+    background: transparent !important;
+    color: transparent !important;
+    cursor: pointer !important;
+    z-index: 25 !important;
+    pointer-events: auto !important;
+    -webkit-appearance: none;
+    appearance: none;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    #calculator-modal .time-input-wrapper .engine-input {
+        position: absolute !important;
+        top: 0 !important;
+        right: 0 !important;
+        left: auto !important;
+        width: 48px !important;
+        height: 100% !important;
+        z-index: 25 !important;
+        pointer-events: auto !important;
+    }
+
+    #calculator-modal .time-input-wrapper .clock-icon {
+        z-index: 20 !important;
+        pointer-events: none !important;
+    }
+
+    #calculator-modal .time-input-wrapper .clear-btn {
+        z-index: 30 !important;
+        pointer-events: auto !important;
+    }
 }
