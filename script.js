@@ -41,6 +41,7 @@ const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('forc
 const SHOW_DEPARTMENTS_LAYER_KEY = 'showDepartmentsLayer';
 const ONLINE_MAX_NATIVE_ZOOM = 18;
 const OFFLINE_FALLBACK_NATIVE_ZOOM = 14;
+const OFFLINE_HARD_MAX_NATIVE_ZOOM = 13;
 const GLOBAL_MAX_ZOOM = 18;
 const GLOBAL_MIN_ZOOM = 0;
 let baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
@@ -363,14 +364,63 @@ async function loadCommunesData() {
     }
 }
 
+
+function applyMapNoBackgroundStyle() {
+    const styleId = 'map-no-background-style';
+    if (!document.getElementById(styleId)) {
+        const style = document.createElement('style');
+        style.id = styleId;
+        style.textContent = `
+            #map,
+            .leaflet-container,
+            .leaflet-pane,
+            .leaflet-map-pane,
+            .leaflet-tile-pane {
+                background: transparent !important;
+                background-color: transparent !important;
+            }
+
+            .leaflet-tile {
+                background: transparent !important;
+            }
+        `;
+        document.head.appendChild(style);
+    }
+
+    const mapElement = document.getElementById('map');
+    if (mapElement) {
+        mapElement.style.background = 'transparent';
+        mapElement.style.backgroundColor = 'transparent';
+    }
+
+    if (map && map.getContainer) {
+        const container = map.getContainer();
+        if (container) {
+            container.style.background = 'transparent';
+            container.style.backgroundColor = 'transparent';
+        }
+    }
+
+    document.querySelectorAll('.leaflet-container, .leaflet-pane, .leaflet-map-pane, .leaflet-tile-pane').forEach((element) => {
+        element.style.background = 'transparent';
+        element.style.backgroundColor = 'transparent';
+    });
+}
+
 function initMap() {
     if (map) return;
     map = L.map('map', {
         attributionControl: false,
         zoomControl: false,
-        maxZoom: GLOBAL_MAX_ZOOM
+        maxZoom: GLOBAL_MAX_ZOOM,
+        zoomAnimation: true,
+        fadeAnimation: false,
+        markerZoomAnimation: true
     }).setView([46.6, 2.2], 5.5);
+
+    map.on('zoomend', enforceOfflineZoomLimit);
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
+    applyMapNoBackgroundStyle();
     setupBaseTileLayer();
     permanentAirportLayer = L.layerGroup().addTo(map);
     routesLayer = L.layerGroup().addTo(map);
@@ -408,26 +458,86 @@ function initMap() {
     });
 }
 
+function enforceOfflineZoomLimit() {
+    if (!map || !offlineTilesMode) return;
+
+    const safeMaxZoom = Math.max(
+        GLOBAL_MIN_ZOOM,
+        Math.min(
+            GLOBAL_MAX_ZOOM,
+            OFFLINE_HARD_MAX_NATIVE_ZOOM,
+            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : OFFLINE_HARD_MAX_NATIVE_ZOOM
+        )
+    );
+
+    map.options.maxZoom = safeMaxZoom;
+
+    if (map.getMaxZoom && map.getMaxZoom() !== safeMaxZoom) {
+        map.setMaxZoom(safeMaxZoom);
+    }
+
+    if (map.getZoom() > safeMaxZoom) {
+        map.setView(map.getCenter(), safeMaxZoom, { animate: false });
+    }
+}
+
 function setupBaseTileLayer() {
     if (!map) return;
     if (baseTileLayer) {
         map.removeLayer(baseTileLayer);
     }
-    const overzoomDelta = offlineTilesMode ? 0 : 2;
-    const effectiveMinZoom = offlineTilesMode ? Math.max(GLOBAL_MIN_ZOOM, baseTileMinNativeZoom) : GLOBAL_MIN_ZOOM;
-    const effectiveMaxZoom = Math.min(GLOBAL_MAX_ZOOM, baseTileMaxNativeZoom + overzoomDelta);
+
+    /*
+     * Mode offline ultra stable :
+     * - pas de sur-zoom ;
+     * - pas de fallback parent ;
+     * - plafond dur z12 pour éviter que Leaflet demande des tuiles absentes ;
+     * - animations désactivées pour éviter le flash blanc pendant le rafraîchissement.
+     */
+    const offlineNativeMaxZoom = Math.max(
+        GLOBAL_MIN_ZOOM,
+        Math.min(
+            GLOBAL_MAX_ZOOM,
+            OFFLINE_HARD_MAX_NATIVE_ZOOM,
+            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : OFFLINE_HARD_MAX_NATIVE_ZOOM
+        )
+    );
+
+    const effectiveMinZoom = offlineTilesMode
+        ? Math.max(GLOBAL_MIN_ZOOM, Math.min(baseTileMinNativeZoom, offlineNativeMaxZoom))
+        : GLOBAL_MIN_ZOOM;
+
+    const effectiveMaxZoom = offlineTilesMode
+        ? offlineNativeMaxZoom
+        : Math.min(GLOBAL_MAX_ZOOM, baseTileMaxNativeZoom + 2);
+
+    map.options.minZoom = effectiveMinZoom;
+    map.options.maxZoom = effectiveMaxZoom;
     map.setMinZoom(effectiveMinZoom);
     map.setMaxZoom(effectiveMaxZoom);
+
+    if (map.getZoom() > effectiveMaxZoom) {
+        map.setView(map.getCenter(), effectiveMaxZoom, { animate: false });
+    }
+
     baseTileLayer = L.tileLayer('https://a.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         minNativeZoom: effectiveMinZoom,
-        maxNativeZoom: baseTileMaxNativeZoom,
+        maxNativeZoom: effectiveMaxZoom,
         minZoom: effectiveMinZoom,
         maxZoom: effectiveMaxZoom,
         attribution: '© OpenStreetMap',
-        keepBuffer: 8,
+        keepBuffer: 32,
         updateWhenZooming: false,
-        updateWhenIdle: true
+        updateWhenIdle: true,
+        updateInterval: 160,
+        noWrap: true,
+        errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
     }).addTo(map);
+
+    enforceOfflineZoomLimit();
+
+
+    applyMapNoBackgroundStyle();
 }
 
 function clearCurrentSelection() {
@@ -809,10 +919,10 @@ async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = 
 
         if (offlineMinZoom === null || offlineMaxZoom === null) {
             baseTileMinNativeZoom = GLOBAL_MIN_ZOOM;
-            baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
+            baseTileMaxNativeZoom = OFFLINE_HARD_MAX_NATIVE_ZOOM;
         } else {
             baseTileMinNativeZoom = Math.max(GLOBAL_MIN_ZOOM, Math.min(GLOBAL_MAX_ZOOM, offlineMinZoom));
-            baseTileMaxNativeZoom = Math.max(0, Math.min(ONLINE_MAX_NATIVE_ZOOM, offlineMaxZoom));
+            baseTileMaxNativeZoom = Math.max(0, Math.min(OFFLINE_HARD_MAX_NATIVE_ZOOM, offlineMaxZoom));
         }
     }
 
