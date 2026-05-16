@@ -3166,7 +3166,7 @@ function initializeTeamChat() {
         return hasFreshAltitude ? `${Math.round(altitudeFt)} ft` : '--- ft';
     };
 
-    const buildRemoteLocationIcon = (user, timeMs, altitudeFt = null, altitudeTimeMs = null) => {
+    const buildRemoteLocationIcon = (user, timeMs, altitudeFt = null, altitudeTimeMs = null, labelOffset = { x: 0, y: 0 }) => {
         const ageMs = Date.now() - timeMs;
 
         let color = '#2563eb'; // Bleu : position récente < 20 s
@@ -3179,14 +3179,16 @@ function initializeTeamChat() {
         const opacity = ageMs > CHAT_LOCATION_STALE_MS ? 0.75 : 0.98;
         const altitudeLabel = formatAltitudeLabel(altitudeFt, altitudeTimeMs);
         const label = `${escapeHtml(user || 'inconnu')}<br><span>${formatLocationAge(timeMs)}</span><br><span>${altitudeLabel}</span>`;
+        const safeOffsetX = Number.isFinite(labelOffset?.x) ? labelOffset.x : 0;
+        const safeOffsetY = Number.isFinite(labelOffset?.y) ? labelOffset.y : 0;
 
         return L.divIcon({
             className: 'chat-location-marker',
             html: `<div style="display:flex;align-items:center;gap:5px;opacity:${opacity};">
                     <div style="flex:0 0 auto;width:14px;height:14px;border-radius:50%;background:${color};border:2px solid #fff;box-shadow:0 1px 5px rgba(0,0,0,.45);"></div>
-                    <div style="background:#ffffff;border:1px solid ${color};border-radius:8px;padding:3px 6px;font-size:11px;line-height:1.15;font-weight:700;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.25);white-space:nowrap;text-align:center;min-width:44px;">${label}</div>
+                    <div style="transform:translate(${safeOffsetX}px,${safeOffsetY}px);background:#ffffff;border:1px solid ${color};border-radius:8px;padding:3px 6px;font-size:11px;line-height:1.15;font-weight:700;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.25);white-space:nowrap;text-align:center;min-width:44px;">${label}</div>
                 </div>`,
-            iconSize: [92, 46],
+            iconSize: [118, 76],
             iconAnchor: [7, 38]
         });
     };
@@ -3199,6 +3201,107 @@ function initializeTeamChat() {
         remoteLocationMarkers.delete(senderClientId);
     };
 
+    const updateRemoteLocationLabelOffsets = () => {
+        if (!map || !remoteLocationMarkers.size) return;
+
+        /*
+         * Anti-chevauchement v2 :
+         * - on tient compte de l'étiquette de notre propre position ;
+         * - on teste plusieurs positions possibles pour chaque vignette ;
+         * - on choisit la première position qui ne croise pas une vignette déjà placée.
+         *
+         * Les ronds restent sur les vraies positions GPS. Seules les vignettes bougent.
+         */
+        const labelWidth = 62;
+        const labelHeight = 46;
+        const margin = 8;
+
+        const makeBox = (point, offset) => ({
+            left: point.x + 22 + offset.x,
+            top: point.y - 38 + offset.y,
+            right: point.x + 22 + offset.x + labelWidth,
+            bottom: point.y - 38 + offset.y + labelHeight
+        });
+
+        const makeOwnBox = () => {
+            if (!userMarker || !map) return null;
+            const latLng = userMarker.getLatLng && userMarker.getLatLng();
+            if (!latLng) return null;
+            const point = map.latLngToLayerPoint(latLng);
+
+            return {
+                left: point.x + 22,
+                top: point.y - 25,
+                right: point.x + 22 + 56,
+                bottom: point.y - 25 + 28
+            };
+        };
+
+        const intersects = (a, b) => {
+            if (!a || !b) return false;
+            return !(
+                a.right + margin < b.left
+                || a.left - margin > b.right
+                || a.bottom + margin < b.top
+                || a.top - margin > b.bottom
+            );
+        };
+
+        const offsets = [
+            { x: 0, y: -58 },
+            { x: 0, y: 42 },
+            { x: 68, y: -18 },
+            { x: 68, y: 28 },
+            { x: -82, y: -18 },
+            { x: -82, y: 28 },
+            { x: 0, y: -104 },
+            { x: 0, y: 88 },
+            { x: 120, y: -18 },
+            { x: -132, y: -18 }
+        ];
+
+        const placedBoxes = [];
+        const ownBox = makeOwnBox();
+        if (ownBox) placedBoxes.push(ownBox);
+
+        const records = Array.from(remoteLocationMarkers.entries())
+            .map(([senderClientId, record]) => {
+                if (!record?.marker || !Number.isFinite(record.lat) || !Number.isFinite(record.lon)) return null;
+                const point = map.latLngToLayerPoint([record.lat, record.lon]);
+                return { senderClientId, record, point };
+            })
+            .filter(Boolean)
+            .sort((a, b) => (a.point.y - b.point.y) || (a.point.x - b.point.x));
+
+        records.forEach((item) => {
+            let selectedOffset = offsets[offsets.length - 1];
+            let selectedBox = makeBox(item.point, selectedOffset);
+
+            for (const offset of offsets) {
+                const candidateBox = makeBox(item.point, offset);
+                const collision = placedBoxes.some((box) => intersects(candidateBox, box));
+
+                if (!collision) {
+                    selectedOffset = offset;
+                    selectedBox = candidateBox;
+                    break;
+                }
+            }
+
+            item.record.labelOffset = selectedOffset;
+            item.record.marker.setIcon(buildRemoteLocationIcon(
+                item.record.user,
+                item.record.timeMs,
+                item.record.altitudeFt,
+                item.record.altitudeTimeMs,
+                selectedOffset
+            ));
+
+            placedBoxes.push(selectedBox);
+        });
+    };
+
+
     const refreshRemoteLocationMarkers = () => {
         if (!map) return;
         remoteLocationMarkers.forEach((record, senderClientId) => {
@@ -3207,8 +3310,9 @@ function initializeTeamChat() {
                 removeRemoteLocation(senderClientId);
                 return;
             }
-            record.marker.setIcon(buildRemoteLocationIcon(record.user, record.timeMs, record.altitudeFt, record.altitudeTimeMs));
+            record.marker.setIcon(buildRemoteLocationIcon(record.user, record.timeMs, record.altitudeFt, record.altitudeTimeMs, record.labelOffset));
         });
+        updateRemoteLocationLabelOffsets();
     };
 
     const updateRemoteLocationMarker = (payload) => {
@@ -3237,7 +3341,7 @@ function initializeTeamChat() {
 
         if (existing?.marker) {
             existing.marker.setLatLng(position);
-            existing.marker.setIcon(buildRemoteLocationIcon(user, safeTimeMs, altitudeFt, altitudeTimeMs));
+            existing.marker.setIcon(buildRemoteLocationIcon(user, safeTimeMs, altitudeFt, altitudeTimeMs, existing.labelOffset));
             existing.marker.bindPopup(popupHtml);
             existing.user = user;
             existing.timeMs = safeTimeMs;
@@ -3246,11 +3350,12 @@ function initializeTeamChat() {
             existing.altitudeFt = altitudeFt;
             existing.altitudeTimeMs = altitudeTimeMs;
             existing.altitudeAccuracy = Number.isFinite(Number(payload.altitudeAccuracy)) ? Number(payload.altitudeAccuracy) : null;
+            updateRemoteLocationLabelOffsets();
             return;
         }
 
         const marker = L.marker(position, {
-            icon: buildRemoteLocationIcon(user, safeTimeMs, altitudeFt, altitudeTimeMs),
+            icon: buildRemoteLocationIcon(user, safeTimeMs, altitudeFt, altitudeTimeMs, { x: 0, y: 0 }),
             interactive: true
         }).bindPopup(popupHtml);
 
@@ -3263,8 +3368,10 @@ function initializeTeamChat() {
             lon,
             altitudeFt,
             altitudeTimeMs,
-            altitudeAccuracy: Number.isFinite(Number(payload.altitudeAccuracy)) ? Number(payload.altitudeAccuracy) : null
+            altitudeAccuracy: Number.isFinite(Number(payload.altitudeAccuracy)) ? Number(payload.altitudeAccuracy) : null,
+            labelOffset: { x: 0, y: 0 }
         });
+        updateRemoteLocationLabelOffsets();
     };
 
     const publishOwnLocationClear = () => {
@@ -3356,6 +3463,9 @@ function initializeTeamChat() {
     };
 
     setInterval(refreshRemoteLocationMarkers, 15000);
+    if (map) {
+        map.on('zoomend moveend', updateRemoteLocationLabelOffsets);
+    }
     updateLocationShareButton();
 
     const persistSeenIds = () => {
