@@ -20,6 +20,14 @@ let departmentsLayerGroup = null;
 let departmentsLabelsLayer = null;
 let areDepartmentsVisible = false;
 let hasLoadedDepartments = false;
+let communesLayerGroup = null;
+let communesLabelsLayer = null;
+let areCommunesVisible = false;
+let hasLoadedCommunes = false;
+let communesLabelData = [];
+let communesPolygonData = [];
+let communesLayerLoadController = null;
+let communesLayerLoadPromise = null;
 const DEFAULT_BASE_OACI = 'LFTW';
 let selectedBaseOACI = DEFAULT_BASE_OACI;
 let gaarCircuits = [];
@@ -40,6 +48,8 @@ const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
 const COMMUNES_CACHE_KEY = 'communesDataCacheV1';
 const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('force_display') === '1';
 const SHOW_DEPARTMENTS_LAYER_KEY = 'showDepartmentsLayer';
+const SHOW_COMMUNES_LAYER_KEY = 'showCommunesLayer';
+const COMMUNES_DISPLAY_MIN_ZOOM = 10.5;
 const ONLINE_MAX_NATIVE_ZOOM = 18;
 const OFFLINE_FALLBACK_NATIVE_ZOOM = 14;
 const OFFLINE_HARD_MAX_NATIVE_ZOOM = 13;
@@ -430,11 +440,18 @@ function initMap() {
     gaarLayer = L.layerGroup().addTo(map);
     departmentsLayerGroup = L.layerGroup();
     departmentsLabelsLayer = L.layerGroup();
+    communesLayerGroup = L.layerGroup();
+    communesLabelsLayer = L.layerGroup();
     drawPermanentAirportMarkers();
     redrawGaarCircuits();
 
     if (areDepartmentsVisible) {
         setTimeout(() => { toggleDepartmentsLayer(true); }, 150);
+    }
+
+    areCommunesVisible = localStorage.getItem(SHOW_COMMUNES_LAYER_KEY) === 'true';
+    if (areCommunesVisible) {
+        setTimeout(() => { toggleCommunesLayer(true); }, 250);
     }
 
     map.on('click', handleGaarMapClick);
@@ -443,7 +460,7 @@ function initMap() {
         if (isDrawingMode) return;
         selectedPelicanOACI = null;
         L.DomEvent.preventDefault(e.originalEvent);
-        const closestCommune = findClosestCommune(e.latlng.lat, e.latlng.lng, 27);
+        const closestCommune = findCommuneContainingPoint(e.latlng.lat, e.latlng.lng) || findClosestCommune(e.latlng.lat, e.latlng.lng, 27);
         const pointName = closestCommune?.nom_standard || 'Feu manuel';
         const manualCommune = {
             nom_standard: pointName,
@@ -580,6 +597,7 @@ function setupEventListeners() {
     const calculatorModal = document.getElementById('calculator-modal');
     const closeCalculatorButton = document.getElementById('close-calculator-btn');
     const departmentsLayerButton = document.getElementById('departments-layer-button');
+    const communesLayerButton = document.getElementById('communes-layer-button');
     const offlineMapsButton = document.getElementById('offline-maps-button');
     const offlineMapModal = document.getElementById('offline-map-modal');
     const closeOfflineMapButton = document.getElementById('close-offline-map-btn');
@@ -624,6 +642,23 @@ function setupEventListeners() {
         departmentsLayerButton.addEventListener('click', () => {
             toggleDepartmentsLayer(!areDepartmentsVisible);
         });
+
+        if (map && map._departmentZoomStyleBound !== true) {
+            map._departmentZoomStyleBound = true;
+            map.on('zoomend', updateDepartmentsLayerAppearance);
+        }
+    }
+
+    if (communesLayerButton) {
+        communesLayerButton.classList.toggle('active', areCommunesVisible);
+        communesLayerButton.addEventListener('click', () => {
+            toggleCommunesLayer(!areCommunesVisible);
+        });
+
+        if (map && map._communesZoomStyleBound !== true) {
+            map._communesZoomStyleBound = true;
+            map.on('zoom move zoomend moveend', updateCommunesLayerAppearance);
+        }
     }
 
     searchInput.addEventListener('input', () => {
@@ -1096,7 +1131,7 @@ function getAirportByOaci(oaci) {
 function updateBaseLabels() {
     const routeButton = document.getElementById('lftw-route-button');
     if (routeButton) {
-        routeButton.textContent = `Route BASE (${selectedBaseOACI})`;
+        routeButton.innerHTML = `Route BASE<br>${selectedBaseOACI}`;
         routeButton.title = `Afficher/Masquer la route vers la base ${selectedBaseOACI}`;
     }
     const csBaseLabel = document.getElementById('cs-base-label');
@@ -1171,6 +1206,113 @@ function drawPermanentAirportMarkers() {
     });
 }
 
+
+function getDepartmentBoundaryStyle() {
+    const zoom = map && Number.isFinite(map.getZoom()) ? map.getZoom() : 6;
+
+    let weight = 1.2;
+    let opacity = 0.8;
+
+    if (zoom >= 7) {
+        weight = 1.8;
+        opacity = 0.9;
+    }
+
+    if (zoom >= 9) {
+        weight = 2.8;
+        opacity = 0.95;
+    }
+
+    if (zoom >= 11) {
+        weight = 4.0;
+        opacity = 1;
+    }
+
+    return {
+        color: '#000000',
+        weight,
+        opacity,
+        fillColor: '#ffffff',
+        fillOpacity: 0.02,
+        pane: 'overlayPane'
+    };
+}
+
+function buildDepartmentCodeIcon(depCode) {
+    const zoom = map && Number.isFinite(map.getZoom()) ? map.getZoom() : 6;
+
+    let fontSize = 13;
+    let padding = '2px 5px';
+    let borderWidth = 2;
+
+    if (zoom >= 7) {
+        fontSize = 15;
+        padding = '3px 6px';
+        borderWidth = 2;
+    }
+
+    if (zoom >= 9) {
+        fontSize = 18;
+        padding = '4px 8px';
+        borderWidth = 3;
+    }
+
+    if (zoom >= 11) {
+        fontSize = 22;
+        padding = '5px 10px';
+        borderWidth = 3;
+    }
+
+    return L.divIcon({
+        className: 'department-code-label',
+        html: `<span style="
+            display:inline-block;
+            min-width:24px;
+            padding:${padding};
+            border:${borderWidth}px solid #000;
+            border-radius:8px;
+            background:rgba(255,255,255,.92);
+            color:#000;
+            font-size:${fontSize}px;
+            font-weight:900;
+            line-height:1;
+            text-align:center;
+            text-shadow:
+                -1px -1px 0 #fff,
+                1px -1px 0 #fff,
+                -1px 1px 0 #fff,
+                1px 1px 0 #fff;
+            box-shadow:0 1px 5px rgba(0,0,0,.45);
+            white-space:nowrap;
+        ">${escapeHtml(depCode)}</span>`,
+        iconSize: [1, 1],
+        iconAnchor: [0, 0]
+    });
+}
+
+function updateDepartmentsLayerAppearance() {
+    if (!map || !hasLoadedDepartments) return;
+
+    const style = getDepartmentBoundaryStyle();
+
+    if (departmentsLayerGroup) {
+        departmentsLayerGroup.eachLayer((layer) => {
+            if (layer && typeof layer.setStyle === 'function') {
+                layer.setStyle(style);
+            }
+        });
+    }
+
+    if (departmentsLabelsLayer) {
+        departmentsLabelsLayer.eachLayer((marker) => {
+            const depCode = marker?.options?.depCode;
+            if (depCode && typeof marker.setIcon === 'function') {
+                marker.setIcon(buildDepartmentCodeIcon(depCode));
+            }
+        });
+    }
+}
+
 async function loadDepartmentsLayerData() {
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
     const response = await fetch(DEPARTMENTS_GEOJSON_URL, { cache: 'force-cache' });
@@ -1180,13 +1322,7 @@ async function loadDepartmentsLayerData() {
 
     const departmentsGeojson = await response.json();
     const geoJsonLayer = L.geoJSON(departmentsGeojson, {
-        style: {
-            color: '#111',
-            weight: 1,
-            opacity: 0.9,
-            fillColor: '#ffffff',
-            fillOpacity: 0.03
-        }
+        style: getDepartmentBoundaryStyle
     });
 
     geoJsonLayer.eachLayer((layer) => {
@@ -1196,16 +1332,15 @@ async function loadDepartmentsLayerData() {
         if (!depCode || !layer.getBounds) return;
         const center = layer.getBounds().getCenter();
         departmentsLabelsLayer.addLayer(L.marker(center, {
-            icon: L.divIcon({
-                className: 'department-code-label',
-                html: `<span>${depCode}</span>`
-            }),
+            icon: buildDepartmentCodeIcon(depCode),
             interactive: false,
-            keyboard: false
+            keyboard: false,
+            depCode
         }));
     });
 
     hasLoadedDepartments = true;
+    updateDepartmentsLayerAppearance();
 }
 
 async function toggleDepartmentsLayer(shouldShow) {
@@ -1229,6 +1364,7 @@ async function toggleDepartmentsLayer(shouldShow) {
     if (areDepartmentsVisible) {
         departmentsLayerGroup.addTo(map);
         departmentsLabelsLayer.addTo(map);
+        updateDepartmentsLayerAppearance();
     } else {
         map.removeLayer(departmentsLayerGroup);
         map.removeLayer(departmentsLabelsLayer);
@@ -1236,6 +1372,434 @@ async function toggleDepartmentsLayer(shouldShow) {
 
     localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, String(areDepartmentsVisible));
     if (departmentsLayerButton) departmentsLayerButton.classList.toggle('active', areDepartmentsVisible);
+}
+
+function getCommunesBoundaryStyle() {
+    const zoom = map && Number.isFinite(map.getZoom()) ? map.getZoom() : 8;
+
+    let weight = 0.45;
+    let opacity = 0.50;
+
+    if (zoom >= 10.5) {
+        weight = 0.65;
+        opacity = 0.62;
+    }
+
+    if (zoom >= 12) {
+        weight = 0.95;
+        opacity = 0.78;
+    }
+
+    if (zoom >= 14) {
+        weight = 1.25;
+        opacity = 0.90;
+    }
+
+    return {
+        color: '#202020',
+        weight,
+        opacity,
+        fillColor: '#ffffff',
+        fillOpacity: 0,
+        pane: 'overlayPane'
+    };
+}
+
+
+function buildCommuneNameIcon(communeName) {
+    const zoom = map && Number.isFinite(map.getZoom()) ? map.getZoom() : 12;
+
+    let fontSize = 10;
+    let maxWidth = 120;
+
+    if (zoom >= 13) {
+        fontSize = 11;
+        maxWidth = 150;
+    }
+
+    if (zoom >= 15) {
+        fontSize = 12;
+        maxWidth = 180;
+    }
+
+    return L.divIcon({
+        className: 'commune-name-label',
+        html: `<span style="
+            display:inline-block;
+            max-width:${maxWidth}px;
+            overflow:hidden;
+            text-overflow:ellipsis;
+            padding:1px 4px;
+            border-radius:6px;
+            background:rgba(255,255,255,.78);
+            color:#000;
+            font-size:${fontSize}px;
+            font-weight:800;
+            line-height:1.05;
+            text-align:center;
+            text-shadow:
+                -1px -1px 0 #fff,
+                1px -1px 0 #fff,
+                -1px 1px 0 #fff,
+                1px 1px 0 #fff;
+            box-shadow:0 1px 3px rgba(0,0,0,.25);
+            white-space:nowrap;
+        ">${escapeHtml(communeName)}</span>`,
+        iconSize: [1, 1],
+        iconAnchor: [0, 0]
+    });
+}
+
+function updateCommunesLayerAppearance() {
+    if (!map || !hasLoadedCommunes) return;
+
+    const zoom = map.getZoom();
+    const shouldDrawCommunes = areCommunesVisible && zoom >= COMMUNES_DISPLAY_MIN_ZOOM;
+
+    /*
+     * Calque Communes :
+     * - sous COMMUNES_DISPLAY_MIN_ZOOM : aucun contour / aucun nom ;
+     * - à partir du seuil : contours + noms.
+     */
+    if (!shouldDrawCommunes) {
+        communesLabelsLayer.clearLayers();
+
+        if (map.hasLayer(communesLabelsLayer)) {
+            map.removeLayer(communesLabelsLayer);
+        }
+
+        if (map.hasLayer(communesLayerGroup)) {
+            map.removeLayer(communesLayerGroup);
+        }
+
+        const status = document.getElementById('offline-status');
+        if (status && areCommunesVisible) {
+            status.textContent = 'Calque Communes actif : zoome davantage pour afficher les contours et noms.';
+        }
+        return;
+    }
+
+    if (!map.hasLayer(communesLayerGroup)) {
+        communesLayerGroup.addTo(map);
+    }
+
+    if (!map.hasLayer(communesLabelsLayer)) {
+        communesLabelsLayer.addTo(map);
+    }
+
+    if (communesLayerGroup) {
+        const style = getCommunesBoundaryStyle();
+        communesLayerGroup.eachLayer((layer) => {
+            if (layer && typeof layer.setStyle === 'function') {
+                layer.setStyle(style);
+            }
+        });
+    }
+
+    renderVisibleCommuneLabels();
+}
+
+
+function renderVisibleCommuneLabels() {
+    if (!map || !communesLabelsLayer || !areCommunesVisible || !hasLoadedCommunes) return;
+
+    communesLabelsLayer.clearLayers();
+
+    const zoom = map.getZoom();
+    if (zoom < COMMUNES_DISPLAY_MIN_ZOOM) return;
+
+    const bounds = map.getBounds().pad(0.05);
+    const maxLabels = zoom >= 14 ? 450 : 220;
+    let count = 0;
+
+    for (const item of communesLabelData) {
+        if (count >= maxLabels) break;
+        if (!bounds.contains(item.latLng)) continue;
+
+        communesLabelsLayer.addLayer(L.marker(item.latLng, {
+            icon: buildCommuneNameIcon(item.name),
+            interactive: false,
+            keyboard: false
+        }));
+
+        count += 1;
+    }
+}
+
+
+
+function simplifyCommuneDisplayName(name) {
+    return String(name || '')
+        .replace(/\s+Arrondissement$/i, '')
+        .replace(/\s+arrondissement$/i, '')
+        .trim();
+}
+
+function getCommuneNameFromProperties(properties = {}) {
+    const rawName = properties.nom || properties.nom_commune || properties.name || properties.libelle || properties.nom_standard || '';
+    return simplifyCommuneDisplayName(rawName);
+}
+
+function getCommuneDepCodeFromProperties(properties = {}) {
+    return properties.code_departement || properties.dep_code || properties.dep || properties.codeDepartement || '';
+}
+
+function coordinatesToRings(geometry) {
+    if (!geometry || !geometry.type || !Array.isArray(geometry.coordinates)) return [];
+
+    if (geometry.type === 'Polygon') {
+        return geometry.coordinates;
+    }
+
+    if (geometry.type === 'MultiPolygon') {
+        return geometry.coordinates.flat();
+    }
+
+    return [];
+}
+
+function getGeometryBoundsFromRings(rings) {
+    let minLat = Infinity;
+    let maxLat = -Infinity;
+    let minLon = Infinity;
+    let maxLon = -Infinity;
+
+    rings.forEach((ring) => {
+        if (!Array.isArray(ring)) return;
+        ring.forEach((coord) => {
+            if (!Array.isArray(coord) || coord.length < 2) return;
+            const lon = Number(coord[0]);
+            const lat = Number(coord[1]);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+            minLat = Math.min(minLat, lat);
+            maxLat = Math.max(maxLat, lat);
+            minLon = Math.min(minLon, lon);
+            maxLon = Math.max(maxLon, lon);
+        });
+    });
+
+    if (!Number.isFinite(minLat) || !Number.isFinite(minLon)) return null;
+
+    return { minLat, maxLat, minLon, maxLon };
+}
+
+function isPointInRing(lat, lon, ring) {
+    if (!Array.isArray(ring) || ring.length < 3) return false;
+
+    let inside = false;
+
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+        const xi = Number(ring[i][0]);
+        const yi = Number(ring[i][1]);
+        const xj = Number(ring[j][0]);
+        const yj = Number(ring[j][1]);
+
+        if (!Number.isFinite(xi) || !Number.isFinite(yi) || !Number.isFinite(xj) || !Number.isFinite(yj)) {
+            continue;
+        }
+
+        const intersects = ((yi > lat) !== (yj > lat))
+            && (lon < ((xj - xi) * (lat - yi)) / ((yj - yi) || 1e-12) + xi);
+
+        if (intersects) inside = !inside;
+    }
+
+    return inside;
+}
+
+function isPointInPolygonRings(lat, lon, rings) {
+    if (!Array.isArray(rings) || !rings.length) return false;
+
+    /*
+     * Convention GeoJSON :
+     * - premier anneau = contour extérieur ;
+     * - anneaux suivants = trous éventuels.
+     */
+    if (!isPointInRing(lat, lon, rings[0])) return false;
+
+    for (let i = 1; i < rings.length; i += 1) {
+        if (isPointInRing(lat, lon, rings[i])) return false;
+    }
+
+    return true;
+}
+
+function buildCommunePolygonIndex(communesGeojson) {
+    const features = Array.isArray(communesGeojson?.features) ? communesGeojson.features : [];
+    const index = [];
+
+    features.forEach((feature) => {
+        const properties = feature.properties || {};
+        const name = getCommuneNameFromProperties(properties);
+        if (!name) return;
+
+        const rings = coordinatesToRings(feature.geometry);
+        const bounds = getGeometryBoundsFromRings(rings);
+        if (!bounds) return;
+
+        index.push({
+            name,
+            depCode: getCommuneDepCodeFromProperties(properties),
+            rings,
+            bounds
+        });
+    });
+
+    return index;
+}
+
+function findCommuneContainingPoint(lat, lon) {
+    if (!Array.isArray(communesPolygonData) || !communesPolygonData.length) return null;
+
+    for (const commune of communesPolygonData) {
+        const bounds = commune.bounds;
+        if (!bounds) continue;
+
+        if (
+            lat < bounds.minLat
+            || lat > bounds.maxLat
+            || lon < bounds.minLon
+            || lon > bounds.maxLon
+        ) {
+            continue;
+        }
+
+        if (isPointInPolygonRings(lat, lon, commune.rings)) {
+            return {
+                nom_standard: commune.name,
+                dep_code: commune.depCode || ''
+            };
+        }
+    }
+
+    return null;
+}
+
+function ensureCommunesLayerDataLoaded() {
+    if (hasLoadedCommunes) return Promise.resolve();
+    if (communesLayerLoadPromise) return communesLayerLoadPromise;
+
+    communesLayerLoadPromise = loadCommunesLayerData()
+        .catch((error) => {
+            communesLayerLoadPromise = null;
+            throw error;
+        });
+
+    return communesLayerLoadPromise;
+}
+
+
+function isTouchTabletForCommunesLayer() {
+    const ua = navigator.userAgent || '';
+    const isIPadClassic = /iPad/i.test(ua);
+    const isIPadDesktopUA = /Macintosh/i.test(ua) && navigator.maxTouchPoints > 1;
+    const isTouchLargeScreen = navigator.maxTouchPoints > 1 && Math.min(window.innerWidth, window.innerHeight) >= 700;
+
+    return isIPadClassic || isIPadDesktopUA || isTouchLargeScreen;
+}
+
+function getCommunesGeojsonUrl() {
+    /*
+     * Sur PC, le 50 m fonctionne.
+     * Sur iPad, le 50 m peut être trop lourd à charger/parser et l'app retombe
+     * alors sur l'ancien calcul par centre-ville.
+     *
+     * On utilise donc 1000 m sur iPad/tablette : beaucoup plus léger, suffisant
+     * pour identifier la commune/arrondissement sous le point GPS dans l'immense
+     * majorité des cas.
+     */
+    const precision = isTouchTabletForCommunesLayer() ? '100m' : '50m';
+    return {
+        precision,
+        url: `https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-${precision}.geojson`
+    };
+}
+
+async function loadCommunesLayerData() {
+    if (hasLoadedCommunes) return;
+
+    const communesSource = getCommunesGeojsonUrl();
+    const COMMUNES_GEOJSON_URL = communesSource.url;
+
+    const status = document.getElementById('offline-status');
+    if (status) {
+        status.textContent = `Chargement du calque Communes ${communesSource.precision}... patienter.`;
+    }
+
+    if (!communesLayerLoadController) {
+        communesLayerLoadController = new AbortController();
+    }
+
+    const response = await fetch(COMMUNES_GEOJSON_URL, {
+        cache: 'force-cache',
+        signal: communesLayerLoadController.signal
+    });
+
+    if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+    }
+
+    const communesGeojson = await response.json();
+
+    communesPolygonData = buildCommunePolygonIndex(communesGeojson);
+    communesLabelData = [];
+    communesLayerGroup.clearLayers();
+    communesLabelsLayer.clearLayers();
+
+    const geoJsonLayer = L.geoJSON(communesGeojson, {
+        style: getCommunesBoundaryStyle
+    });
+
+    geoJsonLayer.eachLayer((layer) => {
+        communesLayerGroup.addLayer(layer);
+
+        const properties = layer.feature?.properties || {};
+        const communeName = getCommuneNameFromProperties(properties);
+        if (!communeName || !layer.getBounds) return;
+
+        const center = layer.getBounds().getCenter();
+        communesLabelData.push({
+            name: communeName,
+            latLng: center
+        });
+    });
+
+    hasLoadedCommunes = true;
+    updateCommunesLayerAppearance();
+
+    if (status) {
+        status.textContent = `Calque Communes ${communesSource.precision} chargé : ${communesLabelData.length} communes.`;
+    }
+}
+
+async function toggleCommunesLayer(shouldShow) {
+    const communesLayerButton = document.getElementById('communes-layer-button');
+
+    if (shouldShow && !hasLoadedCommunes) {
+        try {
+            await loadCommunesLayerData();
+        } catch (error) {
+            if (error?.name === 'AbortError') return;
+            console.error('Erreur de chargement du calque communes:', error);
+            alert("Impossible de générer le calque des communes.");
+            areCommunesVisible = false;
+            localStorage.setItem(SHOW_COMMUNES_LAYER_KEY, 'false');
+            if (communesLayerButton) communesLayerButton.classList.remove('active');
+            return;
+        }
+    }
+
+    areCommunesVisible = shouldShow;
+
+    if (areCommunesVisible) {
+        updateCommunesLayerAppearance();
+    } else {
+        if (map.hasLayer(communesLayerGroup)) map.removeLayer(communesLayerGroup);
+        if (map.hasLayer(communesLabelsLayer)) map.removeLayer(communesLabelsLayer);
+    }
+
+    localStorage.setItem(SHOW_COMMUNES_LAYER_KEY, String(areCommunesVisible));
+    if (communesLayerButton) communesLayerButton.classList.toggle('active', areCommunesVisible);
 }
 
 const loadState = () => {
@@ -1353,6 +1917,36 @@ function updateNearestCommuneDisplay(lat, lon) {
     const nearestDisplay = document.getElementById('nearest-commune-display');
     if (!nearestDisplay) return;
 
+    const containedCommune = findCommuneContainingPoint(lat, lon);
+    if (containedCommune) {
+        nearestDisplay.style.display = 'block';
+        nearestDisplay.innerHTML = `📍 Commune: <b>${containedCommune.nom_standard}${containedCommune.dep_code ? ` (${containedCommune.dep_code})` : ''}</b>`;
+        return;
+    }
+
+    /*
+     * Si le fichier communes-50m n'est pas encore chargé, on l'utilise même
+     * si le calque Communes n'est pas affiché. En attendant la fin du chargement,
+     * on garde l'ancien calcul par centre-ville comme solution temporaire.
+     */
+    if (!hasLoadedCommunes) {
+        nearestDisplay.style.display = 'block';
+        nearestDisplay.innerHTML = '📍 Commune: <b>chargement...</b>';
+
+        ensureCommunesLayerDataLoaded()
+            .then(() => {
+                const preciseCommune = findCommuneContainingPoint(lat, lon);
+                if (!preciseCommune) return;
+                const display = document.getElementById('nearest-commune-display');
+                if (!display) return;
+                display.style.display = 'block';
+                display.innerHTML = `📍 Commune: <b>${preciseCommune.nom_standard}${preciseCommune.dep_code ? ` (${preciseCommune.dep_code})` : ''}</b>`;
+            })
+            .catch((error) => {
+                console.warn('Chargement du calque communes pour identification impossible:', error);
+            });
+    }
+
     const nearestCommune = findClosestCommune(lat, lon);
     if (!nearestCommune) {
         nearestDisplay.style.display = 'none';
@@ -1361,7 +1955,7 @@ function updateNearestCommuneDisplay(lat, lon) {
     }
 
     nearestDisplay.style.display = 'block';
-    nearestDisplay.innerHTML = `📍 Plus proche: <b>${nearestCommune.nom_standard} (${nearestCommune.dep_code})</b>`;
+    nearestDisplay.innerHTML = `📍 Plus proche: <b>${simplifyCommuneDisplayName(nearestCommune.nom_standard)} (${nearestCommune.dep_code})</b>`;
 }
 
 function findClosestCommune(lat, lon, maxDistanceNm = null) {
