@@ -47,6 +47,9 @@ const OFFLINE_TILES_MIN_ZOOM_KEY = 'offlineTilesMinZoom';
 const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
 const COMMUNES_CACHE_KEY = 'communesDataCacheV1';
 const AIRPORT_PDF_STORE_NAME = 'airportPdfs';
+const AIRPORT_PDF_DB_NAME = 'AirportPdfsDB';
+const AIRPORT_PDF_DB_VERSION = 1;
+let airportPdfDb = null;
 const FIRE_HISTORY_STORAGE_KEY = 'fireHistoryV1';
 const FIRE_HISTORY_MAX_ITEMS = 20;
 const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('force_display') === '1';
@@ -992,7 +995,7 @@ function setupEventListeners() {
     closeCalculatorButton.addEventListener('click', () => { calculatorModal.style.display = 'none'; });
     calculatorModal.addEventListener('click', (e) => { if (e.target === calculatorModal) { calculatorModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && calculatorModal.style.display === 'flex') { calculatorModal.style.display = 'none'; } });
-    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; displayInstalledAirportPdfs(); });
+    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; displayInstalledMaps(); displayInstalledAirportPdfs(); });
     closeOfflineMapButton.addEventListener('click', () => { offlineMapModal.style.display = 'none'; });
     offlineMapModal.addEventListener('click', (e) => { if (e.target === offlineMapModal) { offlineMapModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && offlineMapModal.style.display === 'flex') { offlineMapModal.style.display = 'none'; } });
@@ -1437,6 +1440,41 @@ function updateBaseLabels() {
 }
 function refreshUI() { drawPermanentAirportMarkers(); if (currentCommune) displayCommuneDetails(currentCommune, false); }
 
+
+function initAirportPdfDB() {
+    return new Promise((resolve, reject) => {
+        if (airportPdfDb) {
+            resolve(airportPdfDb);
+            return;
+        }
+        if (typeof indexedDB === 'undefined') {
+            reject(new Error('IndexedDB indisponible'));
+            return;
+        }
+        const request = indexedDB.open(AIRPORT_PDF_DB_NAME, AIRPORT_PDF_DB_VERSION);
+        request.onupgradeneeded = event => {
+            const dbInstance = event.target.result;
+            if (!dbInstance.objectStoreNames.contains(AIRPORT_PDF_STORE_NAME)) {
+                dbInstance.createObjectStore(AIRPORT_PDF_STORE_NAME, { keyPath: 'oaci' });
+            }
+        };
+        request.onsuccess = event => {
+            airportPdfDb = event.target.result;
+            airportPdfDb.onversionchange = () => {
+                try { airportPdfDb.close(); } catch (_) {}
+                airportPdfDb = null;
+            };
+            resolve(airportPdfDb);
+        };
+        request.onerror = event => {
+            reject(event.target.error || new Error('Ouverture base PDF impossible'));
+        };
+        request.onblocked = () => {
+            reject(new Error("Base PDF bloquée par une autre instance de l'application"));
+        };
+    });
+}
+
 function normalizeAirportPdfOaciFromFilename(filename) {
     const baseName = String(filename || '').split(/[\\/]/).pop().trim();
     const match = baseName.match(/^([A-Z0-9]{4})\.pdf$/i);
@@ -1447,9 +1485,9 @@ async function getAirportPdfRecord(oaci) {
     const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!safeOaci) return null;
     try {
-        if (!db) await initDB();
+        const pdfDb = await initAirportPdfDB();
         return await new Promise((resolve, reject) => {
-            const tx = db.transaction(AIRPORT_PDF_STORE_NAME, 'readonly');
+            const tx = pdfDb.transaction(AIRPORT_PDF_STORE_NAME, 'readonly');
             const store = tx.objectStore(AIRPORT_PDF_STORE_NAME);
             const request = store.get(safeOaci);
             request.onsuccess = () => resolve(request.result || null);
@@ -1491,9 +1529,9 @@ async function importAirportPdfFiles(files = []) {
     }
 
     try {
-        if (!db) await initDB();
+        const pdfDb = await initAirportPdfDB();
         await new Promise((resolve, reject) => {
-            const tx = db.transaction(AIRPORT_PDF_STORE_NAME, 'readwrite');
+            const tx = pdfDb.transaction(AIRPORT_PDF_STORE_NAME, 'readwrite');
             const store = tx.objectStore(AIRPORT_PDF_STORE_NAME);
             records.forEach(record => store.put(record));
             tx.oncomplete = () => resolve();
@@ -1510,9 +1548,9 @@ async function importAirportPdfFiles(files = []) {
 
 async function getInstalledAirportPdfRecords() {
     try {
-        if (!db) await initDB();
+        const pdfDb = await initAirportPdfDB();
         return await new Promise((resolve, reject) => {
-            const tx = db.transaction(AIRPORT_PDF_STORE_NAME, 'readonly');
+            const tx = pdfDb.transaction(AIRPORT_PDF_STORE_NAME, 'readonly');
             const store = tx.objectStore(AIRPORT_PDF_STORE_NAME);
             const request = store.getAll();
             request.onsuccess = () => resolve((request.result || []).sort((a, b) => String(a.oaci).localeCompare(String(b.oaci))));
@@ -1556,9 +1594,9 @@ async function deleteAirportPdf(oaci) {
     if (!safeOaci) return;
     if (!confirm(`Supprimer le PDF offline ${safeOaci} ?`)) return;
     try {
-        if (!db) await initDB();
+        const pdfDb = await initAirportPdfDB();
         await new Promise((resolve, reject) => {
-            const tx = db.transaction(AIRPORT_PDF_STORE_NAME, 'readwrite');
+            const tx = pdfDb.transaction(AIRPORT_PDF_STORE_NAME, 'readwrite');
             tx.objectStore(AIRPORT_PDF_STORE_NAME).delete(safeOaci);
             tx.oncomplete = () => resolve();
             tx.onerror = () => reject(tx.error || new Error('Suppression PDF impossible'));
@@ -2716,11 +2754,6 @@ function initDB() {
             if (!dbInstance.objectStoreNames.contains('settings')) {
                 dbInstance.createObjectStore('settings', { keyPath: 'key' });
             }
-
-            if (!dbInstance.objectStoreNames.contains(AIRPORT_PDF_STORE_NAME)) {
-                dbInstance.createObjectStore(AIRPORT_PDF_STORE_NAME, { keyPath: 'oaci' });
-            }
-
             if (dbInstance.objectStoreNames.contains('tiles')) {
                 const tilesStore = transaction.objectStore('tiles');
                 if (!tilesStore.indexNames.contains('tileUrl')) {
