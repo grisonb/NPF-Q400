@@ -122,6 +122,12 @@ const toRad = deg => deg * Math.PI / 180, toDeg = rad => rad * 180 / Math.PI;
 const simplifyString = str => typeof str !== 'string' ? '' : str.toLowerCase().replace(/\bst\b/g, 'saint').normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9\s]/g, ' ').trim().replace(/\s+/g, ' ');
 const calculateDistanceInNm = (lat1, lon1, lat2, lon2) => { const R = 6371, dLat = toRad(lat2 - lat1), dLon = toRad(lon2 - lon1), a = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) * Math.sin(dLon / 2), c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)); return (R * c) / 1.852; };
 const calculateBearing = (lat1, lon1, lat2, lon2) => { const lat1Rad = toRad(lat1), lon1Rad = toRad(lon1), lat2Rad = toRad(lat2), lon2Rad = toRad(lon2), dLon = lon2Rad - lon1Rad, y = Math.sin(dLon) * Math.cos(lat2Rad), x = Math.cos(lat1Rad) * Math.sin(lat2Rad) - Math.sin(lat1Rad) * Math.cos(lat2Rad) * Math.cos(dLon); let bearingRad = Math.atan2(y, x), bearingDeg = toDeg(bearingRad); return (bearingDeg + 360) % 360; };
+const formatRouteDegrees = (bearing) => {
+    const roundedBearing = Math.round(Number(bearing));
+    if (!Number.isFinite(roundedBearing)) return '---°';
+    const normalizedBearing = ((roundedBearing % 360) + 360) % 360;
+    return `${String(normalizedBearing).padStart(3, '0')}°`;
+};
 const convertToDMM = (deg, type) => { if (deg === null || isNaN(deg)) return 'N/A'; const absDeg = Math.abs(deg), degrees = Math.floor(absDeg), minutesTotal = (absDeg - degrees) * 60, minutesFormatted = minutesTotal.toFixed(2).padStart(5, '0'); let direction = type === 'lat' ? (deg >= 0 ? 'N' : 'S') : (deg >= 0 ? 'E' : 'W'); return `${degrees}° ${minutesFormatted}' ${direction}`; };
 const levenshteinDistance = (a, b) => { const matrix = Array(b.length + 1).fill(null).map(() => Array(a.length + 1).fill(null)); for (let i = 0; i <= a.length; i += 1) matrix[0][i] = i; for (let j = 0; j <= b.length; j += 1) matrix[j][0] = j; for (let j = 1; j <= b.length; j += 1) for (let i = 1; i <= a.length; i += 1) { const indicator = a[i - 1] === b[j - 1] ? 0 : 1; matrix[j][i] = Math.min(matrix[j][i - 1] + 1, matrix[j - 1][i] + 1, matrix[j - 1][i - 1] + indicator); } return matrix[b.length][a.length]; };
 const withTimeout = (promise, timeoutMs, timeoutMessage) => new Promise((resolve, reject) => {
@@ -1197,18 +1203,47 @@ function updateCommuneDisplay(commune) {
             const sunsetString = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
             // On ajoute le bouton "x" ici
             const closeButtonHTML = `<span id="clear-commune-btn" class="clear-commune-btn" title="Effacer le feu">×</span>`;
-            sunsetHTML = `<div class="sunset-info">🌅&nbsp;CS&nbsp;<b>${sunsetString}</b></div>${closeButtonHTML}`;
+            sunsetHTML = `<div class="sunset-info">🌅&nbsp;CS&nbsp;<b>${sunsetString}</b></div><div id="gps-feu-route-info" class="gps-feu-route-info" title="Route et distance GPS vers le feu">---° / -- Nm</div>${closeButtonHTML}`;
         } catch (e) {
-            sunsetHTML = '<div class="sunset-info"></div>';
+            sunsetHTML = '<div class="sunset-info"></div><div id="gps-feu-route-info" class="gps-feu-route-info" title="Route et distance GPS vers le feu">---° / -- Nm</div>';
         }
     }
     communeDisplay.innerHTML = communeNameHTML + sunsetHTML;
+    updateCommuneGpsRouteDisplay();
     
     // On attache l'événement de clic au nouveau bouton
     const clearCommuneBtn = document.getElementById('clear-commune-btn');
     if (clearCommuneBtn) {
         clearCommuneBtn.addEventListener('click', clearCurrentSelection);
     }
+}
+
+function updateCommuneGpsRouteDisplay() {
+    const routeInfo = document.getElementById('gps-feu-route-info');
+    if (!routeInfo) return;
+
+    if (!currentCommune || !userMarker || !userMarker.getLatLng) {
+        routeInfo.textContent = '---° / -- Nm';
+        routeInfo.classList.add('gps-feu-route-info-empty');
+        return;
+    }
+
+    const targetLat = Number(currentCommune.latitude_mairie);
+    const targetLon = Number(currentCommune.longitude_mairie);
+    const userLatLng = userMarker.getLatLng();
+
+    if (!Number.isFinite(targetLat) || !Number.isFinite(targetLon) || !userLatLng) {
+        routeInfo.textContent = '---° / -- Nm';
+        routeInfo.classList.add('gps-feu-route-info-empty');
+        return;
+    }
+
+    const distance = calculateDistanceInNm(userLatLng.lat, userLatLng.lng, targetLat, targetLon);
+    const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, targetLat, targetLon);
+    const magneticBearing = (trueBearingToTarget - MAGNETIC_DECLINATION + 360) % 360;
+
+    routeInfo.textContent = `${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm`;
+    routeInfo.classList.remove('gps-feu-route-info-empty');
 }
 
 function updateMapBingoDisplay() {
@@ -1300,12 +1335,12 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
     let labelText, color = 'var(--primary-color)', dashArray = '', layer = routesLayer;
 
     if (isUser) {
-        labelText = `${Math.round(magneticBearing)}° / ${Math.round(distance)} Nm`;
+        labelText = `${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm`;
         color = 'var(--secondary-color)';
         dashArray = '5, 10';
         layer = userToTargetLayer;
     } else if (isLftwRoute) {
-        labelText = `BASE ${selectedBaseOACI}: ${Math.round(magneticBearing)}° / ${Math.round(distance)} Nm`;
+        labelText = `BASE ${selectedBaseOACI}: ${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm`;
         color = 'var(--success-color)';
         dashArray = '5, 10';
         layer = lftwRouteLayer;
@@ -1341,14 +1376,8 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
     L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8, dashArray }).addTo(layer);
 
     if (isUser) {
-        const tooltipLatLng = getRouteTooltipLatLng(startLatLng, endLatLng, 0.55);
-        const tooltipOffset = getRouteTooltipOffset('user');
-        L.tooltip({
-            permanent: true,
-            direction: 'center',
-            offset: tooltipOffset,
-            className: 'route-tooltip route-tooltip-user route-tooltip-staggered'
-        }).setLatLng(tooltipLatLng).setContent(labelText).addTo(layer);
+        // Pas d'étiquette sur la route rouge GPS -> Feu : l'information est affichée dans le bandeau commune.
+        return;
     } else if (isLftwRoute) {
         const tooltipLatLng = getRouteTooltipLatLng(startLatLng, endLatLng, 0.45);
         const tooltipOffset = getRouteTooltipOffset('base');
@@ -2161,6 +2190,7 @@ function drawUserToTargetRoute() {
 
         drawRoute([userLatLng.lat, userLatLng.lng], [lat, lon], { isUser: true, magneticBearing: magneticBearing });
     }
+    updateCommuneGpsRouteDisplay();
 }
 
 function updateNearestCommuneDisplay(lat, lon) {
@@ -5217,12 +5247,244 @@ function initializeCalculator() {
         }
     }
 
+    function getFuelSplitModalElements() {
+        return {
+            modal: document.getElementById('fuel-split-modal'),
+            leftInput: document.getElementById('fuel-split-left'),
+            rightInput: document.getElementById('fuel-split-right'),
+            totalInput: document.getElementById('fuel-split-total'),
+            validateBtn: document.getElementById('fuel-split-validate-btn'),
+            cancelBtn: document.getElementById('fuel-split-cancel-btn'),
+            clearBtn: document.getElementById('fuel-split-clear-btn'),
+            closeBtn: document.getElementById('fuel-split-close-btn')
+        };
+    }
+
+    function cleanFuelDigits(value) {
+        return String(value || '').replace(/[^0-9]/g, '');
+    }
+
+    function formatFuelKg(value) {
+        const digits = cleanFuelDigits(value);
+        return digits ? `${parseInt(digits, 10)} kg` : '';
+    }
+
+    function resetFuelSplitKeyboardOffset() {
+        const { modal } = getFuelSplitModalElements();
+        if (!modal) return;
+
+        const content = modal.querySelector('.fuel-split-modal-content');
+
+        document.body.classList.remove('fuel-keyboard-open');
+
+        modal.style.alignItems = '';
+        modal.style.justifyContent = '';
+        modal.style.paddingTop = '';
+        modal.style.paddingBottom = '';
+
+        if (content) {
+            content.style.position = '';
+            content.style.left = '';
+            content.style.top = '';
+            content.style.bottom = '';
+            content.style.transform = '';
+            content.style.maxHeight = '';
+            content.style.overflowY = '';
+        }
+    }
+
+    function applyFuelSplitKeyboardOffset() {
+        const { modal } = getFuelSplitModalElements();
+        if (!modal || modal.style.display === 'none') return;
+
+        const visualViewport = window.visualViewport;
+        if (!visualViewport || !modal.contains(document.activeElement)) {
+            resetFuelSplitKeyboardOffset();
+            return;
+        }
+
+        const keyboardOffset = Math.max(
+            0,
+            Math.round(window.innerHeight - visualViewport.height - visualViewport.offsetTop)
+        );
+
+        if (keyboardOffset > 40) {
+            /*
+             * La fenêtre carburant est maintenant compacte par défaut.
+             * On ne force plus de position fixe ni de gros décalage au clavier :
+             * ces styles inline étaient responsables du décalage vers le haut/droite sur iPad.
+             */
+            document.body.classList.add('fuel-keyboard-open');
+        } else {
+            resetFuelSplitKeyboardOffset();
+        }
+    }
+    function closeFuelSplitModal() {
+        const { modal } = getFuelSplitModalElements();
+        if (modal) modal.style.display = 'none';
+        resetFuelSplitKeyboardOffset();
+        activeFuelSplitInput = null;
+    }
+
+    function updateFuelSplitTotalFromTanks() {
+        const { leftInput, rightInput, totalInput } = getFuelSplitModalElements();
+        if (!leftInput || !rightInput || !totalInput) return;
+
+        leftInput.value = cleanFuelDigits(leftInput.value);
+        rightInput.value = cleanFuelDigits(rightInput.value);
+
+        const left = leftInput.value ? parseInt(leftInput.value, 10) : 0;
+        const right = rightInput.value ? parseInt(rightInput.value, 10) : 0;
+        totalInput.value = (leftInput.value || rightInput.value) ? String(left + right) : '';
+    }
+
+    function setupFuelSplitModalOnce() {
+        const { modal, leftInput, rightInput, totalInput, validateBtn, cancelBtn, clearBtn, closeBtn } = getFuelSplitModalElements();
+        if (!modal || modal.dataset.bound === '1') return;
+        modal.dataset.bound = '1';
+
+        if (window.visualViewport && modal.dataset.keyboardOffsetBound !== '1') {
+            modal.dataset.keyboardOffsetBound = '1';
+            window.visualViewport.addEventListener('resize', applyFuelSplitKeyboardOffset);
+            window.visualViewport.addEventListener('scroll', applyFuelSplitKeyboardOffset);
+        }
+
+        [leftInput, rightInput].forEach((input) => {
+            if (!input) return;
+            input.addEventListener('input', updateFuelSplitTotalFromTanks);
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    if (input === leftInput && rightInput) rightInput.focus();
+                    else if (totalInput) totalInput.focus();
+                }
+            });
+        });
+
+        if (totalInput) {
+            totalInput.addEventListener('input', () => {
+                totalInput.value = cleanFuelDigits(totalInput.value);
+            });
+            totalInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    validateBtn?.click();
+                }
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeFuelSplitModal();
+                }
+            });
+        }
+
+        [leftInput, rightInput, totalInput].forEach((input) => {
+            if (!input) return;
+            input.addEventListener('focus', () => {
+                setTimeout(applyFuelSplitKeyboardOffset, 0);
+                setTimeout(applyFuelSplitKeyboardOffset, 250);
+            });
+            input.addEventListener('blur', () => {
+                setTimeout(applyFuelSplitKeyboardOffset, 80);
+            });
+        });
+
+        if (validateBtn) {
+            validateBtn.addEventListener('click', () => {
+                if (!activeFuelSplitInput) {
+                    closeFuelSplitModal();
+                    return;
+                }
+                const total = cleanFuelDigits(totalInput?.value || '');
+                activeFuelSplitInput.value = total ? `${parseInt(total, 10)} kg` : '';
+                masterRecalculate();
+                saveCalculatorState();
+                closeFuelSplitModal();
+            });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (leftInput) leftInput.value = '';
+                if (rightInput) rightInput.value = '';
+                if (totalInput) {
+                    totalInput.value = '';
+                    totalInput.focus();
+                }
+            });
+        }
+
+        if (cancelBtn) cancelBtn.addEventListener('click', closeFuelSplitModal);
+        if (closeBtn) closeBtn.addEventListener('click', closeFuelSplitModal);
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) closeFuelSplitModal();
+        });
+    }
+
+    function openFuelSplitModal(displayInput) {
+        const { modal, leftInput, rightInput, totalInput } = getFuelSplitModalElements();
+        if (!modal || !totalInput) return;
+
+        setupFuelSplitModalOnce();
+        activeFuelSplitInput = displayInput;
+        if (leftInput) leftInput.value = '';
+        if (rightInput) rightInput.value = '';
+        totalInput.value = cleanFuelDigits(displayInput?.value || '');
+        resetFuelSplitKeyboardOffset();
+        modal.style.display = 'flex';
+
+        /*
+         * Focus immédiat : indispensable sur iPad/iPhone pour ouvrir le clavier
+         * quand la fenêtre est déclenchée par le bouton AUTO -> MANUEL.
+         */
+        totalInput.focus({ preventScroll: false });
+        totalInput.select();
+        applyFuelSplitKeyboardOffset();
+
+        requestAnimationFrame(() => {
+            totalInput.focus({ preventScroll: false });
+            totalInput.select();
+            applyFuelSplitKeyboardOffset();
+        });
+
+        setTimeout(() => {
+            totalInput.focus({ preventScroll: false });
+            totalInput.select();
+            applyFuelSplitKeyboardOffset();
+        }, 250);
+    }
+
     function initializeNumericInput(wrapper, initialValue = '') {
         const displayInput = wrapper.querySelector('.display-input');
         const clearBtn = wrapper.querySelector('.clear-btn');
         const unit = wrapper.dataset.unit || '';
         let shouldClearOnNextInput = false;
         displayInput.value = initialValue;
+
+        if (wrapper.classList.contains('fuel-split-input-wrapper')) {
+            setupFuelSplitModalOnce();
+            displayInput.readOnly = true;
+            displayInput.setAttribute('readonly', 'readonly');
+            displayInput.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                openFuelSplitModal(displayInput);
+            });
+            wrapper.addEventListener('click', (event) => {
+                if (event.target === clearBtn) return;
+                openFuelSplitModal(displayInput);
+            });
+            if (clearBtn) {
+                clearBtn.addEventListener('click', (event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    displayInput.value = '';
+                    masterRecalculate();
+                    saveCalculatorState();
+                });
+            }
+            return;
+        }
+
         displayInput.addEventListener('focus', () => { if (displayInput.readOnly) return; if (displayInput.value) { shouldClearOnNextInput = true; } displayInput.value = displayInput.value.replace(/[^0-9]/g, ''); });
         displayInput.addEventListener('blur', () => { if (displayInput.readOnly) return; shouldClearOnNextInput = false; let v = displayInput.value.replace(/[^0-9]/g, ''); if (v) { displayInput.value = `${v} ${unit}`; } else { displayInput.value = ''; } masterRecalculate(); saveCalculatorState(); });
         displayInput.addEventListener('input', (e) => { if (displayInput.readOnly) return; if (shouldClearOnNextInput && e.data) { displayInput.value = e.data.replace(/[^0-9]/g, ''); shouldClearOnNextInput = false; } else { displayInput.value = displayInput.value.replace(/[^0-9]/g, ''); } masterRecalculate(); });
@@ -5232,7 +5494,7 @@ function initializeCalculator() {
 
     const addNewRow = (tableBody, data, isLastRow = false) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td><div class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></td><td><div class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></td><td class="airport-oaci-cell">--</td><td class="duree-rotation-cell"></td><td class="fuel-rotation-cell"></td><td class="tps-vol-cell"></td><td class="tps-vol-restant-cell"></td>`;
+        row.innerHTML = `<td><div class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></td><td><div class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></td><td class="airport-oaci-cell">--</td><td class="duree-rotation-cell"></td><td class="fuel-rotation-cell"></td><td class="tps-vol-cell"></td><td class="tps-vol-restant-cell"></td>`;
         tableBody.appendChild(row);
 
         const timeWrapper = row.querySelector('.time-input-wrapper');
@@ -5295,12 +5557,57 @@ function initializeCalculator() {
     refreshBlocFuelAirportOaciCells();
 
     function setupManualButton(btnId, wrapperId, flagSetter) {
-        const btn = document.getElementById(btnId); const input = document.getElementById(wrapperId).querySelector('.display-input');
-        btn.addEventListener('click', () => { const isManual = flagSetter(); if (isManual) { btn.textContent = 'MANUEL'; btn.classList.add('active'); input.readOnly = false; } else { btn.textContent = 'AUTO'; btn.classList.remove('active'); input.readOnly = true; } masterRecalculate(); });
+        const btn = document.getElementById(btnId);
+        const wrapper = document.getElementById(wrapperId);
+        const input = wrapper?.querySelector('.display-input');
+        if (!btn || !wrapper || !input) return;
+
+        btn.addEventListener('click', () => {
+            const isManual = flagSetter();
+            const isFuelManualField = wrapper.classList.contains('numeric-input-wrapper') && (wrapper.dataset.unit || '') === 'kg';
+
+            if (isManual) {
+                btn.textContent = 'MANUEL';
+                btn.classList.add('active');
+
+                if (isFuelManualField) {
+                    input.readOnly = true;
+                    input.setAttribute('readonly', 'readonly');
+                    openFuelSplitModal(input);
+                } else {
+                    input.readOnly = false;
+                    input.removeAttribute('readonly');
+                }
+            } else {
+                btn.textContent = 'AUTO';
+                btn.classList.remove('active');
+                input.readOnly = true;
+                input.setAttribute('readonly', 'readonly');
+            }
+
+            masterRecalculate();
+        });
     }
     setupManualButton('fuel-sur-feu-manual-btn', 'fuel-sur-feu-wrapper', () => isFuelSurFeuManual = !isFuelSurFeuManual);
     setupManualButton('suivi-conso-rotation-manual-btn', 'suivi-conso-rotation-wrapper', () => isSuiviConsoManual = !isSuiviConsoManual);
     setupManualButton('suivi-duree-rotation-manual-btn', 'suivi-duree-rotation-wrapper', () => isSuiviDureeManual = !isSuiviDureeManual);
+
+    ['fuel-sur-feu-wrapper', 'suivi-conso-rotation-wrapper'].forEach((wrapperId) => {
+        const wrapper = document.getElementById(wrapperId);
+        const input = wrapper?.querySelector('.display-input');
+        if (!wrapper || !input || wrapper.dataset.fuelSplitManualBound === '1') return;
+        wrapper.dataset.fuelSplitManualBound = '1';
+        wrapper.addEventListener('click', (event) => {
+            if (event.target && event.target.classList && event.target.classList.contains('clear-btn')) return;
+            const isManualWrapper = (wrapperId === 'fuel-sur-feu-wrapper' && isFuelSurFeuManual)
+                || (wrapperId === 'suivi-conso-rotation-wrapper' && isSuiviConsoManual);
+            if (isManualWrapper) {
+                event.preventDefault();
+                event.stopPropagation();
+                openFuelSplitModal(input);
+            }
+        });
+    });
 
     resetButton.addEventListener('click', () => {
         if (confirm("Voulez-vous vraiment remettre tout le tableau à zéro ?")) {
