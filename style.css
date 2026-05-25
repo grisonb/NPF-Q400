@@ -1631,3 +1631,191 @@ body.fuel-keyboard-open .fuel-split-actions button {
 body.fuel-keyboard-open .fuel-split-hint {
     display: none !important;
 }
+
+
+/* =========================================================================
+   PDF aérodromes offline — ajout minimal, sans toucher au moteur cartes
+   ========================================================================= */
+.airport-popup .pdf-btn {
+    background-color: #6f42c1;
+    color: #ffffff;
+}
+
+#offline-map-modal .main-container {
+    max-height: calc(100dvh - 28px);
+    overflow: hidden;
+}
+
+#offline-map-modal .modal-content {
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding-right: 4px;
+}
+
+.airport-pdf-section {
+    margin-top: 18px;
+    padding: 14px;
+    border: 1px solid #d6e0ea;
+    border-radius: 12px;
+    background: #f8fbff;
+}
+
+.airport-pdf-section h3 {
+    margin: 0 0 8px;
+    color: var(--primary-color);
+    font-size: 18px;
+}
+
+.airport-pdf-section p {
+    margin: 0 0 12px;
+    color: var(--light-text-color);
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.pdf-import-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 10px;
+}
+
+#installed-airport-pdfs-list {
+    list-style: none;
+    padding: 0;
+    margin: 10px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+#installed-airport-pdfs-list li {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px;
+    border-radius: 10px;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    color: var(--text-color);
+    font-size: 14px;
+}
+
+#installed-airport-pdfs-list li small {
+    color: var(--light-text-color);
+    font-size: 12px;
+}
+
+#installed-airport-pdfs-list .no-pdfs-placeholder {
+    justify-content: center;
+    color: var(--light-text-color);
+    font-style: italic;
+}
+
+.airport-pdf-actions {
+    display: flex;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+.airport-pdf-actions button {
+    border: none;
+    border-radius: 8px;
+    padding: 7px 9px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.airport-pdf-actions .open-pdf-btn {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+.airport-pdf-actions .delete-pdf-btn {
+    background: #fff;
+    color: var(--secondary-color);
+    border: 1px solid var(--secondary-color);
+}
+
+/* =========================================================================
+   CORRECTIF SCROLL MENU CARTES / PDF AÉRODROMES
+   Objectif : permettre le défilement complet sur iPad, sans toucher au moteur cartes.
+   ========================================================================= */
+#offline-map-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    overflow: hidden !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: max(10px, env(safe-area-inset-top)) 10px max(10px, env(safe-area-inset-bottom)) !important;
+    box-sizing: border-box !important;
+}
+
+#offline-map-modal .main-container {
+    width: min(640px, calc(100vw - 20px)) !important;
+    height: calc(100dvh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))) !important;
+    max-height: calc(100dvh - max(20px, env(safe-area-inset-top)) - max(20px, env(safe-area-inset-bottom))) !important;
+    min-height: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+    box-sizing: border-box !important;
+    padding: 16px 18px !important;
+}
+
+#offline-map-modal h2 {
+    flex: 0 0 auto !important;
+    margin: 4px 54px 12px 0 !important;
+    line-height: 1.15 !important;
+}
+
+#offline-map-modal .modal-content {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    max-height: none !important;
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    -webkit-overflow-scrolling: touch !important;
+    touch-action: pan-y !important;
+    overscroll-behavior: contain !important;
+    padding: 0 6px 40px 0 !important;
+    gap: 18px !important;
+}
+
+#offline-map-modal .import-section,
+#offline-map-modal #import-progress-section,
+#offline-map-modal .installed-maps-section,
+#offline-map-modal .airport-pdf-section {
+    flex: 0 0 auto !important;
+}
+
+#offline-map-modal #close-offline-map-btn {
+    z-index: 3 !important;
+}
+
+#installed-maps-list,
+#installed-airport-pdfs-list {
+    max-height: none !important;
+    overflow: visible !important;
+}
+
+.airport-pdf-section {
+    margin-bottom: 48px !important;
+}
+
+@supports not (height: 100dvh) {
+    #offline-map-modal {
+        height: 100vh !important;
+        max-height: 100vh !important;
+    }
+
+    #offline-map-modal .main-container {
+        height: calc(100vh - 24px) !important;
+        max-height: calc(100vh - 24px) !important;
+    }
+}
