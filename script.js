@@ -361,6 +361,56 @@ function resetRouteTooltipOffsets() {
     window.__routeTooltipOffsetCounter = { default: 0, pelic: 0, base: 0, user: 0 };
 }
 
+function getRouteLabelNearAirportOptions(fireLatLng, airportLatLng, kind = 'default') {
+    /*
+     * Étiquettes routes :
+     * - ancrées sur l'icône de l'aéroport / base ;
+     * - décalées à l'opposé du trait par rapport à cette icône.
+     *
+     * Exemple : si le trait arrive par le haut de l'icône, l'étiquette part vers le bas.
+     */
+    const fallback = {
+        latLng: Array.isArray(airportLatLng) ? airportLatLng : [airportLatLng.lat, airportLatLng.lng],
+        offset: [0, 52],
+        direction: 'center'
+    };
+
+    if (!map || !map.latLngToLayerPoint || !Array.isArray(fireLatLng) || !Array.isArray(airportLatLng)) {
+        return fallback;
+    }
+
+    const firePoint = map.latLngToLayerPoint(L.latLng(fireLatLng[0], fireLatLng[1]));
+    const airportPoint = map.latLngToLayerPoint(L.latLng(airportLatLng[0], airportLatLng[1]));
+
+    /*
+     * Vecteur depuis l'icône vers le feu = direction du trait côté icône.
+     * L'étiquette est placée dans le sens opposé.
+     */
+    const dx = firePoint.x - airportPoint.x;
+    const dy = firePoint.y - airportPoint.y;
+    const length = Math.sqrt((dx * dx) + (dy * dy));
+
+    if (!Number.isFinite(length) || length < 1) {
+        return fallback;
+    }
+
+    const distanceFromIcon = kind === 'base' ? 54 : 42;
+    let offsetX = Math.round((-dx / length) * distanceFromIcon);
+    let offsetY = Math.round((-dy / length) * distanceFromIcon);
+
+    /*
+     * Sécurité : évite que l'étiquette reste collée à l'icône sur les axes quasi purs.
+     */
+    if (Math.abs(offsetX) < 12) offsetX = offsetX < 0 ? -12 : 12;
+    if (Math.abs(offsetY) < 12) offsetY = offsetY < 0 ? -12 : 12;
+
+    return {
+        latLng: airportLatLng,
+        offset: [offsetX, offsetY],
+        direction: 'center'
+    };
+}
+
 const calculateDestinationPoint = (lat, lon, bearing, distanceNm) => {
     const R = 3440.065; // Rayon de la Terre en milles nautiques
     const latRad = toRad(lat);
@@ -1352,14 +1402,14 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
         dashArray = '5, 10';
         layer = userToTargetLayer;
     } else if (isLftwRoute) {
-        labelText = `BASE ${selectedBaseOACI}: ${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm`;
+        labelText = `<b>BASE ${selectedBaseOACI}</b><span class="route-label-sub">${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm</span>`;
         color = 'var(--success-color)';
         dashArray = '5, 10';
         layer = lftwRouteLayer;
     } else if (oaci) {
         const isSelected = selectedPelicanOACI === oaci;
         color = isSelected ? 'var(--success-color)' : 'var(--primary-color)';
-        const tooltipClass = isSelected ? 'route-tooltip route-tooltip-selected route-tooltip-staggered' : 'route-tooltip route-tooltip-staggered';
+        const tooltipClass = isSelected ? 'route-tooltip route-tooltip-selected route-tooltip-near-icon' : 'route-tooltip route-tooltip-near-icon';
         labelText = `<b>${oaci}</b><br>${Math.round(distance)} Nm`;
 
         L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8 }).addTo(layer);
@@ -1370,16 +1420,14 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
             displayCommuneDetails(currentCommune, false);
         });
 
-        const tooltipRatio = isSelected ? 0.72 : 0.82;
-        const tooltipLatLng = getRouteTooltipLatLng(startLatLng, endLatLng, tooltipRatio);
-        const tooltipOffset = getRouteTooltipOffset('pelic');
+        const tooltipOptions = getRouteLabelNearAirportOptions(startLatLng, endLatLng, 'pelic');
 
         L.tooltip({
             permanent: true,
-            direction: 'right',
-            offset: tooltipOffset,
+            direction: tooltipOptions.direction,
+            offset: tooltipOptions.offset,
             className: tooltipClass
-        }).setLatLng(tooltipLatLng).setContent(labelText).addTo(layer);
+        }).setLatLng(tooltipOptions.latLng).setContent(labelText).addTo(layer);
         return;
     } else {
         labelText = `${Math.round(distance)} Nm`;
@@ -1391,24 +1439,24 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
         // Pas d'étiquette sur la route rouge GPS -> Feu : l'information est affichée dans le bandeau commune.
         return;
     } else if (isLftwRoute) {
-        const tooltipLatLng = getRouteTooltipLatLng(startLatLng, endLatLng, 0.45);
-        const tooltipOffset = getRouteTooltipOffset('base');
+        const tooltipOptions = getRouteLabelNearAirportOptions(startLatLng, endLatLng, 'base');
         L.tooltip({
             permanent: true,
-            direction: 'right',
-            offset: tooltipOffset,
-            className: 'route-tooltip route-tooltip-base route-tooltip-staggered'
-        }).setLatLng(tooltipLatLng).setContent(labelText).addTo(layer);
+            direction: tooltipOptions.direction,
+            offset: tooltipOptions.offset,
+            className: 'route-tooltip route-tooltip-base route-tooltip-near-icon'
+        }).setLatLng(tooltipOptions.latLng).setContent(labelText).addTo(layer);
     } else if (oaci) {
-        const tooltipLatLng = getRouteTooltipLatLng(startLatLng, endLatLng, 0.75);
+        const tooltipOptions = getRouteLabelNearAirportOptions(startLatLng, endLatLng, 'default');
         L.tooltip({
             permanent: true,
-            direction: 'right',
-            offset: getRouteTooltipOffset('default'),
-            className: 'route-tooltip route-tooltip-staggered'
-        }).setLatLng(tooltipLatLng).setContent(labelText).addTo(layer);
+            direction: tooltipOptions.direction,
+            offset: tooltipOptions.offset,
+            className: 'route-tooltip route-tooltip-near-icon'
+        }).setLatLng(tooltipOptions.latLng).setContent(labelText).addTo(layer);
     }
 }
+
 
 function getClosestAirports(lat, lon, count) { const customPelican = otherAirports.filter(ap => customPelicanAirports.has(ap.oaci)); return [...pelicanAirports, ...customPelican].filter(ap => !disabledAirports.has(ap.oaci)).map(ap => ({ ...ap, distance: calculateDistanceInNm(lat, lon, ap.lat, ap.lon) })).sort((a, b) => a.distance - b.distance).slice(0, count); }
 function getAirportByOaci(oaci) {
