@@ -1863,27 +1863,102 @@ body.fuel-keyboard-open .fuel-split-hint {
         font-size: 27px !important;
     }
 }
+
+
 /* ==========================================================================
-   AGRANDISSEMENT x1,5 BULLE "Commune: ..."
-   Override final pour PC + iPad.
+   ÉTIQUETTES ROUTES — à côté des icônes, à l'opposé des traits
    ========================================================================== */
-#nearest-commune-display {
-    bottom: 24px !important;
-    right: 24px !important;
-    padding: 15px 21px !important;
-    font-size: 27px !important;
-    line-height: 1.25 !important;
-    border-radius: 18px !important;
-    max-width: min(540px, calc(100vw - 48px)) !important;
-    gap: 12px !important;
+.leaflet-tooltip.route-tooltip.route-tooltip-near-icon {
+    white-space: nowrap !important;
+    z-index: 1300 !important;
+    pointer-events: auto !important;
 }
 
-#nearest-commune-display b {
-    font-size: 27px !important;
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon {
+    border-color: var(--success-color) !important;
+}
+
+.leaflet-tooltip.route-tooltip-selected.route-tooltip-near-icon {
+    background-color: var(--success-color) !important;
+    color: #ffffff !important;
+    border-color: #1a7431 !important;
+}
+
+
+/* ==========================================================================
+   v11.11 — Étiquettes routes ancrées sur les icônes aéroport/base
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip.route-tooltip-near-icon {
+    white-space: nowrap !important;
+    z-index: 1350 !important;
+}
+
+
+/* ==========================================================================
+   v11.12 — Étiquettes routes rapprochées des icônes
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip.route-tooltip-near-icon {
+    margin: 0 !important;
+}
+
+
+/* ==========================================================================
+   v11.13 — Étiquettes routes légèrement décollées des icônes
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip.route-tooltip-near-icon {
+    margin: 0 !important;
+}
+
+
+/* ==========================================================================
+   v11.14 — Étiquette BASE sur 2 lignes
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon {
+    text-align: center !important;
+    line-height: 1.2 !important;
+    padding: 4px 8px !important;
+}
+
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon b {
+    display: block !important;
     font-weight: 900 !important;
 }
 
-#nearest-commune-display span,
-#nearest-commune-display div {
-    font-size: inherit !important;
+
+/* ==========================================================================
+   v11.15 — Étiquette BASE compacte et légèrement décollée de l'icône
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 1px !important;
+    text-align: center !important;
+    line-height: 1.02 !important;
+    padding: 3px 7px !important;
+}
+
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon b {
+    display: block !important;
+    font-weight: 900 !important;
+    line-height: 1.02 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon .route-label-sub {
+    display: block !important;
+    font-weight: 800 !important;
+    line-height: 1.02 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+}
+
+
+/* ==========================================================================
+   v11.16 — Seul "BASE LFTW" reste en gras dans l'étiquette base
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon .route-label-sub {
+    font-weight: 500 !important;
 }
