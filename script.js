@@ -962,12 +962,31 @@ function setupEventListeners() {
     });
 
     const showFireHistoryFromSearch = () => {
+        /*
+         * v11.25 — correction saisie commune après sélection d'un feu.
+         * L'historique reste accessible au clic, mais la barre de recherche
+         * garde toujours le focus et le clavier doit pouvoir s'ouvrir.
+         */
+        searchInput.disabled = false;
+        searchInput.readOnly = false;
         displayFireHistory();
+
+        if (searchInput.value && searchInput.value.trim().length > 0) {
+            setTimeout(() => {
+                try {
+                    searchInput.focus();
+                    searchInput.select();
+                } catch (_) {}
+            }, 0);
+        }
     };
 
     searchInput.addEventListener('focus', showFireHistoryFromSearch);
     searchInput.addEventListener('click', showFireHistoryFromSearch);
-    searchInput.addEventListener('pointerdown', showFireHistoryFromSearch);
+    searchInput.addEventListener('pointerdown', () => {
+        searchInput.disabled = false;
+        searchInput.readOnly = false;
+    });
 
     clearSearchBtn.addEventListener('click', () => {
         clearCurrentSelection();
@@ -1022,6 +1041,14 @@ function setupEventListeners() {
             uiOverlay.style.display = 'block';
             communeDisplay.style.display = 'none';
             toggleSearchButton.classList.add('active');
+            setTimeout(() => {
+                try {
+                    searchInput.disabled = false;
+                    searchInput.readOnly = false;
+                    searchInput.focus();
+                    if (searchInput.value) searchInput.select();
+                } catch (_) {}
+            }, 80);
         } else {
             uiOverlay.style.display = 'none';
             toggleSearchButton.classList.remove('active');
@@ -3114,104 +3141,82 @@ async function handleZipImport(file) {
     });
 
     try {
-        if (file.size > 300 * 1024 * 1024) {
-            statusMessage.textContent = `Fichier volumineux (${Math.round(file.size / (1024 * 1024))} Mo) : ouverture du ZIP...`;
-            await idle(50);
-        }
+        /*
+         * v11.26 — retour test à une logique ancienne/simple.
+         *
+         * Objectif : comparer avec l'ancienne version qui importait correctement le ZIP.
+         * On retire les mécanismes récents :
+         * - pas de reprise par checkpoint ;
+         * - pas de pause sécurité ;
+         * - pas de vérification tuile par tuile ;
+         * - pas de réouverture périodique IndexedDB ;
+         * - pas d'écriture Cache Storage.
+         *
+         * Le comportement redevient proche de l'ancien import :
+         * - lecture du ZIP ;
+         * - extraction des tuiles valides ;
+         * - écriture IndexedDB par lots de 100.
+         */
+        statusMessage.textContent = `Ouverture du ZIP ${packName}...`;
+        await idle(80);
 
         const zip = await JSZip.loadAsync(file);
-        const entryNames = Object.keys(zip.files || {});
-
-        let totalFiles = 0;
+        const entries = Object.values(zip.files || {});
+        const allTilesData = [];
         let importedMaxZoom = 0;
         let importedMinZoom = Number.POSITIVE_INFINITY;
 
-        /*
-         * Premier passage léger : on compte les tuiles valides sans créer une énorme liste
-         * intermédiaire. Cela évite de bloquer le deuxième import après un premier gros pack.
-         */
-        for (let i = 0; i < entryNames.length; i += 1) {
-            const fileEntry = zip.files[entryNames[i]];
-            if (!fileEntry || fileEntry.dir) continue;
-
-            const parsedTiles = parseTilePathFromName(fileEntry.name);
-            if (!parsedTiles.length) continue;
-
-            totalFiles += parsedTiles.length;
-            parsedTiles.forEach((parsedTile) => {
-                importedMaxZoom = Math.max(importedMaxZoom, parsedTile.zoom);
-                importedMinZoom = Math.min(importedMinZoom, parsedTile.zoom);
-            });
-
-            if (i % 750 === 0) {
-                statusMessage.textContent = `Préparation des tuiles... ${i} / ${entryNames.length}`;
-                progressBar.style.width = `${Math.min(12, (i / Math.max(1, entryNames.length)) * 12)}%`;
-                await idle(0);
-            }
-        }
-
-        if (totalFiles === 0) {
-            throw new Error("Aucune tuile valide trouvée dans le ZIP. Formats acceptés : z/x/y.png (avec sous-dossiers possibles) ou z_x_y.png (z-y-x aussi accepté).");
-        }
-
-        statusMessage.textContent = `Préparation terminée. Importation de ${totalFiles} tuiles...`;
-        progressBar.style.width = '12%';
-        await idle(80);
-
-        /*
-         * Deuxième passage : import séquentiel par petits lots.
-         * Important : on ne persiste plus les tuiles dans Cache Storage pendant l'import.
-         * IndexedDB reste la source offline principale. Cache Storage doublait les écritures
-         * et pouvait bloquer les imports suivants sur iPad/Safari.
-         */
-        const batchSize = file.size > 300 * 1024 * 1024 ? 8 : 24;
-        let batch = [];
-        let processedFiles = 0;
-        let lastUiUpdate = Date.now();
-
-        const flushBatch = async () => {
-            if (!batch.length) return;
-            const toWrite = batch;
-            batch = [];
-            await putTileBatch(toWrite);
-            processedFiles += toWrite.length;
-            const percent = 12 + ((processedFiles / totalFiles) * 88);
-            progressBar.style.width = `${Math.min(100, percent)}%`;
-            statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
-            await idle(0);
-        };
-
-        for (let i = 0; i < entryNames.length; i += 1) {
-            const fileEntry = zip.files[entryNames[i]];
+        for (let i = 0; i < entries.length; i += 1) {
+            const fileEntry = entries[i];
             if (!fileEntry || fileEntry.dir) continue;
 
             const parsedTiles = parseTilePathFromName(fileEntry.name);
             if (!parsedTiles.length) continue;
 
             const blob = await fileEntry.async('blob');
+
             parsedTiles.forEach((parsedTile) => {
                 const tileUrl = `https://a.tile.openstreetmap.org/${parsedTile.tilePath}`;
-                batch.push({
+                allTilesData.push({
                     url: buildStoredTileKey(tileUrl, packName),
                     tileUrl,
                     tile: blob,
                     packName
                 });
+                importedMaxZoom = Math.max(importedMaxZoom, parsedTile.zoom);
+                importedMinZoom = Math.min(importedMinZoom, parsedTile.zoom);
             });
 
-            if (batch.length >= batchSize) {
-                await flushBatch();
-            }
-
-            const now = Date.now();
-            if (now - lastUiUpdate > 750) {
-                lastUiUpdate = now;
-                statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
+            if (i % 100 === 0) {
+                const percent = Math.min(45, Math.round((i / Math.max(1, entries.length)) * 45));
+                progressBar.style.width = `${percent}%`;
+                statusMessage.textContent = `Préparation des tuiles... ${i} / ${entries.length}`;
                 await idle(0);
             }
         }
 
-        await flushBatch();
+        if (allTilesData.length === 0) {
+            throw new Error("Aucune tuile valide trouvée dans le ZIP. Formats acceptés : z/x/y.png ou z_x_y.png.");
+        }
+
+        statusMessage.textContent = `Préparation terminée. Importation de ${allTilesData.length} tuiles...`;
+        progressBar.style.width = '45%';
+        await idle(100);
+
+        const batchSize = 100;
+        let importedCount = 0;
+
+        for (let i = 0; i < allTilesData.length; i += batchSize) {
+            const batch = allTilesData.slice(i, i + batchSize);
+            await putTileBatch(batch);
+            importedCount += batch.length;
+
+            const percent = 45 + Math.round((importedCount / allTilesData.length) * 55);
+            progressBar.style.width = `${Math.min(100, percent)}%`;
+            statusMessage.textContent = `Importation... ${importedCount} / ${allTilesData.length} tuiles`;
+
+            await idle(0);
+        }
 
         statusMessage.textContent = `Importation de ${packName} terminée !`;
         progressBar.style.width = '100%';
@@ -3242,7 +3247,7 @@ async function handleZipImport(file) {
         console.error("Erreur d'importation ZIP:", error);
     } finally {
         isZipImportRunning = false;
-        setTimeout(() => { progressSection.style.display = 'none'; }, 5000);
+        setTimeout(() => { progressSection.style.display = 'none'; }, 8000);
     }
 }
 
