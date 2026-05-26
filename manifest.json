@@ -1,13 +1,13 @@
 {
-    "name": "NPS-Q400",
-    "short_name": "NPS-Q400",
+    "name": "NPF-Q400",
+    "short_name": "NPF-Q400",
     "id": "./index.html",
     "start_url": "./index.html?appv=v2026.31",
     "scope": "./",
     "display": "standalone",
     "background_color": "#ffffff",
     "theme_color": "#0056b3",
-    "description": "Nearest Pélicandrome Selector Q400",
+    "description": "Nearest Pélicandrome Finder Q400",
     "icons": [
         {
             "src": "icons/icon-192x192.png",
