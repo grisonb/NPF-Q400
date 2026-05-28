@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-offline-tiles-push-v20266-strict-transparent';
+const SW_VERSION = 'sw-v2026-34-fire-history-red-buttons';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
@@ -6,6 +6,23 @@ const DB_VERSION = 3;
 const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
 const OFFLINE_ONLINE_FALLBACK_KEY = 'offlineOnlineFallback';
 const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
+
+const APP_SHELL_CACHE = `npf-q400-app-shell-${SW_VERSION}`;
+const APP_SHELL_URLS = [
+    './',
+    './index.html',
+    './style.css',
+    './script.js',
+    './manifest.json',
+    './leaflet.css',
+    './leaflet.min.js',
+    './suncalc.js',
+    './jszip.min.js',
+    './communes.json',
+    './icons/icon-192x192.png',
+    './icons/icon-512x512.png'
+];
+
 
 /*
  * IMPORTANT :
@@ -27,11 +44,33 @@ const MEMORY_TILE_CACHE_MAX = 160;
 const memoryTileCache = new Map();
 
 self.addEventListener('install', event => {
-    self.skipWaiting();
+    event.waitUntil((async () => {
+        const cache = await caches.open(APP_SHELL_CACHE);
+
+        await Promise.all(APP_SHELL_URLS.map(async (url) => {
+            try {
+                const response = await fetch(new Request(url, { cache: 'reload' }));
+                if (response && response.ok) {
+                    await cache.put(url, response);
+                }
+            } catch (error) {
+                console.warn('[SW] Cache app shell ignoré pour', url, error);
+            }
+        }));
+
+        await self.skipWaiting();
+    })());
 });
 
 self.addEventListener('activate', event => {
     event.waitUntil((async () => {
+        const cacheNames = await caches.keys();
+        await Promise.all(
+            cacheNames
+                .filter(name => name.startsWith('npf-q400-app-shell-') && name !== APP_SHELL_CACHE)
+                .map(name => caches.delete(name))
+        );
+
         await refreshOfflineSettingsFromDB({ force: true });
         await self.clients.claim();
     })());
@@ -74,12 +113,78 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    /*
-     * Application : réseau direct.
-     * Cela évite le retour à d'anciennes versions PWA.
-     */
-    event.respondWith(fetch(request));
+    if (isAppShellRequest(request)) {
+        event.respondWith(handleAppShellRequest(request));
+        return;
+    }
+
+    event.respondWith(fetch(request).catch(() => caches.match(request, { ignoreSearch: true })));
 });
+
+
+function isAppShellRequest(request) {
+    try {
+        const parsed = new URL(request.url);
+        if (parsed.origin !== self.location.origin) return false;
+        if (request.mode === 'navigate') return true;
+
+        const filename = parsed.pathname.split('/').pop() || '';
+        return [
+            '',
+            'index.html',
+            'style.css',
+            'script.js',
+            'manifest.json',
+            'leaflet.css',
+            'leaflet.min.js',
+            'suncalc.js',
+            'jszip.min.js',
+            'communes.json'
+        ].includes(filename) || parsed.pathname.includes('/icons/');
+    } catch (_) {
+        return false;
+    }
+}
+
+async function handleAppShellRequest(request) {
+    const cached = await caches.match(request, { ignoreSearch: true });
+
+    /*
+     * v11.43 — démarrage/reprise plus rapide.
+     * Navigation : cache d'abord, mise à jour réseau en arrière-plan.
+     */
+    if (request.mode === 'navigate') {
+        if (cached) {
+            fetch(request).then(async (fresh) => {
+                if (fresh && fresh.ok) {
+                    const cache = await caches.open(APP_SHELL_CACHE);
+                    await cache.put('./index.html', fresh.clone());
+                }
+            }).catch(() => {});
+            return cached;
+        }
+
+        try {
+            const fresh = await fetch(request);
+            const cache = await caches.open(APP_SHELL_CACHE);
+            await cache.put('./index.html', fresh.clone());
+            return fresh;
+        } catch (_) {
+            return await caches.match('./index.html', { ignoreSearch: true });
+        }
+    }
+
+    if (cached) return cached;
+
+    try {
+        const fresh = await fetch(request);
+        const cache = await caches.open(APP_SHELL_CACHE);
+        await cache.put(request, fresh.clone());
+        return fresh;
+    } catch (_) {
+        return cached || new Response('', { status: 504, statusText: 'Offline asset unavailable' });
+    }
+}
 
 async function handleTileRequest(request) {
     await refreshOfflineSettingsFromDB();
@@ -328,40 +433,16 @@ self.addEventListener('push', event => {
     const title = data.title || 'Pelic Chat';
     const options = {
         body: data.body || data.text || 'Nouveau message',
-        tag: data.tag || `pelic-chat-${data.room || 'default'}`,
-        data: {
-            url: data.url || './index.html',
-            room: data.room || '',
-            messageId: data.messageId || '',
-            time: data.time || ''
-        },
         icon: './icons/icon-192x192.png',
-        badge: './icons/icon-192x192.png'
+        badge: './icons/icon-192x192.png',
+        tag: data.tag || 'pelic-chat',
+        data: data
     };
 
-    event.waitUntil(
-        self.registration.showNotification(title, options)
-    );
+    event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener('notificationclick', event => {
     event.notification.close();
-
-    const targetUrl = event.notification?.data?.url || './index.html';
-
-    event.waitUntil(
-        clients.matchAll({ type: 'window', includeUncontrolled: true })
-            .then(clientList => {
-                for (const client of clientList) {
-                    if ('focus' in client) {
-                        client.focus();
-                        return;
-                    }
-                }
-
-                if (clients.openWindow) {
-                    return clients.openWindow(targetUrl);
-                }
-            })
-    );
+    event.waitUntil(self.clients.openWindow('./'));
 });
