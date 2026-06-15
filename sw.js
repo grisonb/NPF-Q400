@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-34-fire-history-red-buttons';
+const SW_VERSION = 'sw-v2026-35-app-icon';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
@@ -21,7 +21,9 @@ const APP_SHELL_URLS = [
     './communes.json',
     './icons/icon-192x192.png',
     './icons/icon-512x512.png'
-];
+,
+    './icons/apple-touch-icon.png',
+    './icons/maskable-icon-512x512.png'];
 
 
 /*
