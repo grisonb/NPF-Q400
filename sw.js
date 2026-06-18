@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-35-app-icon';
+const SW_VERSION = 'sw-v2026-36-route-label-order-center';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
