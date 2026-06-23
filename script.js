@@ -1209,9 +1209,28 @@ function setupEventListeners() {
 
     function openCalculatorTab(tabId) {
         if (!calculatorModal) return;
+
         calculatorModal.style.display = 'flex';
+
+        /*
+         * v2026.39 — ouverture forcée de l’onglet demandé.
+         * On ne se contente plus de cliquer virtuellement sur l’onglet,
+         * car en PROD/iPad l’état précédent pouvait rester collé sur BLOC / FUEL.
+         */
         const targetTab = calculatorModal.querySelector(`.onglet-bouton[data-onglet="${tabId}"]`);
-        if (targetTab) targetTab.click();
+        const targetPanel = calculatorModal.querySelector(`#${tabId}`);
+
+        calculatorModal.querySelectorAll('.onglet-bouton').forEach((btn) => {
+            btn.classList.toggle('active', btn === targetTab);
+        });
+
+        calculatorModal.querySelectorAll('.onglet-panneau').forEach((panel) => {
+            panel.classList.toggle('active', panel === targetPanel);
+        });
+
+        if (resetButton) {
+            resetButton.style.display = (tabId === 'bloc-fuel') ? 'flex' : 'none';
+        }
     }
 
     calculatorButton.addEventListener('click', () => { openCalculatorTab('previ-rotations'); });
