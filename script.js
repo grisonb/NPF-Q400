@@ -1209,28 +1209,9 @@ function setupEventListeners() {
 
     function openCalculatorTab(tabId) {
         if (!calculatorModal) return;
-
         calculatorModal.style.display = 'flex';
-
-        /*
-         * v2026.39 — ouverture forcée de l’onglet demandé.
-         * On ne se contente plus de cliquer virtuellement sur l’onglet,
-         * car en PROD/iPad l’état précédent pouvait rester collé sur BLOC / FUEL.
-         */
         const targetTab = calculatorModal.querySelector(`.onglet-bouton[data-onglet="${tabId}"]`);
-        const targetPanel = calculatorModal.querySelector(`#${tabId}`);
-
-        calculatorModal.querySelectorAll('.onglet-bouton').forEach((btn) => {
-            btn.classList.toggle('active', btn === targetTab);
-        });
-
-        calculatorModal.querySelectorAll('.onglet-panneau').forEach((panel) => {
-            panel.classList.toggle('active', panel === targetPanel);
-        });
-
-        if (resetButton) {
-            resetButton.style.display = (tabId === 'bloc-fuel') ? 'flex' : 'none';
-        }
+        if (targetTab) targetTab.click();
     }
 
     calculatorButton.addEventListener('click', () => { openCalculatorTab('previ-rotations'); });
@@ -4296,6 +4277,10 @@ function initializeTeamChat() {
     const renderedMessageIds = new Set();
     const sentMessageElements = new Map();
     const activeUsers = new Map();
+    const CHAT_RECENT_USER_MAX_AGE_MS = 30 * 60 * 1000;
+    const CHAT_PRESENCE_HEARTBEAT_MS = 60 * 1000;
+    let chatPresenceHeartbeatTimer = null;
+    let chatRecentUsersRefreshTimer = null;
     let chatPushSubscriptionPromise = null;
     const myClientId = getOrCreateClientId();
     const CHAT_LOCATION_SHARING_KEY = 'teamChatLocationSharing';
@@ -4528,17 +4513,45 @@ function initializeTeamChat() {
         }
     };
 
+    const formatRecentUserAge = (timeMs) => {
+        const ageSeconds = Math.max(0, Math.round((Date.now() - timeMs) / 1000));
+        if (ageSeconds < 60) return `${ageSeconds} s`;
+        return `${Math.round(ageSeconds / 60)} min`;
+    };
+
     const refreshOnlineUsersLabel = () => {
-        const users = Array.from(activeUsers.values())
-            .filter((name) => typeof name === 'string' && name.trim())
-            .sort((a, b) => a.localeCompare(b, 'fr'));
+        const now = Date.now();
+
+        const users = Array.from(activeUsers.entries())
+            .map(([clientId, record]) => {
+                if (typeof record === 'string') {
+                    return { clientId, user: record, timeMs: now, status: 'online', isSelf: clientId === myClientId };
+                }
+                return { ...record, clientId, isSelf: clientId === myClientId };
+            })
+            .filter((record) => record && typeof record.user === 'string' && record.user.trim())
+            .filter((record) => Number.isFinite(record.timeMs) && (now - record.timeMs) <= CHAT_RECENT_USER_MAX_AGE_MS)
+            .sort((a, b) => {
+                if (a.isSelf && !b.isSelf) return -1;
+                if (!a.isSelf && b.isSelf) return 1;
+                return a.user.localeCompare(b.user, 'fr');
+            });
+
         if (!users.length) {
-            onlineUsersLabel.textContent = 'En ligne: 0';
+            onlineUsersLabel.textContent = 'Vus <30 min: 0';
+            onlineUsersLabel.title = 'Aucun utilisateur vu sur ce canal dans les 30 dernières minutes.';
             return;
         }
-        const preview = users.slice(0, 4).join(', ');
-        const suffix = users.length > 4 ? ` +${users.length - 4}` : '';
-        onlineUsersLabel.textContent = `En ligne: ${users.length} (${preview}${suffix})`;
+
+        const preview = users
+            .map((record) => record.isSelf ? `${record.user}` : `${record.user} ${formatRecentUserAge(record.timeMs)}`)
+            .join(', ');
+        onlineUsersLabel.textContent = `Vus <30 min: ${users.length}${preview ? ` (${preview})` : ''}`;
+        onlineUsersLabel.title = users
+            .map((record) => record.isSelf
+                ? `${record.user} — cet appareil`
+                : `${record.user} — vu il y a ${formatRecentUserAge(record.timeMs)}${record.status === 'offline' ? ' (hors ligne)' : ''}`)
+            .join('\n');
     };
 
     const publishPresence = (status, explicitUser = null) => {
@@ -4551,6 +4564,31 @@ function initializeTeamChat() {
             status,
             time: new Date().toISOString()
         }), { qos: 1, retain: true });
+    };
+
+    const startPresenceHeartbeat = () => {
+        if (chatPresenceHeartbeatTimer) clearInterval(chatPresenceHeartbeatTimer);
+        if (chatRecentUsersRefreshTimer) clearInterval(chatRecentUsersRefreshTimer);
+
+        publishPresence('online');
+
+        chatPresenceHeartbeatTimer = setInterval(() => {
+            publishPresence('online');
+            refreshOnlineUsersLabel();
+        }, CHAT_PRESENCE_HEARTBEAT_MS);
+
+        chatRecentUsersRefreshTimer = setInterval(refreshOnlineUsersLabel, 30 * 1000);
+    };
+
+    const stopPresenceHeartbeat = () => {
+        if (chatPresenceHeartbeatTimer) {
+            clearInterval(chatPresenceHeartbeatTimer);
+            chatPresenceHeartbeatTimer = null;
+        }
+        if (chatRecentUsersRefreshTimer) {
+            clearInterval(chatRecentUsersRefreshTimer);
+            chatRecentUsersRefreshTimer = null;
+        }
     };
 
     const updateLocationShareButton = () => {
@@ -4938,7 +4976,7 @@ function initializeTeamChat() {
 
     const renderIncomingChatMessage = (parsed, isCurrentChatTopic) => {
         if (!parsed || !parsed.id || !parsed.user || !parsed.text || !parsed.time) return;
-        if (renderedMessageIds.has(parsed.id) || persistedSeenIds.has(parsed.id)) return;
+        if (renderedMessageIds.has(parsed.id)) return;
 
         renderedMessageIds.add(parsed.id);
         persistedSeenIds.add(parsed.id);
@@ -5097,6 +5135,7 @@ function initializeTeamChat() {
 
                             announceConnection();
                             publishPresence('online', userName);
+                            startPresenceHeartbeat();
                             if (locationSharingEnabled) {
                                 startLocationSharing(true);
                             }
@@ -5149,11 +5188,13 @@ function initializeTeamChat() {
                 }
 
                 if (parsed.type === 'presence' && parsed.senderClientId) {
-                    if (parsed.status === 'offline') {
-                        activeUsers.delete(parsed.senderClientId);
-                    } else {
-                        activeUsers.set(parsed.senderClientId, (parsed.user || '').trim() || 'inconnu');
-                    }
+                    const presenceTimeMs = Date.parse(parsed.time || '');
+                    const safePresenceTimeMs = Number.isFinite(presenceTimeMs) ? presenceTimeMs : Date.now();
+                    activeUsers.set(parsed.senderClientId, {
+                        user: (parsed.user || '').trim() || 'inconnu',
+                        timeMs: safePresenceTimeMs,
+                        status: parsed.status || 'online'
+                    });
                     refreshOnlineUsersLabel();
                     return;
                 }
@@ -5184,6 +5225,7 @@ function initializeTeamChat() {
             setConnectionState(false, 'Reconnexion...');
         });
         chatClient.on('close', () => {
+            stopPresenceHeartbeat();
             hasAnnouncedConnection = false;
             isChatConnecting = false;
             setConnectionState(false);
@@ -5195,6 +5237,7 @@ function initializeTeamChat() {
             refreshOnlineUsersLabel();
         });
         chatClient.on('offline', () => {
+            stopPresenceHeartbeat();
             hasAnnouncedConnection = false;
             isChatConnecting = false;
             setConnectionState(false, 'Hors ligne');
@@ -5213,6 +5256,7 @@ function initializeTeamChat() {
     }
 
     function disconnectFromChat() {
+        stopPresenceHeartbeat();
         isChatConnecting = false;
         publishOwnLocationClear();
         publishPresence('offline', (userInput.value || '').trim());
