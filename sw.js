@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-39-fms-tab-hard-open';
+const SW_VERSION = 'sw-v2026-40-chat-own-user-no-age';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
