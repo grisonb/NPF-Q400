@@ -767,7 +767,17 @@ async function initializeApp() {
             }
         }
         if (!data) data = await loadCommunesData();
-        allCommunes = data.data.map(c => ({ ...c, normalized_name: simplifyString(c.nom_standard), search_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean), soundex_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean).map(part => soundex(part)) }));
+        allCommunes = data.data.map(c => {
+            const normalizedName = simplifyString(c.nom_standard);
+            const searchParts = normalizedName.split(' ').filter(Boolean);
+            return {
+                ...c,
+                normalized_name: normalizedName,
+                search_parts: searchParts,
+                search_compact: searchParts.join(''),
+                soundex_parts: searchParts.map(part => soundex(part))
+            };
+        });
         communesByCodeInsee = new Map(allCommunes.map((commune) => [String(commune.code_insee || '').trim(), commune]).filter(([code]) => code));
         communeAliases = await loadCommunesAliases();
     } catch (error) {
@@ -900,6 +910,7 @@ async function loadCommunesAliases() {
             alias_old_code_insee: entry.ancien_code_insee || null,
             normalized_name: normalizedName,
             search_parts: searchParts,
+            search_compact: searchParts.join(''),
             soundex_parts: searchParts.map(part => soundex(part)),
             alias_search_keys: searchKeys
         };
@@ -974,6 +985,28 @@ function scoreCommuneSearchCandidate(candidate, searchWords) {
         ? candidate.soundex_parts
         : parts.map(part => soundex(part));
 
+    /*
+     * v11.84 — recherche alias plus tolérante.
+     * Cas visé : "La Tourlandry" doit sortir avec "la tour landri 49".
+     * Le moteur historique compare mot par mot. Cela échoue quand l'utilisateur
+     * sépare un toponyme composé dans un ancien nom écrit en un seul bloc.
+     * On ajoute donc une comparaison compacte sans espaces avant le scoring mot par mot.
+     */
+    const searchCompact = searchWords.join('');
+    const candidateCompact = candidate.search_compact || parts.join('');
+
+    if (searchCompact.length >= 4 && candidateCompact.length >= 4) {
+        if (candidateCompact.startsWith(searchCompact) || searchCompact.startsWith(candidateCompact)) {
+            return 0.1;
+        }
+
+        const compactDistance = levenshteinDistance(searchCompact, candidateCompact);
+        const compactTolerance = Math.max(1, Math.floor(searchCompact.length / 4));
+        if (compactDistance <= compactTolerance) {
+            return 0.5 + compactDistance;
+        }
+    }
+
     let totalScore = 0;
     let wordsFound = 0;
 
@@ -1012,13 +1045,21 @@ function scoreCommuneSearchCandidate(candidate, searchWords) {
 function searchAliasCommunes(searchWords, departmentFilter = null) {
     if (!Array.isArray(communeAliases) || !communeAliases.length) return [];
 
-    return communeAliases
-        .filter(alias => !departmentFilter || alias.dep_code === departmentFilter)
+    const compactQuery = searchWords.join('');
+    if (!departmentFilter && compactQuery.length < 5) return [];
+
+    const candidates = departmentFilter
+        ? communeAliases.filter(alias => alias.dep_code === departmentFilter)
+        : communeAliases;
+
+    return candidates
         .map(alias => {
             const score = scoreCommuneSearchCandidate(alias, searchWords);
             return { ...alias, score: score + 0.25 };
         })
-        .filter(alias => alias.score < 999);
+        .filter(alias => alias.score < 999)
+        .sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length)
+        .slice(0, 10);
 }
 
 
@@ -1342,7 +1383,9 @@ function setupEventListeners() {
         }
     }
 
-    searchInput.addEventListener('input', () => {
+    let searchInputDebounceTimer = null;
+
+    const runCommuneSearch = () => {
         selectedPelicanOACI = null;
         const rawSearch = searchInput.value;
         clearSearchBtn.style.display = rawSearch.length > 0 ? 'block' : 'none';
@@ -1384,6 +1427,25 @@ function setupEventListeners() {
 
         scoredResults.sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length);
         displayResults(scoredResults.slice(0, 10));
+    };
+
+    searchInput.addEventListener('input', () => {
+        clearSearchBtn.style.display = searchInput.value.length > 0 ? 'block' : 'none';
+
+        if (searchInputDebounceTimer) {
+            clearTimeout(searchInputDebounceTimer);
+        }
+
+        /*
+         * v11.85 — fluidité saisie.
+         * Le scoring complet communes + alias ne tourne plus à chaque frappe.
+         * Il est déclenché après une courte pause, ou immédiatement si la saisie
+         * se termine par un département, cas typique pour affiner les alias.
+         */
+        const value = searchInput.value;
+        const immediateDepartmentSearch = /\s(\d{1,3}|2A|2B)$/i.test(value);
+
+        searchInputDebounceTimer = setTimeout(runCommuneSearch, immediateDepartmentSearch ? 0 : 120);
     });
 
     const showFireHistoryFromSearch = () => {
