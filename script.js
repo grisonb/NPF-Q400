@@ -2,14 +2,131 @@
 // INITIALISATION DE L'APPLICATION
 // =========================================================================
 document.addEventListener('DOMContentLoaded', () => {
-    if (typeof L === 'undefined') { document.getElementById('status-message').textContent = "❌ ERREUR : leaflet.min.js non chargé."; return; }
-    initializeApp();
+    const markAppReady = () => {
+        if (document.body) {
+            document.body.classList.add('app-ready');
+            document.documentElement.classList.add('app-ready');
+        }
+    };
+
+    window.markNpfAppReady = markAppReady;
+
+    try {
+        if (typeof L === 'undefined') {
+            const statusEl = document.getElementById('status-message');
+            if (statusEl) statusEl.textContent = "❌ ERREUR : leaflet.min.js non chargé.";
+            markAppReady();
+            return;
+        }
+
+        initializeApp();
+
+        // Laisse Leaflet créer la carte, puis retire l'écran de reprise.
+        setTimeout(markAppReady, 250);
+    } catch (error) {
+        console.error('Erreur initialisation application:', error);
+        const statusEl = document.getElementById('status-message');
+        if (statusEl) statusEl.textContent = `❌ Erreur initialisation: ${error.message || error}`;
+        markAppReady();
+    }
 });
+
+
+// =========================================================================
+// REPRISE iPAD / PWA APRÈS LONGUE PÉRIODE EN ARRIÈRE-PLAN
+// =========================================================================
+(function setupBackgroundResumeRecovery() {
+    const LONG_BACKGROUND_MS = 5 * 60 * 1000;
+    const RECOVERY_GUARD_KEY = `npfResumeRecoveryReload:${window.APP_VERSION || 'unknown'}`;
+    let hiddenAt = 0;
+
+    const markReady = () => {
+        if (document.body) {
+            document.body.classList.add('app-ready');
+            document.documentElement.classList.add('app-ready');
+        }
+    };
+
+    const invalidateMapSoon = () => {
+        setTimeout(() => {
+            try {
+                if (typeof map !== 'undefined' && map && typeof map.invalidateSize === 'function') {
+                    map.invalidateSize(true);
+                }
+            } catch (_) {}
+            markReady();
+        }, 250);
+    };
+
+    const recoverIfMapStillBlank = () => {
+        setTimeout(() => {
+            try {
+                const mapEl = document.getElementById('map');
+                const mapLooksReady = !!(
+                    mapEl
+                    && mapEl.classList.contains('leaflet-container')
+                    && mapEl.offsetWidth > 0
+                    && mapEl.offsetHeight > 0
+                );
+
+                if (mapLooksReady) return;
+
+                const alreadyReloaded = sessionStorage.getItem(RECOVERY_GUARD_KEY) === '1';
+                if (!alreadyReloaded && typeof window.forceRecoveryReload === 'function') {
+                    sessionStorage.setItem(RECOVERY_GUARD_KEY, '1');
+                    window.forceRecoveryReload();
+                }
+            } catch (_) {}
+        }, 3500);
+    };
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) {
+            hiddenAt = Date.now();
+            return;
+        }
+
+        const wasLongBackground = hiddenAt && (Date.now() - hiddenAt) >= LONG_BACKGROUND_MS;
+        invalidateMapSoon();
+
+        if (wasLongBackground) {
+            recoverIfMapStillBlank();
+        }
+    });
+
+    window.addEventListener('pageshow', (event) => {
+        markReady();
+        invalidateMapSoon();
+
+        if (event.persisted) {
+            recoverIfMapStillBlank();
+        }
+    });
+
+    window.addEventListener('load', () => {
+        markReady();
+        setTimeout(() => {
+            try {
+                if (typeof map !== 'undefined' && map && typeof map.invalidateSize === 'function') {
+                    map.invalidateSize(true);
+                }
+            } catch (_) {}
+        }, 500);
+    });
+
+    // Si Safari/iPad repart sur un état incomplet, on évite un blanc permanent.
+    setTimeout(() => {
+        markReady();
+        recoverIfMapStillBlank();
+    }, 9000);
+})();
 
 // =========================================================================
 // VARIABLES GLOBALES
 // =========================================================================
 let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, currentCommune = null, selectedPelicanOACI = null;
+let communeAliases = [];
+let communesByCodeInsee = new Map();
 let disabledAirports = new Set(), waterAirports = new Set(), customPelicanAirports = new Set();
 const MAGNETIC_DECLINATION = 1.0;
 let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
@@ -46,6 +163,7 @@ const OFFLINE_TILES_MAX_ZOOM_KEY = 'offlineTilesMaxZoom';
 const OFFLINE_TILES_MIN_ZOOM_KEY = 'offlineTilesMinZoom';
 const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
 const COMMUNES_CACHE_KEY = 'communesDataCacheV1';
+const COMMUNES_ALIASES_CACHE_KEY = 'communesAliasesCacheV2';
 const AIRPORT_PDF_STORE_NAME = 'airportPdfs';
 const AIRPORT_PDF_DB_NAME = 'AirportPdfsDB';
 const AIRPORT_PDF_DB_VERSION = 1;
@@ -650,6 +768,8 @@ async function initializeApp() {
         }
         if (!data) data = await loadCommunesData();
         allCommunes = data.data.map(c => ({ ...c, normalized_name: simplifyString(c.nom_standard), search_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean), soundex_parts: simplifyString(c.nom_standard).split(' ').filter(Boolean).map(part => soundex(part)) }));
+        communesByCodeInsee = new Map(allCommunes.map((commune) => [String(commune.code_insee || '').trim(), commune]).filter(([code]) => code));
+        communeAliases = await loadCommunesAliases();
     } catch (error) {
         communesLoadError = error;
         allCommunes = [];
@@ -732,6 +852,175 @@ async function loadCommunesData() {
         }
     }
 }
+
+async function loadCommunesAliases() {
+    const fetchWithTimeout = async (url, options = {}, timeoutMs = 5000) => {
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+            return await fetch(url, { ...options, signal: controller.signal });
+        } finally {
+            clearTimeout(timer);
+        }
+    };
+
+    const buildAliasEntry = (entry, key = null) => {
+        if (!entry) return null;
+
+        if (typeof entry === 'string') {
+            return null;
+        }
+
+        const displayName = String(entry.nom_affiche || entry.display_name || entry.nom || '').trim();
+        const targetCode = String(entry.code_insee || entry.target_code_insee || '').trim();
+        if (!displayName || !targetCode) return null;
+
+        const targetCommune = communesByCodeInsee.get(targetCode);
+        if (!targetCommune) return null;
+
+        const searchKeys = Array.isArray(entry.cles_recherche) && entry.cles_recherche.length
+            ? entry.cles_recherche
+            : [key, displayName];
+
+        const normalizedName = simplifyString(displayName);
+        const searchParts = normalizedName.split(' ').filter(Boolean);
+
+        return {
+            ...targetCommune,
+            code_insee: targetCommune.code_insee,
+            nom_standard: displayName,
+            nom_sans_pronom: displayName,
+            nom_sans_accent: normalizedName.replace(/\s+/g, '-'),
+            dep_code: entry.dep_code || targetCommune.dep_code,
+            dep_nom: entry.dep_nom || targetCommune.dep_nom,
+            alias_match: true,
+            alias_nom_affiche: displayName,
+            alias_commune_actuelle: entry.nom_commune_actuelle || targetCommune.nom_standard,
+            alias_target_code_insee: targetCode,
+            alias_old_code_insee: entry.ancien_code_insee || null,
+            normalized_name: normalizedName,
+            search_parts: searchParts,
+            soundex_parts: searchParts.map(part => soundex(part)),
+            alias_search_keys: searchKeys
+        };
+    };
+
+    const parseAliasPayload = (payload) => {
+        if (!payload) return [];
+
+        if (Array.isArray(payload.aliases)) {
+            return payload.aliases.map((entry) => buildAliasEntry(entry)).filter(Boolean);
+        }
+
+        if (payload.aliases && typeof payload.aliases === 'object') {
+            return Object.entries(payload.aliases)
+                .map(([key, value]) => {
+                    if (typeof value === 'string') {
+                        const targetCommune = communesByCodeInsee.get(String(value).trim());
+                        if (!targetCommune) return null;
+                        return buildAliasEntry({
+                            nom_affiche: key.replace(/-/g, ' '),
+                            code_insee: value,
+                            nom_commune_actuelle: targetCommune.nom_standard
+                        }, key);
+                    }
+                    return buildAliasEntry(value, key);
+                })
+                .filter(Boolean);
+        }
+
+        return [];
+    };
+
+    const storeAliases = (payload) => {
+        const aliases = parseAliasPayload(payload);
+        try {
+            localStorage.setItem(COMMUNES_ALIASES_CACHE_KEY, JSON.stringify({ aliases }));
+        } catch (_) {}
+        return aliases;
+    };
+
+    try {
+        const response = await fetchWithTimeout('./communes_aliases.json', { cache: 'no-cache' }, 5000);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return storeAliases(await response.json());
+    } catch (_) {
+        try {
+            const cachedData = localStorage.getItem(COMMUNES_ALIASES_CACHE_KEY);
+            if (cachedData) {
+                return parseAliasPayload(JSON.parse(cachedData));
+            }
+        } catch (_) {}
+
+        try {
+            const fallbackResponse = await fetchWithTimeout('./communes_aliases.json', { cache: 'force-cache' }, 3000);
+            if (!fallbackResponse.ok) throw new Error(`HTTP ${fallbackResponse.status}`);
+            return storeAliases(await fallbackResponse.json());
+        } catch (_) {
+            console.warn('Alias communes indisponibles: recherche principale conservée.');
+            return [];
+        }
+    }
+}
+
+function scoreCommuneSearchCandidate(candidate, searchWords) {
+    if (!candidate || !Array.isArray(searchWords) || !searchWords.length) return 999;
+
+    const parts = Array.isArray(candidate.search_parts) && candidate.search_parts.length
+        ? candidate.search_parts
+        : simplifyString(candidate.nom_standard).split(' ').filter(Boolean);
+
+    const soundexParts = Array.isArray(candidate.soundex_parts) && candidate.soundex_parts.length
+        ? candidate.soundex_parts
+        : parts.map(part => soundex(part));
+
+    let totalScore = 0;
+    let wordsFound = 0;
+
+    for (const word of searchWords) {
+        let bestWordScore = 999;
+        const wordSoundex = soundex(word);
+
+        for (let i = 0; i < parts.length; i++) {
+            const communePart = parts[i];
+            const communeSoundex = soundexParts[i];
+            let currentScore = 999;
+
+            if (communePart.startsWith(word)) {
+                currentScore = 0;
+            } else if (communeSoundex === wordSoundex) {
+                currentScore = 1;
+            } else {
+                const dist = levenshteinDistance(word, communePart);
+                if (dist <= Math.floor(word.length / 3) + 1) {
+                    currentScore = 2 + dist;
+                }
+            }
+
+            if (currentScore < bestWordScore) bestWordScore = currentScore;
+        }
+
+        if (bestWordScore < 999) {
+            wordsFound++;
+            totalScore += bestWordScore;
+        }
+    }
+
+    return wordsFound === searchWords.length ? totalScore : 999;
+}
+
+function searchAliasCommunes(searchWords, departmentFilter = null) {
+    if (!Array.isArray(communeAliases) || !communeAliases.length) return [];
+
+    return communeAliases
+        .filter(alias => !departmentFilter || alias.dep_code === departmentFilter)
+        .map(alias => {
+            const score = scoreCommuneSearchCandidate(alias, searchWords);
+            return { ...alias, score: score + 0.25 };
+        })
+        .filter(alias => alias.score < 999);
+}
+
 
 
 function applyMapNoBackgroundStyle() {
@@ -1076,28 +1365,23 @@ function setupEventListeners() {
         }
         const searchWords = simplifiedSearch.split(' ').filter(Boolean);
         const communesToSearch = departmentFilter ? allCommunes.filter(c => c.dep_code === departmentFilter) : allCommunes;
-        const scoredResults = communesToSearch.map(c => {
-            let totalScore = 0; let wordsFound = 0;
-            for (const word of searchWords) {
-                let bestWordScore = 999;
-                const wordSoundex = soundex(word);
-                for (let i = 0; i < c.search_parts.length; i++) {
-                    const communePart = c.search_parts[i];
-                    const communeSoundex = c.soundex_parts[i];
-                    let currentScore = 999;
-                    if (communePart.startsWith(word)) { currentScore = 0; }
-                    else if (communeSoundex === wordSoundex) { currentScore = 1; }
-                    else {
-                        const dist = levenshteinDistance(word, communePart);
-                        if (dist <= Math.floor(word.length / 3) + 1) { currentScore = 2 + dist; }
-                    }
-                    if (currentScore < bestWordScore) { bestWordScore = currentScore; }
-                }
-                if (bestWordScore < 999) { wordsFound++; totalScore += bestWordScore; }
+
+        const scoredResults = communesToSearch
+            .map(c => ({ ...c, score: scoreCommuneSearchCandidate(c, searchWords) }))
+            .filter(c => c.score < 999);
+
+        const aliasResults = searchAliasCommunes(searchWords, departmentFilter);
+        const seenResultKeys = new Set(scoredResults.map(c => `commune:${c.code_insee}:${simplifyString(c.nom_standard)}`));
+
+        aliasResults.forEach((alias) => {
+            const key = `alias:${alias.alias_target_code_insee}:${simplifyString(alias.nom_standard)}`;
+            const sameVisibleNameAlreadyPresent = seenResultKeys.has(`commune:${alias.code_insee}:${simplifyString(alias.nom_standard)}`);
+            if (!seenResultKeys.has(key) && !sameVisibleNameAlreadyPresent) {
+                seenResultKeys.add(key);
+                scoredResults.push(alias);
             }
-            const finalScore = (wordsFound === searchWords.length) ? totalScore : 999;
-            return { ...c, score: finalScore };
-        }).filter(c => c.score < 999);
+        });
+
         scoredResults.sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length);
         displayResults(scoredResults.slice(0, 10));
     });
@@ -1310,6 +1594,9 @@ function displayResults(results) {
         results.forEach(c => {
             const li = document.createElement('li');
             li.textContent = `${c.nom_standard} (${c.dep_nom} - ${c.dep_code})`;
+            if (c.alias_match && c.alias_commune_actuelle) {
+                li.title = `Rattachée à ${c.alias_commune_actuelle}`;
+            }
             li.addEventListener('click', () => {
                 currentCommune = c;
                 localStorage.setItem('currentCommune', JSON.stringify(c));
