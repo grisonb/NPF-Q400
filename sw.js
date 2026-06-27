@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-41-communes-aliases-fuzzy';
+const SW_VERSION = 'sw-v2026-42-search-input-fluidity';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
