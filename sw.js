@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-42-search-input-fluidity';
+const SW_VERSION = 'sw-v2026-43-kml-minimal-share-file-only';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
