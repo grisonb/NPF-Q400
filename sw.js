@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-43-kml-minimal-share-file-only';
+const SW_VERSION = 'sw-v2026-44-search-clear-button-fix';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
