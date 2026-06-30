@@ -3882,3 +3882,209 @@ body {
     box-shadow: none !important;
 }
 
+/* v12.02 — bouton Plan d'eau : 6 boutons en grille */
+#ui-overlay {
+    max-width: min(820px, calc(100vw - 24px)) !important;
+}
+
+.extra-controls,
+.extra-controls-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr)) !important;
+}
+
+#water-points-button.active {
+    background-color: var(--water-color);
+    border-color: var(--water-color);
+    color: white;
+}
+
+/* v12.02 — marqueurs et étiquettes des plans d'eau */
+.water-point-marker {
+    background: linear-gradient(180deg, #14b8ff 0%, #0077c8 100%) !important;
+    border: 2px solid #fff !important;
+    box-shadow: 0 2px 7px rgba(0, 75, 140, 0.45) !important;
+    color: white !important;
+    font-size: 17px !important;
+    line-height: 24px !important;
+    width: 28px !important;
+    height: 28px !important;
+}
+
+.leaflet-tooltip.water-point-tooltip {
+    background: rgba(232, 247, 255, 0.96);
+    border: 1px solid #0094d8;
+    border-radius: 6px;
+    color: #004b78;
+    box-shadow: 0 1px 5px rgba(0,0,0,.22);
+    padding: 4px 7px;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.1;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.leaflet-tooltip.water-point-tooltip::before {
+    border-right-color: #0094d8;
+}
+
+.water-point-label-name {
+    max-width: 130px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.water-point-label-distance {
+    font-size: 11px;
+    color: #005a9c;
+}
+
+@media (max-width: 760px) {
+    .extra-controls,
+    .extra-controls-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+    }
+}
+
+/* v12.03 — Plan d'eau : toutes les gouttes visibles, étiquettes seulement sur les 3 plus proches */
+.water-point-marker {
+    opacity: 0.88;
+}
+
+/* v12.04 — gouttes plans d'eau nettement réduites */
+.water-point-marker {
+    width: 16px !important;
+    height: 16px !important;
+    font-size: 10px !important;
+    line-height: 13px !important;
+    border-width: 1px !important;
+    box-shadow: 0 1px 4px rgba(0, 75, 140, 0.35) !important;
+    opacity: 0.82;
+}
+
+.leaflet-tooltip.water-point-tooltip {
+    font-size: 11px;
+    padding: 3px 6px;
+}
+
+/* v12.05 — plans d'eau : points bleus + goutte pour les 3 plus proches */
+.water-point-dot-marker {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.water-point-dot-marker span {
+    display: block;
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #0077c8;
+    border: 1px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(0, 75, 140, 0.35), 0 1px 3px rgba(0,0,0,.35);
+}
+
+.water-point-marker.water-point-marker-closest {
+    width: 22px !important;
+    height: 22px !important;
+    font-size: 14px !important;
+    line-height: 18px !important;
+    border-width: 1px !important;
+    opacity: 1 !important;
+    box-shadow: 0 1px 5px rgba(0, 75, 140, 0.45) !important;
+}
+
+.leaflet-tooltip.water-point-tooltip {
+    z-index: 700;
+}
+
+/* v12.06 — points bleus plans d'eau légèrement réduits */
+.water-point-dot-marker span {
+    width: 6px !important;
+    height: 6px !important;
+    box-shadow: 0 0 0 1px rgba(0, 75, 140, 0.32), 0 1px 2px rgba(0,0,0,.32) !important;
+}
+
+/* v12.07 — étiquettes plans d'eau : répartition anti-chevauchement */
+.leaflet-tooltip.water-point-tooltip {
+    max-width: 125px;
+}
+
+.leaflet-tooltip.water-point-tooltip-1 {
+    transform: translate(-50%, -100%) translateY(-12px);
+}
+
+.leaflet-tooltip.water-point-tooltip-2 {
+    transform: translateX(14px) translateY(-4px);
+}
+
+.leaflet-tooltip.water-point-tooltip-3 {
+    transform: translate(-50%, 12px);
+}
+
+/* v12.08 — plans d'eau : retour étiquettes à droite + points proches légèrement agrandis */
+.water-point-dot-marker {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.water-point-dot-marker span {
+    display: block;
+    margin: 5px auto 0 auto;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: #0077c8;
+    border: 1px solid #ffffff;
+    box-shadow: 0 0 0 1px rgba(0, 75, 140, 0.35), 0 1px 3px rgba(0,0,0,.35);
+}
+
+.water-point-dot-marker.water-point-dot-marker-closest span {
+    margin-top: 5px;
+    width: 8px !important;
+    height: 8px !important;
+    background: #0094e8;
+    box-shadow: 0 0 0 1px rgba(0, 75, 140, 0.45), 0 1px 4px rgba(0,0,0,.38);
+}
+
+/* neutralisation de la répartition v12.07 */
+.leaflet-tooltip.water-point-tooltip-1,
+.leaflet-tooltip.water-point-tooltip-2,
+.leaflet-tooltip.water-point-tooltip-3 {
+    transform: none !important;
+}
+
+/* v12.08 — points noirs aéroports : blanc + liseré noir, comme les points bleus */
+.permanent-airport-marker,
+.custom-marker-icon.permanent-airport-marker,
+.airport-black-dot,
+.custom-marker-icon.airport-black-dot {
+    background: #111 !important;
+    border: 1px solid #fff !important;
+    border-radius: 50% !important;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.55), 0 1px 3px rgba(0,0,0,.35) !important;
+}
+
+/* v12.09 — correction réelle des points noirs aéroports */
+.permanent-airport-black-dot-icon {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.permanent-airport-black-dot-icon span,
+.permanent-airport-black-dot-icon div,
+.permanent-airport-black-dot-visual {
+    display: block !important;
+    width: 7px !important;
+    height: 7px !important;
+    border-radius: 50% !important;
+    background: #111 !important;
+    border: 1px solid #fff !important;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.65), 0 1px 3px rgba(0,0,0,.35) !important;
+    box-sizing: border-box !important;
+}
+
+/* v12.10 — points noirs aéroports : rendu corrigé côté JS circleMarker */
+
