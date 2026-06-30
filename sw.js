@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-45-close-right-gps-label-above';
+const SW_VERSION = 'sw-v2026-46-airport-ring-real-circlemarker';
 
 const DB_NAME = 'OfflineTilesDB';
 const DB_VERSION = 3;
