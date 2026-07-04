@@ -121,6 +121,33 @@ document.addEventListener('DOMContentLoaded', () => {
     }, 9000);
 })();
 
+
+// v12.22 — reprise iPad plus progressive après veille.
+(function setupNpfFastResumeAfterWake() {
+    const invalidateDelays = [80, 250, 600, 1200, 2200];
+
+    const refreshMapAfterWake = () => {
+        invalidateDelays.forEach(delay => {
+            setTimeout(() => {
+                try {
+                    if (typeof map !== 'undefined' && map && typeof map.invalidateSize === 'function') {
+                        map.invalidateSize(true);
+                    }
+                    if (typeof baseTileLayer !== 'undefined' && map && baseTileLayer) {
+                        baseTileLayer.redraw();
+                    }
+                } catch (_) {}
+            }, delay);
+        });
+    };
+
+    window.addEventListener('focus', refreshMapAfterWake);
+    document.addEventListener('visibilitychange', () => {
+        if (!document.hidden) refreshMapAfterWake();
+    });
+    window.addEventListener('pageshow', refreshMapAfterWake);
+})();
+
 // =========================================================================
 // VARIABLES GLOBALES
 // =========================================================================
@@ -131,10 +158,12 @@ let disabledAirports = new Set(), waterAirports = new Set(), customPelicanAirpor
 const MAGNETIC_DECLINATION = 1.0;
 let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
 let ownGpsVectorLayer = null, ownGpsVectorMarkers = [];
-let userToTargetLayer = null, lftwRouteLayer = null;
+let userToTargetLayer = null, lftwRouteLayer = null, fireHistoryLayer = null;
 let showLftwRoute = true;
 let departmentsLayerGroup = null;
 let departmentsLabelsLayer = null;
+let highVoltageLinesLayer = null;
+let highVoltageLinesRenderer = null;
 let areDepartmentsVisible = false;
 let hasLoadedDepartments = false;
 let communesLayerGroup = null;
@@ -153,6 +182,7 @@ let isDrawingMode = false;
 const manualCircuitColors = ['#ff00ff', '#00ffff', '#ff8c00', '#00ff00', '#ff1493'];
 let gaarLayer = null;
 let db; // Variable pour la connexion à la base de données IndexedDB
+const OFFLINE_DB_NAME = 'OfflineTilesDB_v12_21';
 const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
 const DEFAULT_OFFLINE_TILES_ENABLED = true;
 const MAP_SOURCE_MODE_KEY = 'mapSourceMode';
@@ -170,6 +200,11 @@ const AIRPORT_PDF_DB_VERSION = 1;
 let airportPdfDb = null;
 const WATER_POINTS_LAYER_KEY = 'showWaterPointsLayer';
 let showWaterPointsLayer = localStorage.getItem(WATER_POINTS_LAYER_KEY) === 'true';
+const HIGH_VOLTAGE_LINES_LAYER_KEY = 'showHighVoltageLinesLayer';
+const HIGH_VOLTAGE_LINES_GEOJSON_URL = 'lignes_ht_rte_simplifiees.geojson';
+let showHighVoltageLinesLayer = localStorage.getItem(HIGH_VOLTAGE_LINES_LAYER_KEY) === 'true';
+let hasLoadedHighVoltageLines = false;
+let isHighVoltageLinesLoading = false;
 const FIRE_HISTORY_STORAGE_KEY = 'fireHistoryV1';
 const FIRE_HISTORY_MAX_ITEMS = 20;
 const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('force_display') === '1';
@@ -190,6 +225,14 @@ let offlineOnlineFallbackMode = DEFAULT_OFFLINE_ONLINE_FALLBACK;
 let activeOfflinePacks = [];
 let isMapSourceSwitching = false;
 let isZipImportRunning = false;
+const STARTUP_GPS_CENTER_ZOOM = 10;
+let startupGpsAutoCenteredWithRealPosition = false;
+let startupGpsStoredCenterAppliedAt = 0;
+
+// v12.22 — sécurité : un import interrompu ne doit pas bloquer les suppressions suivantes.
+try {
+    sessionStorage.removeItem('npfZipImportRunning');
+} catch (_) {}
 const CHAT_STORAGE_KEY = 'teamChatConfig';
 const CHAT_HISTORY_KEY = 'teamChatHistory';
 let chatClient = null;
@@ -284,7 +327,7 @@ const withTimeout = (promise, timeoutMs, timeoutMessage) => new Promise((resolve
     );
 });
 
-const TILE_CACHE_PREFIX = 'test-communes-tile-cache-';
+const TILE_CACHE_PREFIX = 'npf-q400-communes-tile-cache-';
 
 
 function buildStoredTileKey(tileUrl, packName) {
@@ -441,6 +484,28 @@ function getFireHistory() {
     }
 }
 
+function getFireHistoryItemKey(item) {
+    const normalized = normalizeHistoryCommune(item);
+    if (!normalized) return '';
+    return [
+        simplifyString(normalized.nom_standard || ''),
+        normalized.dep_code || '',
+        Number(normalized.latitude_mairie).toFixed(5),
+        Number(normalized.longitude_mairie).toFixed(5)
+    ].join('|');
+}
+
+function deleteFireHistoryItemByCommune(item) {
+    const targetKey = getFireHistoryItemKey(item);
+    if (!targetKey) return;
+
+    const nextHistory = getFireHistory().filter(entry => getFireHistoryItemKey(entry) !== targetKey);
+    localStorage.setItem(FIRE_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
+    displayFireHistory();
+    drawFireHistoryMarkers();
+}
+
+
 function saveFireHistory(commune) {
     const normalized = normalizeHistoryCommune(commune);
     if (!normalized) return;
@@ -461,9 +526,141 @@ function saveFireHistory(commune) {
 
     try {
         localStorage.setItem(FIRE_HISTORY_STORAGE_KEY, JSON.stringify(nextHistory));
+        drawFireHistoryMarkers();
     } catch (error) {
         console.warn('Impossible de mémoriser le feu:', error);
     }
+}
+
+function buildFireDisplayName(item) {
+    const normalized = normalizeHistoryCommune(item) || item || {};
+    const name = normalized.dep_code
+        ? `${normalized.nom_standard || normalized.name || 'Feu'} (${normalized.dep_code})`
+        : (normalized.nom_standard || normalized.name || 'Feu');
+    return String(name || 'Feu');
+}
+
+function buildFireMapIcon(label, markerClassName = 'fire-history-map-marker') {
+    /*
+     * v12.51 — retour à l'étiquette Leaflet au-dessus du feu.
+     * La flamme reste dans une zone tactile 34 px ; le nom du feu est affiché
+     * par tooltip permanent, avec la petite flèche Leaflet, mais rapproché de
+     * l'icône par tooltipAnchor + offset.
+     */
+    return L.divIcon({
+        className: `${markerClassName} fire-touch-hitbox`,
+        html: `<span class="fire-marker-glyph">🔥</span>`,
+        iconSize: [34, 34],
+        iconAnchor: [17, 17],
+        popupAnchor: [0, -16],
+        tooltipAnchor: [0, -10]
+    });
+}
+
+function bindFireMapTooltip(marker, label, isActive = false) {
+    if (!marker) return marker;
+
+    marker.bindTooltip(escapeHtml(label || 'Feu'), {
+        permanent: true,
+        direction: 'top',
+        offset: [0, -2],
+        opacity: 1,
+        className: `fire-history-map-tooltip-permanent${isActive ? ' fire-active-map-tooltip' : ''}`
+    });
+
+    return marker;
+}
+
+function buildFireHistoryIcon(label = 'Feu') {
+    return buildFireMapIcon(label, 'fire-history-map-marker');
+}
+
+function buildActiveFireIcon(label = 'Feu') {
+    return buildFireMapIcon(label, 'active-fire-map-marker');
+}
+
+function selectFireFromHistoryMap(item) {
+    const normalized = normalizeHistoryCommune(item);
+    if (!normalized) return;
+
+    currentCommune = normalized;
+    localStorage.setItem('currentCommune', JSON.stringify(normalized));
+    displayCommuneDetails(normalized, false);
+
+    if (map && Number.isFinite(Number(normalized.latitude_mairie)) && Number.isFinite(Number(normalized.longitude_mairie))) {
+        map.panTo([Number(normalized.latitude_mairie), Number(normalized.longitude_mairie)]);
+    }
+}
+
+function drawFireHistoryMarkers() {
+    if (!map || !fireHistoryLayer) return;
+
+    fireHistoryLayer.clearLayers();
+
+    const history = getFireHistory();
+    const currentLat = currentCommune ? Number(currentCommune.latitude_mairie) : null;
+    const currentLon = currentCommune ? Number(currentCommune.longitude_mairie) : null;
+
+    history.forEach((item) => {
+        const lat = Number(item.latitude_mairie);
+        const lon = Number(item.longitude_mairie);
+        if (!Number.isFinite(lat) || !Number.isFinite(lon)) return;
+
+        /*
+         * Le feu actuellement sélectionné est déjà dessiné dans routesLayer.
+         * On évite donc de superposer deux flammes au même endroit.
+         */
+        if (
+            Number.isFinite(currentLat)
+            && Number.isFinite(currentLon)
+            && Math.abs(lat - currentLat) < 0.00001
+            && Math.abs(lon - currentLon) < 0.00001
+        ) {
+            return;
+        }
+
+        const name = buildFireDisplayName(item);
+
+        const marker = L.marker([lat, lon], {
+            icon: buildFireHistoryIcon(name),
+            title: name,
+            keyboard: false
+        });
+        bindFireMapTooltip(marker, name, false);
+
+        marker.bindPopup(() => {
+            const container = document.createElement('div');
+            container.className = 'fire-history-map-popup';
+            container.innerHTML = `<b>${escapeHtml(name)}</b><br>${convertToDMM(lat, 'lat')}<br>${convertToDMM(lon, 'lon')}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'fire-history-map-popup-actions';
+
+            const selectButton = document.createElement('button');
+            selectButton.type = 'button';
+            selectButton.textContent = 'Sélectionner';
+            selectButton.className = 'fire-history-map-select-btn';
+            selectButton.addEventListener('click', () => {
+                selectFireFromHistoryMap(item);
+                try { map.closePopup(); } catch (_) {}
+            });
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.textContent = 'Supprimer';
+            deleteButton.className = 'fire-history-map-delete-btn';
+            deleteButton.addEventListener('click', () => {
+                deleteFireHistoryItemByCommune(item);
+                try { map.closePopup(); } catch (_) {}
+            });
+
+            actions.appendChild(selectButton);
+            actions.appendChild(deleteButton);
+            container.appendChild(actions);
+            return container;
+        });
+        marker.addTo(fireHistoryLayer);
+    });
 }
 
 function clearFireHistory() {
@@ -472,6 +669,7 @@ function clearFireHistory() {
     } catch (_) {}
 
     displayFireHistory();
+    drawFireHistoryMarkers();
 }
 
 function displayFireHistory() {
@@ -540,11 +738,15 @@ window.deleteFireHistoryItem = function(index) {
     history.splice(index, 1);
     localStorage.setItem(FIRE_HISTORY_STORAGE_KEY, JSON.stringify(history));
     displayFireHistory();
+    drawFireHistoryMarkers();
 };
+
+window.deleteFireHistoryItemByCommune = deleteFireHistoryItemByCommune;
 
 window.clearFireHistory = function() {
     if (!confirm('Effacer tous les derniers feux mémorisés ?')) return;
     localStorage.removeItem(FIRE_HISTORY_STORAGE_KEY);
+    drawFireHistoryMarkers();
 
     const resultsList = document.getElementById('results-list');
     if (resultsList) {
@@ -826,6 +1028,25 @@ async function initializeApp() {
         currentCommune = JSON.parse(savedCommuneJSON);
         displayCommuneDetails(currentCommune, true);
     }
+
+    setTimeout(() => {
+        if (!startupGpsAutoCenteredWithRealPosition) {
+            applyStoredGpsStartupCenter({ force: true });
+        }
+    }, 750);
+
+    /*
+     * v12.13 — restauration plans d'eau au démarrage.
+     * Si le bouton Plan d'eau était actif avant fermeture, les points doivent
+     * réapparaître sans devoir désélectionner/résélectionner le bouton.
+     */
+    setTimeout(() => {
+        try {
+            refreshWaterPointsButtonState();
+            drawWaterPointMarkersForCommune(currentCommune);
+        } catch (_) {}
+    }, 250);
+
     if (communesLoadError) {
         setTimeout(() => {
             alert("Mode dégradé: base communes indisponible au démarrage. La carte reste utilisable, réessayez avec réseau pour la recherche commune.");
@@ -1173,22 +1394,37 @@ function initMap() {
     map.on('zoomend', enforceOfflineZoomLimit);
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
     applyMapNoBackgroundStyle();
+
+    if (map.createPane && !map.getPane('highVoltageLinesPane')) {
+        map.createPane('highVoltageLinesPane');
+        const htPane = map.getPane('highVoltageLinesPane');
+        if (htPane) htPane.style.zIndex = '385';
+    }
+    highVoltageLinesRenderer = L.canvas ? L.canvas({ padding: 0.35 }) : null;
+
     setupBaseTileLayer();
     permanentAirportLayer = L.layerGroup().addTo(map);
     routesLayer = L.layerGroup().addTo(map);
+    fireHistoryLayer = L.layerGroup().addTo(map);
     waterPointsLayer = L.layerGroup().addTo(map);
     userToTargetLayer = L.layerGroup().addTo(map);
     lftwRouteLayer = L.layerGroup().addTo(map);
     gaarLayer = L.layerGroup().addTo(map);
     departmentsLayerGroup = L.layerGroup();
     departmentsLabelsLayer = L.layerGroup();
+    highVoltageLinesLayer = L.layerGroup();
     communesLayerGroup = L.layerGroup();
     communesLabelsLayer = L.layerGroup();
     drawPermanentAirportMarkers();
+    drawFireHistoryMarkers();
     redrawGaarCircuits();
 
     if (areDepartmentsVisible) {
         setTimeout(() => { toggleDepartmentsLayer(true); }, 150);
+    }
+
+    if (showHighVoltageLinesLayer) {
+        setTimeout(() => { toggleHighVoltageLinesLayer(true); }, 350);
     }
 
     areCommunesVisible = localStorage.getItem(SHOW_COMMUNES_LAYER_KEY) === 'true';
@@ -1235,25 +1471,30 @@ function enforceOfflineZoomLimit() {
 
 function normalizeOfflineTileHostPrefix(packName) {
     /*
-     * v11.36 — affichage OACI rapide.
+     * v12.15 — host logique stable par groupe.
      *
-     * Le service worker recherche les tuiles via l'index tileUrl.
-     * Si OpenStreet et OACI utilisent tous les deux https://a.tile.../z/x/y.png,
-     * l'index contient plusieurs enregistrements pour le même tileUrl et Safari
-     * peut parcourir lentement les tuiles OpenStreet avant de trouver OACI.
+     * Un pack découpé en plusieurs ZIP doit utiliser le même host fictif :
+     * IGN_01 / IGN_02 / IGN_03 => ign.tile.openstreetmap.org
      *
-     * Solution : les petits packs comme OACI utilisent un sous-domaine fictif
-     * mais toujours intercepté par le service worker :
-     * https://oaci.tile.openstreetmap.org/z/x/y.png
-     *
-     * OpenStreet garde https://a.tile... car c'est la combinaison qui importe
-     * correctement les 900 Mo.
+     * Sinon Leaflet ne demande les tuiles que sur le host du premier pack actif,
+     * et IndexedDB doit chercher dans des clés incohérentes.
      */
     const raw = String(packName || '').trim();
-    const simplified = raw.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, '');
+    const groupName = typeof getOfflinePackGroupName === 'function'
+        ? getOfflinePackGroupName(raw)
+        : raw;
 
-    if (!raw || /open\s*street|openstreet|osm/.test(simplified)) {
+    const simplified = String(groupName || raw || '')
+        .toLowerCase()
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, '');
+
+    if (!simplified || /open\s*street|openstreet|\bosm\b/.test(simplified)) {
         return 'a';
+    }
+
+    if (/\bign\b|scan25|scan\s*25|oaci\s*ign/.test(simplified)) {
+        return 'ign';
     }
 
     if (/oaci|carte\s*oaci/.test(simplified)) {
@@ -1264,8 +1505,39 @@ function normalizeOfflineTileHostPrefix(packName) {
     return compact || 'pack';
 }
 
+
+function isOpenStreetOfflinePackName(packName) {
+    const simplified = String(packName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, '');
+    return /open\s*street|openstreet|\bosm\b/.test(simplified);
+}
+
+function isIgnOfflinePackName(packName) {
+    const simplified = String(packName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, '');
+    return /\bign\b|scan25|scan\s*25|oaci\s*ign/.test(simplified);
+}
+
+function isOaciOfflinePackName(packName) {
+    const simplified = String(packName || '').toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, '');
+    return /\boaci\b|carte\s*oaci/.test(simplified);
+}
+
 function buildOfflineTileUrlForPack(tilePath, packName, isLargeZip = false) {
-    const hostPrefix = isLargeZip ? 'a' : normalizeOfflineTileHostPrefix(packName);
+    /*
+     * v12.14 — correction IGN multi-ZIP.
+     *
+     * Avant, tous les gros ZIP forçaient le host "a.tile.openstreetmap.org".
+     * Résultat : OpenStreet et IGN pouvaient partager le même tileUrl z/x/y,
+     * ce qui ralentissait fortement la recherche et pouvait provoquer des collisions.
+     *
+     * Maintenant :
+     * - OpenStreet/OSM reste sur "a" ;
+     * - IGN obtient son propre host fictif "ign" ;
+     * - les autres packs gardent un host dérivé de leur nom.
+     *
+     * Le service worker intercepte *.tile.openstreetmap.org, donc ce host fictif
+     * sert seulement de clé logique locale.
+     */
+    const hostPrefix = normalizeOfflineTileHostPrefix(packName);
     return `https://${hostPrefix}.tile.openstreetmap.org/${tilePath}`;
 }
 
@@ -1345,6 +1617,7 @@ function clearCurrentSelection() {
     lftwRouteLayer.clearLayers();
     drawPermanentAirportMarkers();
     currentCommune = null;
+    drawFireHistoryMarkers();
     localStorage.removeItem('currentCommune');
     updateBaseLabels();
     updateCalculatorData();
@@ -1401,6 +1674,7 @@ function setupEventListeners() {
     const departmentsLayerButton = document.getElementById('departments-layer-button');
     const communesLayerButton = document.getElementById('communes-layer-button');
     const waterPointsButton = document.getElementById('water-points-button');
+    const highVoltageLinesButton = document.getElementById('high-voltage-lines-button');
     const offlineMapsButton = document.getElementById('offline-maps-button');
     const offlineMapModal = document.getElementById('offline-map-modal');
     const closeOfflineMapButton = document.getElementById('close-offline-map-btn');
@@ -1469,6 +1743,13 @@ function setupEventListeners() {
         waterPointsButton.classList.toggle('active', showWaterPointsLayer);
         waterPointsButton.addEventListener('click', () => {
             toggleWaterPointsLayer();
+        });
+    }
+
+    if (highVoltageLinesButton) {
+        refreshHighVoltageLinesButtonState();
+        highVoltageLinesButton.addEventListener('click', () => {
+            toggleHighVoltageLinesLayer();
         });
     }
 
@@ -1800,6 +2081,7 @@ function setupEventListeners() {
         });
     }
 
+    setupBaseOaciInputs();
     updateBaseLabels();
     updateLftwButtonState();
     updateGaarButtonState();
@@ -2141,6 +2423,143 @@ function toggleWaterPointsLayer(forceState = null) {
 }
 
 
+function getHighVoltageLineStyle(feature) {
+    const props = feature?.properties || {};
+    const tension = String(props.tension || '').toLowerCase();
+
+    let weight = 1.5;
+    let opacity = 0.72;
+    let dashArray = '5 4';
+
+    if (tension.includes('400')) {
+        weight = 3.0;
+        opacity = 0.86;
+        dashArray = null;
+    } else if (tension.includes('225')) {
+        weight = 2.4;
+        opacity = 0.82;
+        dashArray = null;
+    } else if (tension.includes('90')) {
+        weight = 1.9;
+        opacity = 0.78;
+        dashArray = '7 4';
+    } else if (tension.includes('63')) {
+        weight = 1.6;
+        opacity = 0.70;
+        dashArray = '4 4';
+    }
+
+    return {
+        color: '#d8232a',
+        weight,
+        opacity,
+        dashArray,
+        lineCap: 'round',
+        lineJoin: 'round',
+        interactive: false,
+        pane: 'highVoltageLinesPane'
+    };
+}
+
+function refreshHighVoltageLinesButtonState() {
+    const button = document.getElementById('high-voltage-lines-button');
+    if (!button) return;
+
+    button.classList.toggle('active', showHighVoltageLinesLayer);
+    button.classList.toggle('loading', isHighVoltageLinesLoading);
+    button.disabled = isHighVoltageLinesLoading;
+    button.title = isHighVoltageLinesLoading
+        ? 'Chargement des lignes haute tension RTE…'
+        : 'Afficher/Masquer les lignes haute tension RTE';
+}
+
+async function fetchHighVoltageLinesGeojson() {
+    const url = `${HIGH_VOLTAGE_LINES_GEOJSON_URL}?appv=${encodeURIComponent(window.APP_VERSION || 'v2026.47')}`;
+    let response = null;
+
+    try {
+        if ('caches' in window) {
+            const cached = await caches.match(HIGH_VOLTAGE_LINES_GEOJSON_URL, { ignoreSearch: true });
+            if (cached && cached.ok) response = cached;
+        }
+    } catch (_) {}
+
+    if (!response) {
+        response = await fetch(url, { cache: 'force-cache' });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+        try {
+            if ('caches' in window) {
+                const cache = await caches.open(`npf-q400-lignes-ht-${window.APP_VERSION || 'v2026.47'}`);
+                await cache.put(HIGH_VOLTAGE_LINES_GEOJSON_URL, response.clone());
+            }
+        } catch (cacheError) {
+            console.warn('Cache lignes HT impossible:', cacheError);
+        }
+    }
+
+    return await response.json();
+}
+
+async function loadHighVoltageLinesLayerData() {
+    if (!map || !highVoltageLinesLayer) return;
+    if (hasLoadedHighVoltageLines) return;
+
+    isHighVoltageLinesLoading = true;
+    refreshHighVoltageLinesButtonState();
+
+    try {
+        const geojson = await fetchHighVoltageLinesGeojson();
+        const featuresCount = Array.isArray(geojson?.features) ? geojson.features.length : 0;
+
+        const geoJsonLayer = L.geoJSON(geojson, {
+            style: getHighVoltageLineStyle,
+            pane: 'highVoltageLinesPane',
+            renderer: highVoltageLinesRenderer || undefined,
+            interactive: false,
+            filter: feature => !!feature?.geometry
+        });
+
+        geoJsonLayer.addTo(highVoltageLinesLayer);
+        hasLoadedHighVoltageLines = true;
+        console.log(`Lignes HT chargées: ${featuresCount} tronçons`);
+    } finally {
+        isHighVoltageLinesLoading = false;
+        refreshHighVoltageLinesButtonState();
+    }
+}
+
+async function toggleHighVoltageLinesLayer(forceState = null) {
+    const shouldShow = forceState === null ? !showHighVoltageLinesLayer : Boolean(forceState);
+
+    if (shouldShow && !hasLoadedHighVoltageLines) {
+        try {
+            await loadHighVoltageLinesLayerData();
+        } catch (error) {
+            console.error('Erreur de chargement du calque lignes HT:', error);
+            alert("Impossible de charger le calque Lignes HT. Vérifiez que le fichier lignes_ht_rte_simplifiees.geojson est bien présent à la racine du dépôt et que l'application a été mise à jour.");
+            showHighVoltageLinesLayer = false;
+            localStorage.setItem(HIGH_VOLTAGE_LINES_LAYER_KEY, 'false');
+            refreshHighVoltageLinesButtonState();
+            return;
+        }
+    }
+
+    showHighVoltageLinesLayer = shouldShow;
+
+    if (showHighVoltageLinesLayer) {
+        if (highVoltageLinesLayer && !map.hasLayer(highVoltageLinesLayer)) {
+            highVoltageLinesLayer.addTo(map);
+        }
+    } else if (highVoltageLinesLayer && map.hasLayer(highVoltageLinesLayer)) {
+        map.removeLayer(highVoltageLinesLayer);
+    }
+
+    localStorage.setItem(HIGH_VOLTAGE_LINES_LAYER_KEY, String(showHighVoltageLinesLayer));
+    refreshHighVoltageLinesButtonState();
+}
+
+
 function updateMapBingoDisplay() {
     const bingoDisplay = document.getElementById('bingo-map-display');
     if (!currentCommune) {
@@ -2172,6 +2591,7 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
     lftwRouteLayer.clearLayers();
     resetRouteTooltipOffsets();
     drawPermanentAirportMarkers();
+    drawFireHistoryMarkers();
 
     updateCommuneDisplay(commune);
 
@@ -2181,8 +2601,35 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
     document.getElementById('clear-search').style.display = 'block';
 
     const allPoints = [[lat, lon]];
-    const fireIcon = L.divIcon({ className: 'custom-marker-icon fire-marker', html: '🔥' });
-    L.marker([lat, lon], { icon: fireIcon }).bindPopup(`<b>${name}</b><br>${convertToDMM(lat, 'lat')}<br>${convertToDMM(lon, 'lon')}`).addTo(routesLayer);
+    const fireLabel = buildFireDisplayName(commune);
+    const fireIcon = buildActiveFireIcon(fireLabel);
+    const activeFireMarker = L.marker([lat, lon], { icon: fireIcon, title: fireLabel, keyboard: false });
+    bindFireMapTooltip(activeFireMarker, fireLabel, true);
+    activeFireMarker
+        .bindPopup(() => {
+            const container = document.createElement('div');
+            container.className = 'fire-history-map-popup active-fire-map-popup';
+            container.innerHTML = `<b>${escapeHtml(fireLabel)}</b><br>${convertToDMM(lat, 'lat')}<br>${convertToDMM(lon, 'lon')}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'fire-history-map-popup-actions';
+
+            const deleteButton = document.createElement('button');
+            deleteButton.type = 'button';
+            deleteButton.textContent = 'Supprimer';
+            deleteButton.className = 'fire-history-map-delete-btn';
+            deleteButton.title = 'Supprimer ce feu de la carte et de l’historique';
+            deleteButton.addEventListener('click', () => {
+                deleteFireHistoryItemByCommune(commune);
+                clearCurrentSelection();
+                try { map.closePopup(); } catch (_) {}
+            });
+
+            actions.appendChild(deleteButton);
+            container.appendChild(actions);
+            return container;
+        })
+        .addTo(routesLayer);
 
     const numAirports = parseInt(document.getElementById('airport-count').value, 10);
     const closestAirports = getClosestAirports(lat, lon, numAirports);
@@ -2297,6 +2744,101 @@ function getClosestAirports(lat, lon, count) { const customPelican = otherAirpor
 function getAirportByOaci(oaci) {
     return [...pelicanAirports, ...otherAirports].find(ap => ap.oaci === oaci) || null;
 }
+
+function normalizeOaciCodeInput(value) {
+    return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+}
+
+function updateBaseOaciInputs() {
+    const inputs = [
+        document.getElementById('base-oaci-input'),
+        document.getElementById('previ-base-oaci-input')
+    ].filter(Boolean);
+
+    inputs.forEach(input => {
+        if (document.activeElement !== input) {
+            input.value = selectedBaseOACI;
+        }
+        input.classList.remove('base-oaci-invalid');
+        input.title = `Base actuelle : ${selectedBaseOACI}`;
+    });
+}
+
+function applyBaseOaciFromInput(input, { silent = false } = {}) {
+    if (!input) return false;
+
+    const requestedOaci = normalizeOaciCodeInput(input.value);
+    input.value = requestedOaci;
+
+    if (!requestedOaci || requestedOaci.length !== 4) {
+        input.classList.add('base-oaci-invalid');
+        if (!silent) alert('Code OACI base incomplet. Exemple : LFTW.');
+        updateBaseOaciInputs();
+        return false;
+    }
+
+    const airport = getAirportByOaci(requestedOaci);
+    if (!airport) {
+        input.classList.add('base-oaci-invalid');
+        if (!silent) alert(`Base ${requestedOaci} inconnue dans la base terrains.`);
+        updateBaseOaciInputs();
+        return false;
+    }
+
+    selectedBaseOACI = requestedOaci;
+    saveState();
+    updateBaseLabels();
+    updateCalculatorData();
+    if (typeof window.updateBaseSunsetDisplay === 'function') {
+        window.updateBaseSunsetDisplay();
+    }
+    refreshUI();
+    return true;
+}
+
+function setupBaseOaciInputs() {
+    const inputs = [
+        document.getElementById('base-oaci-input'),
+        document.getElementById('previ-base-oaci-input')
+    ].filter(Boolean);
+
+    inputs.forEach(input => {
+        if (input.dataset.baseOaciBound === '1') return;
+        input.dataset.baseOaciBound = '1';
+
+        input.addEventListener('input', () => {
+            input.value = normalizeOaciCodeInput(input.value);
+            input.classList.remove('base-oaci-invalid');
+        });
+
+        input.addEventListener('change', () => {
+            applyBaseOaciFromInput(input);
+        });
+
+        input.addEventListener('blur', () => {
+            if (normalizeOaciCodeInput(input.value) !== selectedBaseOACI) {
+                applyBaseOaciFromInput(input);
+            } else {
+                updateBaseOaciInputs();
+            }
+        });
+
+        input.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                applyBaseOaciFromInput(input);
+                input.blur();
+            } else if (event.key === 'Escape') {
+                input.value = selectedBaseOACI;
+                input.classList.remove('base-oaci-invalid');
+                input.blur();
+            }
+        });
+    });
+
+    updateBaseOaciInputs();
+}
+
 function updateBaseLabels() {
     const routeButton = document.getElementById('lftw-route-button');
     if (routeButton) {
@@ -2304,9 +2846,10 @@ function updateBaseLabels() {
         routeButton.title = `Afficher/Masquer la route vers la base ${selectedBaseOACI}`;
     }
     const csBaseLabel = document.getElementById('cs-base-label');
-    if (csBaseLabel) csBaseLabel.textContent = `CS BASE (${selectedBaseOACI})`;
+    if (csBaseLabel) csBaseLabel.textContent = 'Base';
     const previCsBaseLabel = document.getElementById('previ-cs-base-label');
-    if (previCsBaseLabel) previCsBaseLabel.textContent = `CS BASE (${selectedBaseOACI})`;
+    if (previCsBaseLabel) previCsBaseLabel.textContent = 'Base';
+    updateBaseOaciInputs();
     document.querySelectorAll('.base-bingo-label').forEach(el => {
         el.textContent = 'BINGO BASE';
     });
@@ -2558,7 +3101,7 @@ function drawPermanentAirportMarkers() {
             const waterButtonClass = isWater ? "water-btn water-btn-retardant" : "water-btn";
             const disableButtonText = isDisabled ? "Activer" : "Désactiver";
             const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
-            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML }) });
+            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] }) });
             marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div></div>`);
             marker.addTo(permanentAirportLayer);
             return;
@@ -2608,7 +3151,7 @@ function drawPermanentAirportMarkers() {
         const isWater = waterAirports.has(airport.oaci);
         let iconClass = "custom-marker-icon airport-marker-base ", iconHTML = "✈️";
         isDisabled ? (iconClass += "airport-marker-disabled", iconHTML = "<b>+</b>") : isWater ? (iconClass += "airport-marker-water", iconHTML = "💧") : iconClass += "airport-marker-active";
-        const icon = L.divIcon({ className: iconClass, html: iconHTML });
+        const icon = L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] });
         const marker = L.marker([airport.lat, airport.lon], { icon: icon });
         const disableButtonText = isDisabled ? "Activer" : "Désactiver";
         const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
@@ -2731,9 +3274,38 @@ function updateDepartmentsLayerAppearance() {
 
 async function loadDepartmentsLayerData() {
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
-    const response = await fetch(DEPARTMENTS_GEOJSON_URL, { cache: 'force-cache' });
-    if (!response.ok) {
-        throw new Error(`HTTP ${response.status}`);
+    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v12-38';
+    let response = null;
+
+    /*
+     * v12.38 — consolidation offline :
+     * - on tente d'abord le cache applicatif/Cache Storage ;
+     * - si absent, on télécharge et on stocke explicitement ;
+     * - si hors ligne et jamais préchargé, le calque reste impossible.
+     */
+    try {
+        if ('caches' in window) {
+            const cached = await caches.match(DEPARTMENTS_GEOJSON_URL, { ignoreSearch: true });
+            if (cached && cached.ok) {
+                response = cached;
+            }
+        }
+    } catch (_) {}
+
+    if (!response) {
+        response = await fetch(DEPARTMENTS_GEOJSON_URL, { cache: 'force-cache' });
+        if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+        }
+
+        try {
+            if ('caches' in window) {
+                const cache = await caches.open(DEPARTMENTS_CACHE_NAME);
+                await cache.put(DEPARTMENTS_GEOJSON_URL, response.clone());
+            }
+        } catch (cacheError) {
+            console.warn('Cache départements impossible:', cacheError);
+        }
     }
 
     const departmentsGeojson = await response.json();
@@ -2767,7 +3339,7 @@ async function toggleDepartmentsLayer(shouldShow) {
             await loadDepartmentsLayerData();
         } catch (error) {
             console.error('Erreur de chargement du calque départements:', error);
-            alert("Impossible de générer le calque des départements.");
+            alert("Impossible de générer le calque des départements. Si l'appareil est hors ligne, il faut que le calque ait été préchargé au moins une fois après la mise à jour.");
             areDepartmentsVisible = false;
             localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
             if (departmentsLayerButton) departmentsLayerButton.classList.remove('active');
@@ -3256,8 +3828,9 @@ window.toggleCustomPelican = oaci => {
     refreshUI();
 };
 window.setBaseAirport = oaci => {
-    if (!getAirportByOaci(oaci)) return;
-    selectedBaseOACI = oaci;
+    const normalizedOaci = normalizeOaciCodeInput(oaci);
+    if (!getAirportByOaci(normalizedOaci)) return;
+    selectedBaseOACI = normalizedOaci;
     saveState();
     updateBaseLabels();
     updateCalculatorData();
@@ -3289,6 +3862,53 @@ function saveStoredGpsPosition(lat, lng, timestamp = Date.now()) {
     } catch (_) {}
 }
 
+function getStartupGpsCenterZoom() {
+    if (!map) return STARTUP_GPS_CENTER_ZOOM;
+
+    const minZoom = typeof map.getMinZoom === 'function' ? map.getMinZoom() : GLOBAL_MIN_ZOOM;
+    const maxZoom = typeof map.getMaxZoom === 'function' ? map.getMaxZoom() : GLOBAL_MAX_ZOOM;
+
+    return Math.max(
+        minZoom,
+        Math.min(maxZoom, STARTUP_GPS_CENTER_ZOOM)
+    );
+}
+
+function applyStartupGpsAutoCenter(lat, lng, { source = 'real', force = false } = {}) {
+    /*
+     * v2026.47 — version pérenne basée sur v12.54, ouverture centrée GPS.
+     * Objectif : ouvrir la carte sur la position GPS avec un zoom large,
+     * sans suivre ensuite l'utilisateur en permanence.
+     * - position stockée : recentrage provisoire rapide ;
+     * - position GPS réelle : recentrage prioritaire une seule fois au lancement.
+     */
+    if (!map) return false;
+
+    const numericLat = Number(lat);
+    const numericLng = Number(lng);
+    if (!Number.isFinite(numericLat) || !Number.isFinite(numericLng)) return false;
+
+    const isRealPosition = source !== 'stored';
+
+    if (isRealPosition) {
+        if (startupGpsAutoCenteredWithRealPosition && !force) return false;
+        startupGpsAutoCenteredWithRealPosition = true;
+    } else {
+        if (startupGpsAutoCenteredWithRealPosition) return false;
+        if (startupGpsStoredCenterAppliedAt && !force) return false;
+        startupGpsStoredCenterAppliedAt = Date.now();
+    }
+
+    map.setView([numericLat, numericLng], getStartupGpsCenterZoom(), { animate: false });
+    return true;
+}
+
+function applyStoredGpsStartupCenter({ force = false } = {}) {
+    const stored = getStoredGpsPosition();
+    if (!stored) return false;
+    return applyStartupGpsAutoCenter(stored.lat, stored.lng, { source: 'stored', force });
+}
+
 function primeGpsFromStoredPosition() {
     if (userMarker || !map) return false;
     const stored = getStoredGpsPosition();
@@ -3303,7 +3923,8 @@ function primeGpsFromStoredPosition() {
             speed: null,
             accuracy: null
         },
-        timestamp: stored.timestamp || Date.now()
+        timestamp: stored.timestamp || Date.now(),
+        npfIsStoredPosition: true
     };
 
     updateUserPosition(fakePosition);
@@ -3774,19 +4395,28 @@ function buildOwnGpsIcon(altitudeLabel = '--- ft') {
     const safeAltitude = escapeHtml(altitudeLabel || '--- ft');
 
     return L.divIcon({
-        /*
-         * Classe volontairement indépendante de custom-marker-icon / own-gps-marker :
-         * ces anciennes classes ajoutaient une grosse bulle blanche autour du marqueur.
-         */
-        className: 'own-gps-altitude-marker',
-        html: `<div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
-                <div style="background:#ffffff;border:1px solid #7c3aed;border-radius:8px;padding:3px 6px;font-size:11px;line-height:1.15;font-weight:700;color:#111;box-shadow:0 1px 5px rgba(0,0,0,.25);white-space:nowrap;text-align:center;min-width:42px;">${safeAltitude}</div>
-                <div style="width:16px;height:16px;border-radius:50%;background:#7c3aed;border:2px solid #fff;box-shadow:0 0 0 2px rgba(124,58,237,.35),0 1px 5px rgba(0,0,0,.45);"></div>
-            </div>`,
-        iconSize: [74, 52],
-        iconAnchor: [37, 47]
+        className: 'own-gps-altitude-marker own-gps-plane-icon',
+        html: `<div class="own-gps-plane-altitude">${safeAltitude}</div>
+               <div class="own-gps-plane-body"><span class="own-gps-plane-shape">✈</span></div>`,
+        iconSize: [74, 58],
+        iconAnchor: [37, 38]
     });
 }
+
+function applyOwnGpsPlaneHeading(courseDegrees) {
+    if (!userMarker || !Number.isFinite(courseDegrees)) return;
+    const element = userMarker.getElement && userMarker.getElement();
+    const plane = element ? element.querySelector('.own-gps-plane-body') : null;
+    if (!plane) return;
+
+    /*
+     * Le symbole ✈ pointe visuellement vers le NE dans la police emoji.
+     * On compense par -45° pour que 0° corresponde au nord.
+     */
+    plane.style.transform = `rotate(${courseDegrees - 45}deg)`;
+}
+
+
 
 
 function calculateDestinationLatLng(lat, lon, bearingDeg, distanceMeters) {
@@ -3915,8 +4545,11 @@ function updateUserPosition(pos) {
     const motionHeading = Number.isFinite(rawHeading) ? rawHeading : estimatedMotion.heading;
     const motionSpeed = Number.isFinite(rawSpeed) ? rawSpeed : estimatedMotion.speed;
     updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
-    lastPosition = { lat: latitude, lng: longitude };
+    lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs };
     saveStoredGpsPosition(latitude, longitude, gpsTimestampMs);
+    applyStartupGpsAutoCenter(latitude, longitude, {
+        source: pos && pos.npfIsStoredPosition ? 'stored' : 'real'
+    });
 
     if (!userMarker) {
         const userIcon = buildOwnGpsIcon(ownAltitudeLabel);
@@ -3926,6 +4559,8 @@ function updateUserPosition(pos) {
         userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel));
         userMarker.bindPopup(`Votre position<br>${escapeHtml(ownAltitudeLabel)}`);
     }
+
+    applyOwnGpsPlaneHeading(motionHeading);
 
     updateNearestCommuneDisplay(latitude, longitude);
 
@@ -4017,7 +4652,7 @@ function initDB() {
             return;
         }
 
-        const request = indexedDB.open('OfflineTilesDB', 3);
+        const request = indexedDB.open(OFFLINE_DB_NAME, 3);
 
         request.onupgradeneeded = event => {
             const dbInstance = event.target.result;
@@ -4279,6 +4914,88 @@ async function purgeInactivePacksCache() {
     alert(`Purge terminée: ${deletedCount} tuiles supprimées (${inactiveNames.length} pack(s)).`);
 }
 
+
+async function suspendOfflineMapRenderingDuringImport(reason = 'Import offline en cours') {
+    /*
+     * v12.16 — accélération du deuxième gros import.
+     *
+     * Symptôme confirmé :
+     * - première carte importée : rapide ;
+     * - deuxième carte importée : très lente ou bloquée.
+     *
+     * Cause probable :
+     * pendant le deuxième import, Leaflet + le service worker continuent à lire
+     * les tuiles de la carte active dans la même IndexedDB pendant que l'import
+     * écrit massivement. Sur Safari/iPadOS, lecture + écriture simultanées sur une
+     * grosse IndexedDB ralentissent très fortement les transactions.
+     *
+     * Correction :
+     * - désactiver temporairement la carte offline active ;
+     * - retirer la couche tuiles de Leaflet ;
+     * - informer le service worker qu'il ne doit plus chercher de pack actif ;
+     * - laisser l'import écrire seul dans IndexedDB.
+     *
+     * À la fin de l'import, le nouveau groupe importé est réactivé par le code existant.
+     */
+    try {
+        activeOfflinePacks = [];
+        localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify([]));
+    } catch (_) {}
+
+    try {
+        notifyServiceWorkerActivePacks([]);
+    } catch (_) {}
+
+    try {
+        if (map && baseTileLayer) {
+            map.removeLayer(baseTileLayer);
+            baseTileLayer = null;
+        }
+    } catch (_) {}
+
+    try {
+        const statusEl = document.getElementById('offline-status');
+        if (statusEl) {
+            statusEl.textContent = `${reason} — carte suspendue pour accélérer l'écriture.`;
+        }
+    } catch (_) {}
+
+    await new Promise(resolve => setTimeout(resolve, 250));
+}
+
+
+async function releaseOfflineDatabaseForHeavyOperation(reason = 'Opération offline lourde') {
+    /*
+     * v12.18 — libération réelle IndexedDB avant import/suppression.
+     *
+     * v12.17 envoyait un message au service worker, mais postMessage n'est pas
+     * awaitable : l'import/suppression pouvait démarrer avant que le SW ait fermé
+     * sa connexion IndexedDB.
+     *
+     * Ici on :
+     * - suspend la carte ;
+     * - demande au SW de fermer sa connexion ;
+     * - ferme aussi la connexion IndexedDB de la page ;
+     * - attend brièvement ;
+     * - rouvre une connexion propre côté page.
+     */
+    await suspendOfflineMapRenderingDuringImport(reason);
+
+    try {
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_IMPORT_START' });
+        }
+    } catch (_) {}
+
+    try {
+        if (db) db.close();
+    } catch (_) {}
+    db = null;
+
+    await new Promise(resolve => setTimeout(resolve, 900));
+    await initDB();
+}
+
 async function handleZipImport(file) {
     if (!file) return;
     if (isZipImportRunning) {
@@ -4299,16 +5016,62 @@ async function handleZipImport(file) {
     progressBar.style.width = '0%';
     statusMessage.textContent = `Ouverture du ZIP ${packName}...`;
     isZipImportRunning = true;
+    try { sessionStorage.setItem('npfZipImportRunning', '1'); } catch (_) {}
+
+    /*
+     * v12.25 — OpenStreet en ZIP découpés : import progressif.
+     * Le profil v12.24 en lots de 260 donnait des paliers longs 251/511/771...
+     * On garde l'absence de libération lourde IndexedDB, mais on réduit les lots
+     * pour éviter les pauses longues sur iPad/Safari.
+     */
+    const earlyPackNameForImport = packName;
+    const earlyIsOpenStreetPack = isOpenStreetOfflinePackName(earlyPackNameForImport);
+    const earlyIsLargeZip = file.size > 300 * 1024 * 1024;
+    if (earlyIsOpenStreetPack && !earlyIsLargeZip) {
+        await suspendOfflineMapRenderingDuringImport(`Import ${packName}`);
+    } else {
+        await releaseOfflineDatabaseForHeavyOperation(`Import ${packName}`);
+    }
 
     const idle = (delay = 0) => new Promise((resolve) => setTimeout(resolve, delay));
+    const nextFrame = () => new Promise((resolve) => {
+        if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(() => resolve());
+        } else {
+            setTimeout(resolve, 0);
+        }
+    });
+
+    const updateImportProgress = async (message, percent = null, forceFrame = false) => {
+        if (typeof percent === 'number') {
+            progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+        }
+        statusMessage.textContent = message;
+        if (forceFrame) {
+            await nextFrame();
+        }
+    };
 
     const reopenDbCleanly = async () => {
         try {
             if (db) db.close();
         } catch (_) {}
         db = null;
-        await idle(120);
+        await idle(180);
         await initDB();
+    };
+
+    const getTileWriteTransaction = () => {
+        /*
+         * v12.11 — import gros volume renforcé.
+         * durability:'relaxed' accélère et stabilise les écritures IndexedDB quand le
+         * navigateur le supporte. Safari ignore parfois l'option : fallback standard.
+         */
+        try {
+            return db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+        } catch (_) {
+            return db.transaction('tiles', 'readwrite');
+        }
     };
 
     const putTileBatch = (batch) => new Promise((resolve, reject) => {
@@ -4317,7 +5080,7 @@ async function handleZipImport(file) {
             return;
         }
 
-        const transaction = db.transaction('tiles', 'readwrite');
+        const transaction = getTileWriteTransaction();
         const store = transaction.objectStore('tiles');
 
         batch.forEach(tileData => {
@@ -4329,9 +5092,60 @@ async function handleZipImport(file) {
         transaction.onabort = () => reject(transaction.error || new Error('Transaction IndexedDB annulée'));
     });
 
+    const deleteExistingTilesForPack = (packNameToDelete, isLargeZipPack) => new Promise((resolve, reject) => {
+        /*
+         * Avant de réimporter un gros pack, on libère l'ancien contenu.
+         * C'est critique pour OpenStreet ~900 Mo : sans purge préalable,
+         * Safari/iPadOS peut atteindre le quota avant d'avoir remplacé les tuiles.
+         */
+        if (!db || !packNameToDelete) {
+            resolve(0);
+            return;
+        }
+
+        let deleted = 0;
+        const tx = getTileWriteTransaction();
+        const store = tx.objectStore('tiles');
+
+        const deleteCursor = (request) => {
+            request.onsuccess = event => {
+                const cursor = event.target.result;
+                if (!cursor) return;
+
+                const value = cursor.value || {};
+                const key = cursor.primaryKey || value.url || '';
+                const keyText = String(key);
+                const shouldDelete = value.packName === packNameToDelete
+                    || keyText.endsWith(`::${packNameToDelete}`);
+
+                if (shouldDelete) {
+                    cursor.delete();
+                    deleted += 1;
+                }
+                cursor.continue();
+            };
+            request.onerror = () => reject(request.error);
+        };
+
+        try {
+            if (store.indexNames && store.indexNames.contains('packName')) {
+                deleteCursor(store.index('packName').openCursor(IDBKeyRange.only(packNameToDelete)));
+            } else {
+                deleteCursor(store.openCursor());
+            }
+        } catch (error) {
+            reject(error);
+            return;
+        }
+
+        tx.oncomplete = () => resolve(deleted);
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error || new Error('Transaction purge IndexedDB annulée'));
+    });
+
     try {
         /*
-         * v11.33 — évolution v11.31/v11.32.
+         * v12.11 — renforcement gros volumes à partir de v11.33.
          *
          * Symptôme validé :
          * - OpenStreet 900 Mo s'installe, mais peut planter en toute fin.
@@ -4358,13 +5172,63 @@ async function handleZipImport(file) {
             throw new Error("Aucune tuile valide trouvée dans le ZIP. La structure doit être /zoom/colonne/ligne.png");
         }
 
-        statusMessage.textContent = `Préparation terminée. Importation de ${totalFiles} tuiles...`;
-        progressBar.style.width = '1%';
-        await idle(100);
+        await updateImportProgress(`Préparation terminée. Lecture de ${totalFiles} tuiles...`, 1, true);
+        await idle(120);
 
         const isLargeZip = file.size > 300 * 1024 * 1024;
-        const batchSize = isLargeZip ? 100 : 150;
-        const usePackScopedKey = !isLargeZip;
+        const isOpenStreetPack = isOpenStreetOfflinePackName(packName);
+        const isIgnPack = isIgnOfflinePackName(packName);
+        const isOaciPack = isOaciOfflinePackName(packName);
+
+        /*
+         * v12.14 — OpenStreet reste sur le profil conservateur validé.
+         * IGN, même en gros ZIP, passe sur un profil plus rapide :
+         * - plus gros lots IndexedDB ;
+         * - pas de fermeture/réouverture toutes les 700 tuiles ;
+         * - clé pack-scopée pour éviter les collisions entre ZIP/hosts.
+         */
+        const useConservativeLargeImport = isLargeZip && isOpenStreetPack;
+        const useSplitZipFastProfile = isOpenStreetPack && !isLargeZip;
+
+        /*
+         * v12.51 — profil ZIP fractionné rapide sans blocage 1008.
+         * v12.50 était trop prudent : beaucoup de petites transactions de 120
+         * tuiles ralentissaient l'installation. On repasse sur un débit plus
+         * élevé avec 240 tuiles par transaction et 48 lectures parallèles, mais
+         * sans revenir aux transactions de ~1000 tuiles qui bloquaient Safari.
+         */
+        const batchSize = useConservativeLargeImport
+            ? 35
+            : (useSplitZipFastProfile ? 240 : (isIgnPack ? 320 : (isOaciPack ? 35 : (isLargeZip ? 160 : 180))));
+        const reopenEveryTiles = useConservativeLargeImport ? 700 : (isOaciPack ? 350 : 0);
+        const splitZipReadConcurrency = useSplitZipFastProfile ? 48 : 1;
+        const splitZipUiYieldEveryTiles = useSplitZipFastProfile ? 960 : 0;
+        const usePackScopedKey = !isOpenStreetPack;
+        /*
+         * v12.19 : OACI passe en mode sécurisé.
+         * Symptôme : blocage/crash vers Lecture tuiles 51/3347 quand OACI est la 3e carte.
+         * Mesure : petits lots de 10, réouverture périodique IndexedDB, lecture blob.
+         */
+        const tileReadMode = useSplitZipFastProfile ? 'arraybuffer' : (isIgnPack ? 'arraybuffer' : 'blob');
+        let skippedTiles = 0;
+
+        const alreadyInstalledPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
+        const alreadyInstalled = alreadyInstalledPacks.some(p => p && p.name === packName);
+        if (alreadyInstalled || (isLargeZip && isOpenStreetPack)) {
+            statusMessage.textContent = `Nettoyage préalable du pack ${packName}...`;
+            progressBar.style.width = '2%';
+            await idle(120);
+            try {
+                const deletedBeforeImport = await deleteExistingTilesForPack(packName, isLargeZip && isOpenStreetPack);
+                if (deletedBeforeImport > 0) {
+                    statusMessage.textContent = `Ancien pack nettoyé : ${deletedBeforeImport} tuiles supprimées.`;
+                    await idle(250);
+                }
+                await reopenDbCleanly();
+            } catch (cleanupError) {
+                console.warn('[Offline] Nettoyage préalable impossible, import poursuivi:', cleanupError);
+            }
+        }
         /*
          * v11.36 : les petits packs utilisent aussi un host dédié dans tileUrl.
          * L'index tileUrl du service worker tombe donc directement sur le bon pack
@@ -4383,42 +5247,132 @@ async function handleZipImport(file) {
             processedFiles += toWrite.length;
 
             const percent = Math.min(100, Math.round((processedFiles / totalFiles) * 100));
-            progressBar.style.width = `${percent}%`;
-            statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
+            await updateImportProgress(
+                useSplitZipFastProfile
+                    ? `ZIP fractionné rapide : ${processedFiles} / ${totalFiles} tuiles`
+                    : `Écriture iPad... ${processedFiles} / ${totalFiles} tuiles`,
+                percent,
+                useConservativeLargeImport || useSplitZipFastProfile
+            );
 
-            await idle(0);
-        };
-
-        for (let i = 0; i < tileFiles.length; i += 1) {
-            const tileFile = tileFiles[i];
-            const blob = await tileFile.async('blob');
-            const tileUrl = buildOfflineTileUrlForPack(tileFile.name, packName, isLargeZip);
-
-            batch.push({
-                url: usePackScopedKey ? buildStoredTileKey(tileUrl, packName) : tileUrl,
-                tileUrl,
-                tile: blob,
-                packName
-            });
-
-            if (batch.length >= batchSize) {
-                await flushBatch();
+            if (reopenEveryTiles && processedFiles > 0 && processedFiles % reopenEveryTiles < toWrite.length) {
+                await updateImportProgress(`Stabilisation base offline... ${processedFiles} / ${totalFiles}`, percent, true);
+                await reopenDbCleanly();
             }
 
-            const now = Date.now();
-            if (now - lastUiUpdate > 700) {
-                lastUiUpdate = now;
-                const percent = Math.min(99, Math.round((Math.max(processedFiles, i) / totalFiles) * 100));
-                progressBar.style.width = `${percent}%`;
-                statusMessage.textContent = `Importation... ${processedFiles} / ${totalFiles} tuiles`;
-                await idle(0);
+            await idle(useConservativeLargeImport ? 20 : 0);
+        };
+
+        await updateImportProgress(`Début lecture des tuiles ${packName}...`, 2, true);
+        await idle(120);
+
+        if (useSplitZipFastProfile) {
+            /*
+             * v12.51 — ZIP fractionné RAPIDE :
+             * On garde la lecture parallèle, mais avec des transactions moyennes
+             * de 240 tuiles : assez grandes pour accélérer l'import, assez courtes pour
+             * éviter le palier bloquant observé à 1008 tuiles.
+             */
+            for (let i = 0; i < tileFiles.length; i += splitZipReadConcurrency) {
+                const slice = tileFiles.slice(i, i + splitZipReadConcurrency);
+
+                const readItems = await Promise.all(slice.map(async (tileFile, offset) => {
+                    const absoluteIndex = i + offset;
+                    try {
+                        const tile = await tileFile.async(tileReadMode);
+                        const tileUrl = buildOfflineTileUrlForPack(tileFile.name, packName, isLargeZip);
+                        return {
+                            url: usePackScopedKey ? buildStoredTileKey(tileUrl, packName) : tileUrl,
+                            tileUrl,
+                            tile,
+                            packName
+                        };
+                    } catch (tileReadError) {
+                        console.warn('[Offline] Tuile ZIP fractionné ignorée:', absoluteIndex + 1, tileReadError);
+                        skippedTiles += 1;
+                        return null;
+                    }
+                }));
+
+                for (const item of readItems) {
+                    if (item) batch.push(item);
+                }
+
+                if (batch.length >= batchSize) {
+                    await flushBatch();
+                    if (splitZipUiYieldEveryTiles && processedFiles > 0 && processedFiles % splitZipUiYieldEveryTiles === 0) {
+                        await updateImportProgress(`Import rapide : ${processedFiles} / ${totalFiles} tuiles`, Math.min(99, Math.round((processedFiles / totalFiles) * 100)), true);
+                        await idle(8);
+                    }
+                }
+
+                const now = Date.now();
+                if (now - lastUiUpdate > 900) {
+                    lastUiUpdate = now;
+                    const readCount = Math.min(i + splitZipReadConcurrency, totalFiles);
+                    const percent = Math.min(99, Math.round((Math.max(processedFiles, readCount) / totalFiles) * 100));
+                    await updateImportProgress(
+                        `ZIP fractionné rapide : lu ${readCount} / ${totalFiles}, écrit ${processedFiles}`,
+                        percent,
+                        true
+                    );
+                }
+            }
+        } else {
+            for (let i = 0; i < tileFiles.length; i += 1) {
+                const tileFile = tileFiles[i];
+
+                if (!useConservativeLargeImport && !useSplitZipFastProfile && (i === 0 || i % 10 === 0)) {
+                    const readPercent = Math.min(95, Math.max(2, Math.round((i / totalFiles) * 100)));
+                    await updateImportProgress(`Lecture tuiles... ${i + 1} / ${totalFiles}`, readPercent, true);
+                }
+
+                if (useConservativeLargeImport && (i === 0 || i % 10 === 0)) {
+                    const readPercent = Math.min(96, Math.max(1, Math.round((i / totalFiles) * 100)));
+                    await updateImportProgress(`Lecture ZIP... ${i + 1} / ${totalFiles} tuiles`, readPercent, true);
+                }
+
+                let blob;
+                try {
+                    blob = await tileFile.async(tileReadMode);
+                } catch (tileReadError) {
+                    await idle(isOaciPack ? 300 : 160);
+                    try {
+                        blob = await tileFile.async(tileReadMode);
+                    } catch (secondTileReadError) {
+                        if (isOaciPack) {
+                            skippedTiles += 1;
+                            await updateImportProgress(`OACI : tuile ignorée ${i + 1} / ${totalFiles} (${skippedTiles} erreur(s))`, null, true);
+                            continue;
+                        }
+                        throw secondTileReadError;
+                    }
+                }
+                const tileUrl = buildOfflineTileUrlForPack(tileFile.name, packName, isLargeZip);
+
+                batch.push({
+                    url: usePackScopedKey ? buildStoredTileKey(tileUrl, packName) : tileUrl,
+                    tileUrl,
+                    tile: blob,
+                    packName
+                });
+
+                if (batch.length >= batchSize) {
+                    await flushBatch();
+                }
+
+                const now = Date.now();
+                if (now - lastUiUpdate > (useConservativeLargeImport ? 350 : 700)) {
+                    lastUiUpdate = now;
+                    const percent = Math.min(99, Math.round((Math.max(processedFiles, i + 1) / totalFiles) * 100));
+                    await updateImportProgress(`Importation... lecture ${i + 1} / ${totalFiles}, écrit ${processedFiles}`, percent, true);
+                }
             }
         }
 
         await flushBatch();
 
-        statusMessage.textContent = `Importation de ${packName} terminée !`;
-        progressBar.style.width = '100%';
+        await updateImportProgress(skippedTiles > 0 ? `Importation de ${packName} terminée — ${skippedTiles} tuile(s) ignorée(s).` : `Importation de ${packName} terminée !`, 100, true);
 
         const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
         const existingPack = installedPacks.find(p => p.name === packName);
@@ -4429,7 +5383,9 @@ async function handleZipImport(file) {
         }
         localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
 
-        await persistSimpleActiveOfflinePacks([packName]);
+        const importedGroupName = getOfflinePackGroupName(packName);
+        const importedGroupPacks = getInstalledPackNamesForGroup(importedGroupName);
+        await persistSimpleActiveOfflinePacks(importedGroupPacks.length ? importedGroupPacks : [packName]);
 
         if (isLargeZip) {
             reloadAfterOfflinePackChange(`Importation de ${packName} terminée. Rechargement mémoire...`);
@@ -4440,10 +5396,15 @@ async function handleZipImport(file) {
         return;
 
     } catch (error) {
-        statusMessage.textContent = `Erreur: ${error.message}`;
+        const message = error && error.message ? error.message : String(error);
+        statusMessage.textContent = `Erreur: ${message}`;
+        if (/quota|storage|abort|transaction/i.test(message)) {
+            statusMessage.textContent += " — vérifiez l'espace iPad disponible, puis relancez après fermeture/réouverture de NPF.";
+        }
         console.error("Erreur d'importation ZIP:", error);
     } finally {
         isZipImportRunning = false;
+        try { sessionStorage.removeItem('npfZipImportRunning'); } catch (_) {}
         setTimeout(() => { progressSection.style.display = 'none'; }, 7000);
     }
 }
@@ -4541,32 +5502,105 @@ function reloadAfterOfflinePackChange(message = 'Rechargement de la carte...') {
     }, 300);
 }
 
+
+function getOfflinePackGroupName(packName) {
+    /*
+     * v12.15 — groupes de packs offline plus tolérants.
+     * Exemples :
+     * OpenStreet_01, OpenStreet-02, IGN_001, IGN 03, IGN_part04 => groupe IGN.
+     */
+    const name = String(packName || '').trim();
+    const cleaned = name
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+
+    const match = cleaned.match(/^(.+?)(?:[\s_-]*(?:part|partie|zip)?[\s_-]*)(\d{1,3})$/i);
+    if (match && match[1].trim().length >= 2) {
+        return match[1].replace(/[\s_-]+$/g, '').trim();
+    }
+
+    return cleaned;
+}
+
+function groupInstalledMapPacks(installedPacks = []) {
+    const groups = new Map();
+    installedPacks.forEach(pack => {
+        if (!pack || !pack.name) return;
+        const groupName = getOfflinePackGroupName(pack.name);
+        if (!groups.has(groupName)) {
+            groups.set(groupName, {
+                name: groupName,
+                packs: [],
+                date: pack.date || ''
+            });
+        }
+        const group = groups.get(groupName);
+        group.packs.push(pack);
+        group.date = pack.date || group.date;
+    });
+    return Array.from(groups.values()).map(group => {
+        group.packs.sort((a, b) => String(a.name).localeCompare(String(b.name), 'fr', { numeric: true }));
+        return group;
+    });
+}
+
+function getInstalledPackNamesForGroup(groupName) {
+    const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
+    return installedPacks
+        .filter(pack => pack && getOfflinePackGroupName(pack.name) === groupName)
+        .map(pack => pack.name);
+}
+
 function displayInstalledMaps() {
     /*
-     * v11.27 — affichage simple comme l'ancien module.
-     * On ne lance aucun scan de zoom et on ne fait aucune purge automatique.
+     * v12.12 — affichage par groupes.
+     * Les packs OpenStreet_01...OpenStreet_05 apparaissent comme une seule ligne OpenStreet.
      */
     const list = document.getElementById('installed-maps-list');
     if (!list) return;
 
     const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
+    const groups = groupInstalledMapPacks(installedPacks);
     list.innerHTML = '';
 
-    if (installedPacks.length === 0) {
+    if (groups.length > 0) {
+        const resetLi = document.createElement('li');
+        resetLi.className = 'offline-map-reset-line';
+        resetLi.innerHTML = `
+            <span class="offline-map-name-line">
+                <strong>Réparation stockage offline</strong><br>
+                <small>À utiliser si une suppression reste bloquée.</small>
+            </span>
+            <div class="offline-map-actions">
+                <button class="delete-map-btn offline-full-reset-btn" onclick="window.resetAllOfflineMapsStorage()">Tout réinitialiser</button>
+            </div>
+        `;
+        list.appendChild(resetLi);
+    }
+
+    if (groups.length === 0) {
         list.innerHTML = '<li class="no-maps-placeholder">Aucun pack de cartes installé.</li>';
         return;
     }
 
-    installedPacks.forEach(pack => {
+    groups.forEach(group => {
         const li = document.createElement('li');
-        const isActive = Array.isArray(activeOfflinePacks) && activeOfflinePacks.includes(pack.name);
+        const packNames = group.packs.map(pack => pack.name);
+        const activeCount = packNames.filter(name => activeOfflinePacks.includes(name)).length;
+        const isActive = activeCount === packNames.length && packNames.length > 0;
+        const partiallyActive = activeCount > 0 && !isActive;
+        const packLabel = packNames.length > 1 ? `${packNames.length} fichiers` : '1 fichier';
+        const dateLabel = group.date ? `Installé le ${group.date}` : 'Installé';
+
+        li.className = packNames.length > 1 ? 'offline-map-group-line' : '';
         li.innerHTML = `
             <span class="offline-map-name-line">
-                <input type="checkbox" class="offline-map-select-checkbox" ${isActive ? 'checked' : ''} onchange="window.selectSimpleMapPack('${pack.name}', this.checked)">
-                <strong>${pack.name}</strong> (Installé le ${pack.date})${isActive ? ' — actif' : ''}
+                <input type="checkbox" class="offline-map-select-checkbox" ${isActive ? 'checked' : ''} data-partial="${partiallyActive ? 'true' : 'false'}" onchange="window.selectSimpleMapGroup('${group.name}', this.checked)">
+                <strong>${group.name}</strong> (${packLabel} — ${dateLabel})${isActive ? ' — actif' : partiallyActive ? ` — partiel ${activeCount}/${packNames.length}` : ''}
             </span>
             <div class="offline-map-actions">
-                <button class="delete-map-btn" onclick="window.deleteMapPack('${pack.name}')">Supprimer</button>
+                <button class="delete-map-btn" onclick="window.deleteMapGroup('${group.name}')">Supprimer</button>
             </div>
         `;
         list.appendChild(li);
@@ -4575,60 +5609,422 @@ function displayInstalledMaps() {
     updateOfflineStatus();
 }
 
-window.selectSimpleMapPack = async function(packName, checked = true) {
-    /*
-     * v11.43 — sélection carte offline par case à cocher à gauche du nom.
-     * Une seule carte offline active à la fois.
-     */
-    await persistSimpleActiveOfflinePacks(checked ? [packName] : []);
-    reloadAfterOfflinePackChange(checked ? `Carte ${packName} sélectionnée. Rechargement...` : 'Carte offline désactivée. Rechargement...');
-};
-
-window.deleteMapPack = async function(packName) {
-    if (!confirm(`Voulez-vous vraiment supprimer le pack de cartes "${packName}" ?\nCette opération peut prendre du temps.`)) {
+window.selectSimpleMapGroup = async function(groupName, checked = true) {
+    const packNames = getInstalledPackNamesForGroup(groupName);
+    if (!packNames.length) {
+        alert(`Aucun pack trouvé pour ${groupName}.`);
+        displayInstalledMaps();
         return;
     }
 
+    /*
+     * v12.12 — une seule carte active à la fois, mais une carte peut être composée
+     * de plusieurs ZIP indépendants : OpenStreet_01...OpenStreet_05.
+     */
+    await persistSimpleActiveOfflinePacks(checked ? packNames : []);
+    reloadAfterOfflinePackChange(
+        checked
+            ? `Carte ${groupName} sélectionnée (${packNames.length} fichier(s)). Rechargement...`
+            : 'Carte offline désactivée. Rechargement...'
+    );
+};
+
+window.selectSimpleMapPack = async function(packName, checked = true) {
+    const groupName = getOfflinePackGroupName(packName);
+    return window.selectSimpleMapGroup(groupName, checked);
+};
+
+
+
+
+
+function removeInstalledOfflinePacksLogically(packNames = []) {
+    const targetSet = new Set((packNames || []).filter(Boolean));
+    if (!targetSet.size) return 0;
+
+    let installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
+    const beforeCount = installedPacks.length;
+    installedPacks = installedPacks.filter(pack => !pack || !targetSet.has(pack.name));
+    localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
+
+    if (Array.isArray(activeOfflinePacks) && activeOfflinePacks.some(name => targetSet.has(name))) {
+        activeOfflinePacks = activeOfflinePacks.filter(name => !targetSet.has(name));
+        localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
+        notifyServiceWorkerActivePacks(activeOfflinePacks);
+    }
+
+    return beforeCount - installedPacks.length;
+}
+
+function shouldUseLogicalDeleteForOfflineGroup(groupName, packNames = []) {
+    /*
+     * v12.22 — OpenStreet est trop volumineux pour une suppression physique fiable
+     * sur iPad/Safari. On retire donc le pack de la liste active/installée, sans
+     * parcourir 1 Go de tuiles dans IndexedDB.
+     */
+    if (isOpenStreetOfflinePackName(groupName)) return true;
+    return (packNames || []).some(name => isOpenStreetOfflinePackName(name));
+}
+
+
+window.resetAllOfflineMapsStorage = async function() {
+    /*
+     * v12.20 — reset sans deleteDatabase bloquant.
+     *
+     * Le deleteDatabase('OfflineTilesDB') peut rester bloqué si Safari/iPadOS ou
+     * l'ancien service worker garde encore une connexion ouverte.
+     *
+     * La v12.20 abandonne donc l'ancienne base et utilise une nouvelle base :
+     * OfflineTilesDB_v12_20.
+     *
+     * Conséquence :
+     * - le reset fonctionne même si l'ancienne base est verrouillée ;
+     * - les anciennes tuiles peuvent rester dans les données Safari du site ;
+     * - si l'espace iPad devient insuffisant, il faudra effacer les données du site
+     *   depuis Réglages Safari.
+     */
+    const confirmed = confirm(
+        'Réinitialiser la liste des cartes offline ?\n\n' +
+        'La v12.20 utilise une nouvelle base offline propre.\n' +
+        'Les anciennes données verrouillées seront ignorées.'
+    );
+    if (!confirmed) return;
+
+    const progressSection = document.getElementById('import-progress-section');
+    const statusMessage = document.getElementById('import-status-message') || document.getElementById('offline-status');
+    const progressBar = document.getElementById('import-progress-bar');
+
+    if (progressSection) progressSection.style.display = 'block';
+    if (progressBar) progressBar.style.width = '10%';
+    if (statusMessage) statusMessage.textContent = 'Réinitialisation logique du stockage offline...';
+
     try {
-        const transaction = db.transaction('tiles', 'readwrite');
-        const store = transaction.objectStore('tiles');
-        const index = store.index('packName');
-        const request = index.openKeyCursor(IDBKeyRange.only(packName));
+        await suspendOfflineMapRenderingDuringImport('Réinitialisation stockage offline');
 
-        let deletedCount = 0;
-        request.onsuccess = event => {
-            const cursor = event.target.result;
-            if (cursor) {
-                store.delete(cursor.primaryKey);
-                deletedCount++;
-                cursor.continue();
+        try {
+            if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+                navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_FACTORY_RESET' });
             }
-        };
+        } catch (_) {}
 
-        await new Promise((resolve, reject) => {
-            transaction.oncomplete = resolve;
-            transaction.onerror = () => reject(transaction.error);
-            transaction.onabort = () => reject(transaction.error || new Error('Transaction suppression annulée'));
+        try {
+            if (db) db.close();
+        } catch (_) {}
+        db = null;
+
+        if (progressBar) progressBar.style.width = '35%';
+
+        try {
+            await clearTileCaches();
+        } catch (_) {}
+
+        if (progressBar) progressBar.style.width = '60%';
+
+        /*
+         * Tentative non bloquante de supprimer l'ancienne base historique.
+         * Si elle est bloquée, on n'échoue plus : la nouvelle base v12.20 sera utilisée.
+         */
+        try {
+            if (typeof indexedDB !== 'undefined') {
+                const legacyReq = indexedDB.deleteDatabase('OfflineTilesDB');
+                legacyReq.onerror = () => {};
+                legacyReq.onblocked = () => {};
+            }
+        } catch (_) {}
+
+        localStorage.removeItem('installedMapPacks');
+        localStorage.removeItem(OFFLINE_ACTIVE_PACKS_KEY);
+        localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, String(DEFAULT_OFFLINE_TILES_ENABLED));
+        activeOfflinePacks = [];
+
+        await initDB();
+
+        if (progressBar) progressBar.style.width = '100%';
+        if (statusMessage) statusMessage.textContent = 'Stockage offline réinitialisé sur nouvelle base. Rechargement...';
+
+        setTimeout(() => {
+            const refreshUrl = new URL(window.location.href);
+            refreshUrl.searchParams.set('appv', APP_VERSION);
+            refreshUrl.searchParams.set('ts', Date.now().toString());
+            window.location.replace(refreshUrl.toString());
+        }, 700);
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        if (statusMessage) statusMessage.textContent = `Réinitialisation impossible : ${message}`;
+        alert(`Réinitialisation impossible : ${message}`);
+    }
+};;
+
+
+window.deleteMapGroup = async function(groupName) {
+    const packNames = getInstalledPackNamesForGroup(groupName);
+    if (!packNames.length) {
+        alert(`Aucun pack trouvé pour ${groupName}.`);
+        displayInstalledMaps();
+        return;
+    }
+
+    if (shouldUseLogicalDeleteForOfflineGroup(groupName, packNames)) {
+        if (!confirm(`Retirer "${groupName}" de l'application ?\n\nOpenStreet est très volumineux : la suppression physique des tuiles peut bloquer l'iPad.\nCette action désactive la carte et la retire de la liste installée.`)) {
+            return;
+        }
+
+        const removedCount = removeInstalledOfflinePacksLogically(packNames);
+        displayInstalledMaps();
+        alert(`Carte "${groupName}" retirée (${removedCount} fichier(s)).\nLes anciennes tuiles pourront rester dans le stockage Safari jusqu'à un nettoyage système.`);
+        return;
+    }
+
+    if (!confirm(`Supprimer définitivement la carte "${groupName}" (${packNames.length} fichier(s)) ?\nCette opération peut prendre du temps sur iPad.`)) {
+        return;
+    }
+
+    const statusMessage = document.getElementById('import-status-message') || document.getElementById('offline-status');
+    const progressSection = document.getElementById('import-progress-section');
+    const progressBar = document.getElementById('import-progress-bar');
+
+    if (progressSection) progressSection.style.display = 'block';
+    if (progressBar) progressBar.style.width = '0%';
+
+    try {
+        await releaseOfflineDatabaseForHeavyOperation(`Suppression ${groupName}`);
+        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
+            navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_MASS_DELETE_START' });
+        }
+        await new Promise(resolve => setTimeout(resolve, 500));
+    } catch (_) {}
+
+    let totalDeleted = 0;
+    for (let i = 0; i < packNames.length; i += 1) {
+        const packName = packNames[i];
+        if (statusMessage) {
+            statusMessage.textContent = `Suppression ${i + 1}/${packNames.length} : ${packName}...`;
+        }
+        if (progressBar) {
+            progressBar.style.width = `${Math.round((i / packNames.length) * 100)}%`;
+        }
+
+        const deleted = await window.deleteMapPack(packName, {
+            silent: true,
+            noReload: true,
+            alreadyConfirmed: true,
+            onProgress: (deletedSoFar, mode, loops) => {
+                if (statusMessage) {
+                    statusMessage.textContent = `Suppression ${i + 1}/${packNames.length} : ${packName} — ${deletedSoFar} tuiles (${mode})`;
+                }
+                if (progressBar) {
+                    const basePercent = (i / packNames.length) * 100;
+                    const chunkPercent = Math.min(1, loops / 50) * (100 / packNames.length);
+                    progressBar.style.width = `${Math.min(99, Math.round(basePercent + chunkPercent))}%`;
+                }
+            }
         });
+        totalDeleted += Number(deleted || 0);
 
-        alert(`${deletedCount} tuiles du pack "${packName}" ont été supprimées.`);
+        await new Promise(resolve => setTimeout(resolve, 40));
+    }
+
+    if (progressBar) progressBar.style.width = '100%';
+
+    if (activeOfflinePacks.some(name => packNames.includes(name))) {
+        await persistSimpleActiveOfflinePacks([]);
+    }
+
+    displayInstalledMaps();
+
+    if (statusMessage) {
+        statusMessage.textContent = `Carte "${groupName}" supprimée : ${totalDeleted} tuile(s).`;
+    }
+    alert(`Carte "${groupName}" supprimée (${packNames.length} fichier(s), ${totalDeleted} tuile(s)).`);
+};
+
+window.deleteMapPack = async function(packName, options = {}) {
+    if (!options.alreadyConfirmed && !options.silent) {
+        if (!confirm(`Voulez-vous vraiment supprimer le pack de cartes "${packName}" ?\nCette opération peut prendre du temps.`)) {
+            return 0;
+        }
+    }
+
+    try {
+        const deletedCount = await deleteTilesForPackName(packName, options.onProgress || null);
+
+        if (!options.silent) {
+            alert(`${deletedCount} tuiles du pack "${packName}" ont été supprimées.`);
+        }
 
         let installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
         installedPacks = installedPacks.filter(p => p.name !== packName);
         localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
 
         if (Array.isArray(activeOfflinePacks) && activeOfflinePacks.includes(packName)) {
-            await persistSimpleActiveOfflinePacks([]);
-            reloadAfterOfflinePackChange(`Pack ${packName} supprimé. Rechargement...`);
+            await persistSimpleActiveOfflinePacks(activeOfflinePacks.filter(name => name !== packName));
+            if (!options.noReload) {
+                reloadAfterOfflinePackChange(`Pack ${packName} supprimé. Rechargement...`);
+                return deletedCount;
+            }
+        }
+
+        if (!options.noReload) displayInstalledMaps();
+        return deletedCount;
+
+    } catch (error) {
+        alert(`Erreur lors de la suppression du pack : ${error.message || error}`);
+        console.error("Erreur de suppression:", error);
+        return 0;
+    }
+};
+
+async function deleteTilesForPackName(packName, onProgress = null) {
+    /*
+     * v12.18 — suppression par getAllKeys + lots courts.
+     *
+     * v12.17 utilisait un curseur et s'arrêtait volontairement par chunk.
+     * Sur Safari/iPadOS, cette méthode peut rester silencieuse au premier curseur
+     * sur une très grosse IndexedDB.
+     *
+     * Nouvelle méthode :
+     * - récupérer jusqu'à 500 clés du pack par l'index packName ;
+     * - supprimer ces clés dans une transaction courte ;
+     * - recommencer jusqu'à zéro clé ;
+     * - fallback scan complet si l'index ne trouve rien.
+     */
+    if (!db || !packName) return 0;
+
+    const CHUNK_SIZE = 500;
+    let totalDeleted = 0;
+    const sleep = (delay = 0) => new Promise(resolve => setTimeout(resolve, delay));
+
+    const getKeysByIndex = () => new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction('tiles', 'readonly');
+            const store = tx.objectStore('tiles');
+
+            if (!(store.indexNames && store.indexNames.contains('packName')) || typeof store.index('packName').getAllKeys !== 'function') {
+                resolve(null);
+                return;
+            }
+
+            const req = store.index('packName').getAllKeys(IDBKeyRange.only(packName), CHUNK_SIZE);
+            req.onsuccess = () => resolve(Array.isArray(req.result) ? req.result : []);
+            req.onerror = () => reject(req.error || new Error('Erreur getAllKeys suppression'));
+        } catch (error) {
+            reject(error);
+        }
+    });
+
+    const deleteKeys = (keys = []) => new Promise((resolve, reject) => {
+        if (!keys.length) {
+            resolve(0);
             return;
         }
 
-        displayInstalledMaps();
+        try {
+            let tx;
+            try {
+                tx = db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+            } catch (_) {
+                tx = db.transaction('tiles', 'readwrite');
+            }
 
-    } catch (error) {
-        alert(`Erreur lors de la suppression du pack : ${error.message}`);
-        console.error("Erreur de suppression:", error);
+            const store = tx.objectStore('tiles');
+            keys.forEach(key => store.delete(key));
+
+            tx.oncomplete = () => resolve(keys.length);
+            tx.onerror = () => reject(tx.error || new Error('Erreur suppression clés'));
+            tx.onabort = () => reject(tx.error || new Error('Transaction suppression annulée'));
+        } catch (error) {
+            reject(error);
+        }
+    });
+
+    const scanAndDeleteChunk = () => new Promise((resolve, reject) => {
+        try {
+            let tx;
+            try {
+                tx = db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+            } catch (_) {
+                tx = db.transaction('tiles', 'readwrite');
+            }
+
+            const store = tx.objectStore('tiles');
+            const req = store.openCursor();
+            let deleted = 0;
+            let reachedEnd = false;
+
+            req.onsuccess = event => {
+                const cursor = event.target.result;
+                if (!cursor) {
+                    reachedEnd = true;
+                    return;
+                }
+
+                const value = cursor.value || {};
+                const primaryKey = cursor.primaryKey || value.url || '';
+                const shouldDelete = value.packName === packName
+                    || String(primaryKey).endsWith(`::${packName}`)
+                    || String(value.url || '').endsWith(`::${packName}`);
+
+                if (shouldDelete) {
+                    cursor.delete();
+                    deleted += 1;
+                }
+
+                if (deleted >= CHUNK_SIZE) return;
+                cursor.continue();
+            };
+
+            req.onerror = () => reject(req.error || new Error('Erreur scan suppression'));
+            tx.oncomplete = () => resolve({ deleted, done: reachedEnd || deleted === 0 });
+            tx.onerror = () => reject(tx.error || new Error('Erreur transaction scan suppression'));
+            tx.onabort = () => reject(tx.error || new Error('Transaction scan suppression annulée'));
+        } catch (error) {
+            reject(error);
+        }
+    });
+
+    let loops = 0;
+    while (true) {
+        loops += 1;
+
+        const keys = await getKeysByIndex();
+        if (keys === null) break;
+        if (!keys.length) break;
+
+        const deleted = await deleteKeys(keys);
+        totalDeleted += deleted;
+
+        if (typeof onProgress === 'function') {
+            onProgress(totalDeleted, 'index-keys', loops);
+        }
+
+        await sleep(60);
+
+        if (loops > 20000) {
+            throw new Error(`Suppression interrompue par sécurité (${packName})`);
+        }
     }
+
+    if (totalDeleted === 0) {
+        loops = 0;
+        while (true) {
+            loops += 1;
+            const result = await scanAndDeleteChunk();
+            totalDeleted += result.deleted || 0;
+
+            if (typeof onProgress === 'function') {
+                onProgress(totalDeleted, 'scan', loops);
+            }
+
+            await sleep(60);
+
+            if (result.done) break;
+            if (loops > 20000) {
+                throw new Error(`Suppression scan interrompue par sécurité (${packName})`);
+            }
+        }
+    }
+
+    return totalDeleted;
 };
 
 // =========================================================================
@@ -4646,6 +6042,12 @@ const calculateRotationTime = (dist) => {
 };
 let masterRecalculate = () => {};
 let isFuelSurFeuManual = false, isSuiviConsoManual = false, isSuiviDureeManual = false;
+const MULTI_FLIGHT_STORAGE_KEY = 'calculator_flights_v12_28';
+const ACTIVE_FLIGHT_ID_STORAGE_KEY = 'calculator_active_flight_id_v12_28';
+const DEROUT_EMPTY_RETARDANT_KEY = 'derout_empty_retardant_v12_29';
+let dailyFlights = [];
+let activeFlightId = null;
+let isApplyingFlightState = false;
 const parseTime = (timeString) => { if (!timeString || !timeString.includes(':')) return null; const parts = timeString.split(':'); return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10); };
 const formatTime = (totalMinutes) => { if (totalMinutes === null || isNaN(totalMinutes) || totalMinutes < 0) return ''; const roundedMinutes = Math.round(totalMinutes); const hours = Math.floor(roundedMinutes / 60); const minutes = roundedMinutes % 60; return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`; };
 const parseNumeric = (numericString) => { if (!numericString) return null; const value = parseInt(numericString.replace(/[^0-9]/g, ''), 10); return isNaN(value) ? null : value; };
@@ -4762,44 +6164,62 @@ Calcul : ((${formatTime(params.csFeuTime) || 'N/A'} - ${formatTime(current.time)
 }
 
 function recalculateBlocFuel() {
-    const blocDepart = parseTime(document.getElementById('bloc-depart').querySelector('.display-input').value);
-    const fuelDepart = parseNumeric(document.getElementById('fuel-depart').querySelector('.display-input').value);
-    const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
+    const blocDepartWrapper = document.getElementById('bloc-depart');
+    const fuelDepartWrapper = document.getElementById('fuel-depart');
+    const limiteHdvWrapper = document.getElementById('limite-hdv');
 
+    const blocDepart = parseTime(blocDepartWrapper?.querySelector('.display-input')?.value || '');
+    const fuelDepart = parseNumeric(fuelDepartWrapper?.querySelector('.display-input')?.value || '');
+    const limiteHDV = (typeof getEffectiveLimitHdvForActiveFlight === 'function')
+        ? getEffectiveLimitHdvForActiveFlight()
+        : parseTime(limiteHdvWrapper?.querySelector('.display-input')?.value || '');
+
+    /*
+     * v12.31 : le champ LIMITE HDV du vol actif affiche déjà le restant journée
+     * avant ce vol. Le cumul du tableau repart donc à 0 pour le vol actif.
+     */
     let previousBlocArrivee = blocDepart;
     let previousFuelPelic = fuelDepart;
     let cumulativeTpsVol = 0;
 
     const tableRows = document.querySelectorAll('#bloc-fuel tbody tr');
     tableRows.forEach((row) => {
-        const blocArrivee = parseTime(row.querySelector('.time-input-wrapper .display-input').value);
-        const fuelPelic = parseNumeric(row.querySelector('.numeric-input-wrapper .display-input').value);
+        const blocArrivee = parseTime(row.querySelector('.time-input-wrapper .display-input')?.value || '');
+        const fuelPelic = parseNumeric(row.querySelector('.numeric-input-wrapper .display-input')?.value || '');
+
+        const dureeCell = row.querySelector('.duree-rotation-cell');
+        const fuelCell = row.querySelector('.fuel-rotation-cell');
+        const tpsVolCell = row.querySelector('.tps-vol-cell');
+        const tpsRestantCell = row.querySelector('.tps-vol-restant-cell');
 
         let dureeRotation = null;
         if (blocArrivee !== null && previousBlocArrivee !== null) {
             dureeRotation = blocArrivee - previousBlocArrivee;
         }
+
         let fuelRotation = null;
         if (fuelPelic !== null && previousFuelPelic !== null) {
             fuelRotation = previousFuelPelic - fuelPelic;
         }
 
-        row.querySelector('.duree-rotation-cell').textContent = formatTime(dureeRotation) || '--';
-        row.querySelector('.fuel-rotation-cell').textContent = (fuelRotation === null) ? '--' : fuelRotation;
+        if (dureeCell) dureeCell.textContent = formatTime(dureeRotation) || '--';
+        if (fuelCell) fuelCell.textContent = (fuelRotation === null) ? '--' : `${fuelRotation}`;
 
         if (blocArrivee !== null) {
             if (dureeRotation !== null && dureeRotation > 0) {
                 cumulativeTpsVol += dureeRotation;
             }
+
             let tpsVolRestant = null;
             if (limiteHDV !== null) {
                 tpsVolRestant = limiteHDV - cumulativeTpsVol;
             }
-            row.querySelector('.tps-vol-cell').textContent = formatTime(cumulativeTpsVol) || '00:00';
-            row.querySelector('.tps-vol-restant-cell').textContent = formatTime(tpsVolRestant) || '--';
+
+            if (tpsVolCell) tpsVolCell.textContent = formatTime(cumulativeTpsVol) || '00:00';
+            if (tpsRestantCell) tpsRestantCell.textContent = formatTime(tpsVolRestant) || '--';
         } else {
-            row.querySelector('.tps-vol-cell').textContent = '--';
-            row.querySelector('.tps-vol-restant-cell').textContent = '--';
+            if (tpsVolCell) tpsVolCell.textContent = '--';
+            if (tpsRestantCell) tpsRestantCell.textContent = '--';
         }
 
         if (blocArrivee !== null) previousBlocArrivee = blocArrivee;
@@ -4945,6 +6365,9 @@ function updateSuiviTab() {
 }
 
 function updateDeroutementTab() {
+    if (typeof updateDeroutementGpsStatus === 'function') {
+        updateDeroutementGpsStatus();
+    }
     const resultsContainer = document.getElementById('derout-rotation-results-container');
     const setHelp = (id, formula) => {
         const icon = document.getElementById(id);
@@ -4981,9 +6404,35 @@ function updateDeroutementTab() {
     const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
     const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
     const hasGpsPosition = !!(userMarker && userMarker.getLatLng());
+    const userLatLng = hasGpsPosition ? userMarker.getLatLng() : null;
+    const selectedPelicForDeroutement = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
+    const isEmptyRetardant = document.getElementById('derout-empty-retardant-checkbox')?.checked === true;
+
     const distGpsFeu = hasGpsPosition ? CALCULATOR_DATA.distGpsFeu : null;
-    const transitTimeFromGps = distGpsFeu !== null ? Math.round(calculateTransitTime(distGpsFeu)) : null;
-    const consoTransitFromGps = distGpsFeu !== null ? calculateFuelToGo(distGpsFeu) : null;
+    const distGpsPelic = (hasGpsPosition && selectedPelicForDeroutement)
+        ? Math.round(calculateDistanceInNm(userLatLng.lat, userLatLng.lng, selectedPelicForDeroutement.lat, selectedPelicForDeroutement.lon))
+        : null;
+    const distFirstPelicFeu = selectedPelicForDeroutement ? CALCULATOR_DATA.distPelicFeu : null;
+
+    const firstLegDistance = (isEmptyRetardant && distGpsPelic !== null && distFirstPelicFeu !== null)
+        ? distGpsPelic + distFirstPelicFeu
+        : distGpsFeu;
+
+    const transitTimeFromGps = firstLegDistance !== null
+        ? (
+            isEmptyRetardant
+                ? Math.round(calculateTransitTime(distGpsPelic)) + 20 + Math.round(calculateTransitTime(distFirstPelicFeu))
+                : Math.round(calculateTransitTime(distGpsFeu))
+        )
+        : null;
+
+    const consoTransitFromGps = firstLegDistance !== null
+        ? (
+            isEmptyRetardant
+                ? calculateFuelToGo(distGpsPelic) + calculateFuelToGo(distFirstPelicFeu)
+                : calculateFuelToGo(distGpsFeu)
+        )
+        : null;
 
     const bingoBaseDisplay = document.getElementById('derout-bingo-base');
     if (bingoBase === 700) { bingoBaseDisplay.innerHTML = '-- kg'; } else { bingoBaseDisplay.innerHTML = `${selectedBaseOACI} / ${CALCULATOR_DATA.distBaseFeu} Nm /&nbsp;<b>${bingoBase} kg</b>`; }
@@ -4994,23 +6443,40 @@ function updateDeroutementTab() {
     const fuelMiniPelic = consoTransitFromGps !== null ? consoTransitFromGps + 250 + bingoPelic : null;
     document.getElementById('derout-fuel-mini-base').textContent = fuelMiniBase !== null ? `${fuelMiniBase} kg` : '-- kg';
     document.getElementById('derout-fuel-mini-pelic').textContent = fuelMiniPelic !== null ? `${fuelMiniPelic} kg` : '-- kg';
+    const deroutFirstLegLabel = isEmptyRetardant
+        ? `GPS → Pélic (${selectedPelicForDeroutement ? selectedPelicForDeroutement.oaci : 'PÉLIC'}) → Feu`
+        : 'GPS → Feu';
+    const deroutFirstLegDetail = isEmptyRetardant
+        ? `Distance GPS → Pélic : ${distGpsPelic ?? 'N/A'} Nm\nDistance Pélic → Feu : ${distFirstPelicFeu ?? 'N/A'} Nm\nForfait remplissage Pélic : 20 min`
+        : `Distance GPS → Feu : ${distGpsFeu ?? 'N/A'} Nm`;
+
     setHelp('derout-fuel-mini-base-help', consoTransitFromGps !== null
-        ? `Formule : Conso GPS → Feu + Forfait largage + BINGO Base\n\nRègle conso GPS → Feu :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase}`
-        : 'Distance GPS → Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
+        ? `Formule : Conso ${deroutFirstLegLabel} + Forfait largage + BINGO Base\n\n${deroutFirstLegDetail}\n\nForfait largage : 250 kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase}`
+        : (isEmptyRetardant && !selectedPelicForDeroutement)
+            ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
+            : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
     setHelp('derout-fuel-mini-pelic-help', consoTransitFromGps !== null
-        ? `Formule : Conso GPS → Feu + Forfait largage + BINGO Pélic.\n\nRègle conso GPS → Feu :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic}`
-        : 'Distance GPS → Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
+        ? `Formule : Conso ${deroutFirstLegLabel} + Forfait largage + BINGO Pélic.\n\n${deroutFirstLegDetail}\n\nForfait largage : 250 kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic}`
+        : (isEmptyRetardant && !selectedPelicForDeroutement)
+            ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
+            : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
 
     const heureSurFeu = (heureActuelle !== null && transitTimeFromGps !== null) ? heureActuelle + transitTimeFromGps : null;
     document.getElementById('derout-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
     document.getElementById('derout-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
     setHelp('derout-heure-sur-feu-help', transitTimeFromGps !== null
-        ? `Formule : Heure actuelle + Durée transit GPS → Feu\n\nRègle vitesse :\n- Distance ≤ 70 Nm : 210 kt\n- Distance > 70 Nm : 240 kt\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'}`
-        : 'Distance GPS → Feu indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
+        ? `Formule : Heure actuelle + Durée ${deroutFirstLegLabel}\n\n${deroutFirstLegDetail}\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'}`
+        : (isEmptyRetardant && !selectedPelicForDeroutement)
+            ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
+            : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
 
-    if (fuelActuel === null || heureActuelle === null || consoTransitFromGps === null || transitTimeFromGps === null) {
+    if (fuelActuel === null || heureActuelle === null || consoTransitFromGps === null || transitTimeFromGps === null || (isEmptyRetardant && !selectedPelicForDeroutement)) {
         resultsContainer.querySelectorAll('.value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
-        resultsContainer.querySelectorAll('.formula-help-icon').forEach(icon => icon.onclick = () => alert("Données insuffisantes pour le calcul."));
+        resultsContainer.querySelectorAll('.formula-help-icon').forEach(icon => icon.onclick = () => alert(
+            isEmptyRetardant && !selectedPelicForDeroutement
+                ? 'Mode vide retardant : sélectionnez un pélicandrome.'
+                : "Données insuffisantes pour le calcul."
+        ));
         return;
     }
 
@@ -5185,6 +6651,15 @@ function initializeTeamChat() {
     locationShareButton.style.whiteSpace = 'nowrap';
     clearButton.parentNode.insertBefore(locationShareButton, clearButton);
 
+    const validateChatConfigButton = document.createElement('button');
+    validateChatConfigButton.id = 'chat-validate-config-button';
+    validateChatConfigButton.type = 'button';
+    validateChatConfigButton.textContent = 'Valider';
+    validateChatConfigButton.title = 'Valider le changement de canal ou pseudo';
+    validateChatConfigButton.className = 'chat-validate-config-button';
+    validateChatConfigButton.disabled = true;
+    clearButton.parentNode.insertBefore(validateChatConfigButton, clearButton);
+
     const CHAT_CLIENT_ID_KEY = 'teamChatClientId';
     const CHAT_OUTBOX_KEY = 'teamChatOutbox';
     const CHAT_SEEN_IDS_KEY = 'teamChatSeenIds';
@@ -5212,7 +6687,9 @@ function initializeTeamChat() {
     let locationPublishTimer = null;
     let lastLocationPublishAt = 0;
     const remoteLocationMarkers = new Map();
-    minimizeButton.textContent = '—';
+    minimizeButton.textContent = '✕ Fermer';
+    minimizeButton.title = 'Fermer la fenêtre chat';
+    minimizeButton.setAttribute('aria-label', 'Fermer la fenêtre chat');
 
     const defaultConfig = { room: 'Milan', user: '' };
     const savedConfig = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || 'null') || defaultConfig;
@@ -5246,6 +6723,58 @@ function initializeTeamChat() {
             room: (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, ''),
             user: (userInput.value || '').trim().slice(0, 24)
         }));
+    };
+
+    let lastValidatedChatConfig = {
+        room: (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, ''),
+        user: (userInput.value || '').trim()
+    };
+
+    const getCurrentChatConfig = () => ({
+        room: (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, ''),
+        user: (userInput.value || '').trim()
+    });
+
+    const updateChatValidateButtonState = () => {
+        /*
+         * v12.24 — plus de reconnexion automatique.
+         * Le bouton Valider se dégrise uniquement quand canal ou pseudo change.
+         */
+        const current = getCurrentChatConfig();
+        const changed = current.room !== lastValidatedChatConfig.room || current.user !== lastValidatedChatConfig.user;
+        const valid = !!current.room && !!current.user;
+
+        validateChatConfigButton.disabled = !(changed && valid);
+        validateChatConfigButton.classList.toggle('is-dirty', changed && valid);
+    };
+
+    const applyChatConfigValidation = async () => {
+        const current = getCurrentChatConfig();
+        if (!current.room || !current.user) {
+            setConnectionState(false, 'Canal/pseudo requis');
+            return;
+        }
+
+        persistConfig();
+        validateChatConfigButton.disabled = true;
+        validateChatConfigButton.textContent = 'Validation...';
+
+        try {
+            if (chatConnected || isChatConnecting || chatClient) {
+                appendChatMessage('Système', 'Paramètres chat validés — reconnexion...', new Date().toISOString(), true);
+                disconnectFromChat();
+                await new Promise(resolve => setTimeout(resolve, 450));
+                await connectToChat();
+            }
+
+            lastValidatedChatConfig = current;
+            updateChatValidateButtonState();
+        } catch (error) {
+            appendChatMessage('Système', `Validation chat impossible: ${error.message || error}`, new Date().toISOString(), true);
+        } finally {
+            validateChatConfigButton.textContent = 'Valider';
+            updateChatValidateButtonState();
+        }
     };
 
     const saveMessageInHistory = (entry) => {
@@ -6011,6 +7540,8 @@ function initializeTeamChat() {
                 hasAnnouncedConnection = true;
                 setConnectionState(true);
                 isChatConnecting = false;
+                lastValidatedChatConfig = getCurrentChatConfig();
+                updateChatValidateButtonState();
                 console.info(`[Chat] Connecté au canal "${roomName}" (${CHAT_BROKER_URL}).`);
 
                 while (pendingChatMessages.length) {
@@ -6293,6 +7824,13 @@ function initializeTeamChat() {
         closeClearModal();
     });
 
+    roomInput.addEventListener('input', updateChatValidateButtonState);
+    roomInput.addEventListener('change', updateChatValidateButtonState);
+    userInput.addEventListener('input', updateChatValidateButtonState);
+    userInput.addEventListener('change', updateChatValidateButtonState);
+    validateChatConfigButton.addEventListener('click', applyChatConfigValidation);
+    updateChatValidateButtonState();
+
     connectButton.addEventListener('click', () => {
         if (chatConnected || isChatConnecting) {
             disconnectFromChat();
@@ -6418,6 +7956,9 @@ function escapeHtml(value) {
 
 function initializeCalculator() {
     let isSharedHeaderSyncing = false;
+    let activeRltMassWrapper = null;
+    let activeRltMassLastEdited = null;
+    let activeRltMassCalculationMode = null;
 
     function getSharedHeaderMainId(wrapper) {
         if (!wrapper) return '';
@@ -6489,6 +8030,47 @@ function initializeCalculator() {
     const onglets = document.querySelectorAll('.onglet-bouton');
     const csLftwDisplay = document.getElementById('cs-lftw-display');
     const refreshGpsBtn = document.getElementById('refresh-gps-btn');
+    const deroutEmptyRetardantCheckbox = document.getElementById('derout-empty-retardant-checkbox');
+
+    function getCurrentGpsAgeLabel() {
+        if (!lastPosition || !lastPosition.timestamp) return null;
+        const ageMs = Date.now() - Number(lastPosition.timestamp);
+        if (!Number.isFinite(ageMs) || ageMs < 0) return null;
+        const ageMinutes = Math.floor(ageMs / 60000);
+        if (ageMinutes < 1) return 'moins d’1 min';
+        if (ageMinutes < 60) return `${ageMinutes} min`;
+        const ageHours = Math.floor(ageMinutes / 60);
+        const remainingMinutes = ageMinutes % 60;
+        return remainingMinutes ? `${ageHours} h ${remainingMinutes} min` : `${ageHours} h`;
+    }
+
+    function updateDeroutementGpsStatus(extraText = '') {
+        const status = document.getElementById('derout-gps-status');
+        if (!status) return;
+
+        if (!lastPosition || !lastPosition.timestamp) {
+            status.textContent = extraText || 'GPS non actualisé';
+            status.className = 'derout-gps-status derout-gps-status-missing';
+            return;
+        }
+
+        const updatedAt = new Date(Number(lastPosition.timestamp));
+        const hhmm = updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+        const ageLabel = getCurrentGpsAgeLabel();
+        status.textContent = `${extraText || 'GPS actualisé'} à ${hhmm}${ageLabel ? ` — ${ageLabel}` : ''}`;
+        status.className = 'derout-gps-status derout-gps-status-ok';
+    }
+
+    if (deroutEmptyRetardantCheckbox) {
+        deroutEmptyRetardantCheckbox.checked = localStorage.getItem(DEROUT_EMPTY_RETARDANT_KEY) === 'true';
+        deroutEmptyRetardantCheckbox.addEventListener('change', () => {
+            localStorage.setItem(DEROUT_EMPTY_RETARDANT_KEY, deroutEmptyRetardantCheckbox.checked ? 'true' : 'false');
+            masterRecalculate();
+        });
+    }
+
+    updateDeroutementGpsStatus();
+
     refreshGpsBtn.addEventListener('click', () => {
         if (!navigator.geolocation) {
             alert("La géolocalisation n'est pas supportée par votre navigateur.");
@@ -6498,8 +8080,11 @@ function initializeCalculator() {
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 updateUserPosition(pos);
+                updateDeroutementGpsStatus('GPS actualisé manuellement');
+                masterRecalculate();
             },
             () => {
+                updateDeroutementGpsStatus('GPS non actualisé');
                 alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
             },
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -6513,7 +8098,7 @@ function initializeCalculator() {
                 const now = new Date();
                 const times = SunCalc.getTimes(now, baseAirport.lat, baseAirport.lon);
                 const sunsetString = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
-                csLftwDisplay.value = sunsetString;
+                if (csLftwDisplay) csLftwDisplay.value = sunsetString;
                 const previCsDisplay = document.getElementById('previ-cs-lftw-display');
                 if (previCsDisplay) previCsDisplay.value = sunsetString;
                 return;
@@ -6521,7 +8106,7 @@ function initializeCalculator() {
                 // ignore
             }
         }
-        csLftwDisplay.value = '--:--';
+        if (csLftwDisplay) csLftwDisplay.value = '--:--';
         const previCsDisplay = document.getElementById('previ-cs-lftw-display');
         if (previCsDisplay) previCsDisplay.value = '--:--';
     }
@@ -6630,23 +8215,310 @@ function initializeCalculator() {
         });
     });
 
-    function saveCalculatorState() {
+
+    function createEmptyFlight(number = 1) {
+        return {
+            id: `flight_${Date.now()}_${Math.random().toString(16).slice(2, 8)}`,
+            number,
+            closed: false,
+            state: {
+                'bloc-depart': '',
+                'fuel-depart': '3400 kg',
+                'tmd': '21:30',
+                'limite-hdv': '08:00',
+                calculator_table_data: []
+            }
+        };
+    }
+
+    function normalizeFlightNumbers() {
+        dailyFlights.forEach((flight, index) => {
+            flight.number = index + 1;
+        });
+    }
+
+    function readCalculatorStateFromDom() {
         const state = {};
         document.querySelectorAll('#calculator-modal .input-wrapper').forEach(wrapper => {
             if (wrapper.id) {
-                state[wrapper.id] = wrapper.querySelector('.display-input').value;
+                state[wrapper.id] = wrapper.querySelector('.display-input')?.value || '';
             }
         });
+
         const tableData = [];
         document.querySelectorAll('#bloc-fuel tbody tr').forEach(row => {
-            tableData.push({
-                time: row.querySelector('.time-input-wrapper .display-input').value,
-                fuel: row.querySelector('.numeric-input-wrapper .display-input').value,
-                oaci: row.dataset.airportOaci || row.querySelector('.airport-oaci-cell')?.textContent?.replace('--', '').trim() || ''
-            });
+            const time = row.querySelector('.time-input-wrapper .display-input')?.value || '';
+            const fuel = row.querySelector('.numeric-input-wrapper .display-input')?.value || '';
+            const rltWrapper = row.querySelector('.rlt-mass-input-wrapper');
+            const rltMass = rltWrapper?.querySelector('.display-input')?.value || '';
+            const rltVolume = rltWrapper?.dataset.volume || '';
+            const rltDensity = rltWrapper?.dataset.density || '';
+            const oaci = row.dataset.airportOaci || row.querySelector('.airport-oaci-cell')?.textContent?.replace('--', '').trim() || '';
+            if (time || fuel || oaci || rltMass || rltVolume || rltDensity) {
+                tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity });
+            }
         });
         state.calculator_table_data = tableData;
+        return state;
+    }
+
+    function getFlightDurationFromState(state) {
+        if (!state) return 0;
+
+        let previousBlocArrivee = parseTime(state['bloc-depart']);
+        let cumulative = 0;
+
+        (state.calculator_table_data || []).forEach(rowData => {
+            const blocArrivee = parseTime(rowData.time);
+            if (blocArrivee !== null && previousBlocArrivee !== null) {
+                const delta = blocArrivee - previousBlocArrivee;
+                if (delta > 0) cumulative += delta;
+            }
+            if (blocArrivee !== null) previousBlocArrivee = blocArrivee;
+        });
+
+        return cumulative;
+    }
+
+    function getActiveFlightIndex() {
+        return dailyFlights.findIndex(flight => flight.id === activeFlightId);
+    }
+
+    function getCumulativeHdvBeforeActiveFlight() {
+        const activeIndex = getActiveFlightIndex();
+        if (activeIndex <= 0) return 0;
+
+        return dailyFlights
+            .slice(0, activeIndex)
+            .reduce((total, flight) => total + getFlightDurationFromState(flight.state), 0);
+    }
+
+    function getGlobalLimitHdvMinutes() {
+        /*
+         * v12.31 — Limite HDV multi-vols :
+         * la limite saisie du Vol n°1 devient la limite journée de référence.
+         * Les vols suivants affichent la limite restante avant le vol actif.
+         */
+        const firstFlight = dailyFlights[0];
+        const firstLimit = parseTime(firstFlight?.state?.['limite-hdv']);
+        if (firstLimit !== null) return firstLimit;
+
+        const activeLimit = parseTime(document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '');
+        return activeLimit !== null ? activeLimit : parseTime('08:00');
+    }
+
+    function getEffectiveLimitHdvForActiveFlight() {
+        const globalLimit = getGlobalLimitHdvMinutes();
+        let before = 0;
+        try {
+            before = getCumulativeHdvBeforeActiveFlight();
+        } catch (_) {
+            before = 0;
+        }
+        if (globalLimit === null) return null;
+        return Math.max(0, globalLimit - before);
+    }
+
+    function updateDisplayedLimitHdvForActiveFlight() {
+        const effectiveLimit = getEffectiveLimitHdvForActiveFlight();
+        const effectiveLabel = formatTime(effectiveLimit) || '00:00';
+
+        const mainWrapper = document.getElementById('limite-hdv');
+        const previWrapper = document.getElementById('previ-limite-hdv');
+
+        [mainWrapper, previWrapper].forEach(wrapper => {
+            const input = wrapper?.querySelector('.display-input');
+            const engine = wrapper?.querySelector('.engine-input');
+            if (!input) return;
+            input.value = effectiveLabel;
+            input.dataset.effectiveMultiflightLimit = effectiveLabel;
+            if (engine) engine.value = effectiveLabel;
+        });
+    }
+
+    function persistFlights() {
+        normalizeFlightNumbers();
+        localStorage.setItem(MULTI_FLIGHT_STORAGE_KEY, JSON.stringify(dailyFlights));
+        if (activeFlightId) {
+            localStorage.setItem(ACTIVE_FLIGHT_ID_STORAGE_KEY, activeFlightId);
+        }
+    }
+
+    function updateActiveFlightStateFromDom() {
+        if (!activeFlightId || isApplyingFlightState) return;
+        const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+        if (!activeFlight) return;
+        const nextState = readCalculatorStateFromDom();
+
+        /*
+         * v12.31 : pour les vols n°2 et suivants, le champ LIMITE HDV affiché
+         * est le restant journée. On ne doit pas l'utiliser comme nouvelle limite
+         * globale, sinon elle baisse à chaque changement de vol.
+         */
+        if (getActiveFlightIndex() > 0 && dailyFlights[0]?.state?.['limite-hdv']) {
+            nextState['limite-hdv'] = dailyFlights[0].state['limite-hdv'];
+        }
+
+        activeFlight.state = nextState;
+        persistFlights();
+    }
+
+    function ensureFlightsLoadedFromStorage() {
+        try {
+            const savedFlights = JSON.parse(localStorage.getItem(MULTI_FLIGHT_STORAGE_KEY) || 'null');
+            if (Array.isArray(savedFlights) && savedFlights.length) {
+                dailyFlights = savedFlights;
+            }
+        } catch (_) {
+            dailyFlights = [];
+        }
+
+        if (!dailyFlights.length) {
+            let legacyState = {};
+            try {
+                legacyState = JSON.parse(localStorage.getItem('calculator_state') || '{}') || {};
+            } catch (_) {
+                legacyState = {};
+            }
+            dailyFlights = [createEmptyFlight(1)];
+            dailyFlights[0].state = {
+                'bloc-depart': legacyState['bloc-depart'] || '',
+                'fuel-depart': legacyState['fuel-depart'] || '3400 kg',
+                'tmd': legacyState['tmd'] || '21:30',
+                'limite-hdv': legacyState['limite-hdv'] || '08:00',
+                'deroutement-heure-wrapper': legacyState['deroutement-heure-wrapper'] || '',
+                'deroutement-fuel-wrapper': legacyState['deroutement-fuel-wrapper'] || '',
+                'fuel-sur-feu-wrapper': legacyState['fuel-sur-feu-wrapper'] || '',
+                'suivi-conso-rotation-wrapper': legacyState['suivi-conso-rotation-wrapper'] || '',
+                'suivi-duree-rotation-wrapper': legacyState['suivi-duree-rotation-wrapper'] || '',
+                calculator_table_data: legacyState.calculator_table_data || []
+            };
+        }
+
+        normalizeFlightNumbers();
+
+        const savedActiveId = localStorage.getItem(ACTIVE_FLIGHT_ID_STORAGE_KEY);
+        activeFlightId = dailyFlights.some(flight => flight.id === savedActiveId)
+            ? savedActiveId
+            : dailyFlights[dailyFlights.length - 1].id;
+
+        persistFlights();
+    }
+
+    function refreshFlightSelector() {
+        const select = document.getElementById('flight-select');
+        const closeButton = document.getElementById('close-flight-btn');
+        if (!select) return;
+
+        if (!Array.isArray(dailyFlights) || !dailyFlights.length) {
+            dailyFlights = [createEmptyFlight(1)];
+            activeFlightId = dailyFlights[0].id;
+        }
+
+        select.innerHTML = '';
+        dailyFlights.forEach(flight => {
+            const option = document.createElement('option');
+            option.value = flight.id;
+            option.textContent = `Vol n°${flight.number}${flight.closed ? ' — clôturé' : ' — en cours'}`;
+            select.appendChild(option);
+        });
+        select.value = activeFlightId || '';
+
+        const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+        if (closeButton) {
+            closeButton.textContent = activeFlight?.closed ? 'Réouvrir' : 'Clôturer';
+        }
+
+        updateActiveFlightLockState();
+    }
+
+    function updateActiveFlightLockState() {
+        const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+        const isClosed = !!activeFlight?.closed;
+        const blocFuelPanel = document.getElementById('bloc-fuel');
+        const lockStatus = document.getElementById('flight-lock-status');
+
+        if (blocFuelPanel) {
+            blocFuelPanel.classList.toggle('flight-locked', isClosed);
+        }
+
+        if (lockStatus) {
+            lockStatus.textContent = isClosed ? 'Vol clôturé — verrouillé' : '';
+            lockStatus.style.display = isClosed ? 'inline-flex' : 'none';
+        }
+
+        /*
+         * v12.44 — verrouillage réel des vols clôturés :
+         * les champs du vol restent lisibles mais ne doivent plus être modifiables
+         * tant que l'utilisateur n'a pas cliqué sur “Réouvrir”.
+         */
+        const editableSelectors = [
+            '#bloc-fuel .header-section .input-wrapper',
+            '#bloc-fuel .table-wrapper .input-wrapper'
+        ];
+
+        editableSelectors.forEach(selector => {
+            document.querySelectorAll(selector).forEach(wrapper => {
+                wrapper.classList.toggle('locked-input-wrapper', isClosed);
+                wrapper.setAttribute('aria-disabled', isClosed ? 'true' : 'false');
+            });
+        });
+    }
+
+    function applyFlightStateToDom(state) {
+        isApplyingFlightState = true;
+        try {
+            const tableBody = document.querySelector('#bloc-fuel tbody');
+            tableBody.innerHTML = '';
+
+            initializeTimeInput(document.getElementById('bloc-depart'), state['bloc-depart']);
+            initializeNumericInput(document.getElementById('fuel-depart'), state['fuel-depart'] || '3400 kg');
+            initializeTimeInput(document.getElementById('tmd'), state['tmd'] || '21:30');
+            initializeTimeInput(document.getElementById('limite-hdv'), state['limite-hdv'] || '08:00');
+
+            initializeTimeInput(document.getElementById('previ-bloc-depart'), state['bloc-depart']);
+            initializeNumericInput(document.getElementById('previ-fuel-depart'), state['fuel-depart'] || '3400 kg');
+            initializeTimeInput(document.getElementById('previ-tmd'), state['tmd'] || '21:30');
+            initializeTimeInput(document.getElementById('previ-limite-hdv'), state['limite-hdv'] || '08:00');
+
+            refreshSharedHeaderMirrorValues();
+            initializeTimeInput(document.getElementById('deroutement-heure-wrapper'), state['deroutement-heure-wrapper']);
+            initializeNumericInput(document.getElementById('deroutement-fuel-wrapper'), state['deroutement-fuel-wrapper']);
+            initializeNumericInput(document.getElementById('fuel-sur-feu-wrapper'), state['fuel-sur-feu-wrapper']);
+            initializeNumericInput(document.getElementById('suivi-conso-rotation-wrapper'), state['suivi-conso-rotation-wrapper']);
+            initializeTimeInput(document.getElementById('suivi-duree-rotation-wrapper'), state['suivi-duree-rotation-wrapper']);
+
+            const tableData = state.calculator_table_data || [];
+            tableData.forEach(rowData => addNewRow(tableBody, rowData, false));
+
+            const rowsToAdd = Math.max(6, tableBody.rows.length + 1) - tableBody.rows.length;
+            for (let i = 0; i < rowsToAdd; i++) {
+                addNewRow(tableBody, null, i === rowsToAdd - 1);
+            }
+        } finally {
+            isApplyingFlightState = false;
+        }
+
+        updateBlocDepartAirportLabel();
+        refreshBlocFuelAirportOaciCells();
+        updateDisplayedLimitHdvForActiveFlight();
+        refreshSharedHeaderMirrorValues();
+        updateActiveFlightLockState();
+        masterRecalculate();
+    }
+
+    function loadActiveFlightState() {
+        ensureFlightsLoadedFromStorage();
+        const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId) || dailyFlights[dailyFlights.length - 1];
+        activeFlightId = activeFlight.id;
+        applyFlightStateToDom(activeFlight.state || createEmptyFlight(activeFlight.number).state);
+        refreshFlightSelector();
+    }
+
+    function saveCalculatorState() {
+        const state = readCalculatorStateFromDom();
         localStorage.setItem('calculator_state', JSON.stringify(state));
+        updateActiveFlightStateFromDom();
     }
 
     function initializeTimeInput(wrapper, initialValue = '') {
@@ -6897,8 +8769,20 @@ function initializeCalculator() {
         }
     }
     function closeFuelSplitModal() {
-        const { modal } = getFuelSplitModalElements();
-        if (modal) modal.style.display = 'none';
+        const { modal, leftInput, rightInput, totalInput } = getFuelSplitModalElements();
+
+        try {
+            [leftInput, rightInput, totalInput].forEach(input => {
+                if (input && typeof input.blur === 'function') input.blur();
+            });
+        } catch (_) {}
+
+        if (modal) {
+            modal.style.setProperty('display', 'none', 'important');
+            modal.classList.remove('active', 'open', 'show');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+
         resetFuelSplitKeyboardOffset();
         activeFuelSplitInput = null;
     }
@@ -6966,19 +8850,36 @@ function initializeCalculator() {
         });
 
         if (validateBtn) {
-            validateBtn.addEventListener('click', () => {
+            validateBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+
                 if (!activeFuelSplitInput) {
                     closeFuelSplitModal();
                     return;
                 }
+
+                const targetInput = activeFuelSplitInput;
                 const total = cleanFuelDigits(totalInput?.value || '');
-                activeFuelSplitInput.value = total ? `${parseInt(total, 10)} kg` : '';
-                syncSharedHeaderFromWrapper(activeFuelSplitInput.closest('.input-wrapper'));
+                targetInput.value = total ? `${parseInt(total, 10)} kg` : '';
+
+                const targetWrapper = targetInput.closest('.input-wrapper');
+                syncSharedHeaderFromWrapper(targetWrapper);
                 refreshSharedHeaderMirrorValues();
+
+                /*
+                 * v12.30 — correction Bloc/Fuel multi-vols :
+                 * on force le recalcul immédiat avant fermeture de la fenêtre carburant,
+                 * puis on sauvegarde le vol actif. Cela évite les colonnes dérivées vides.
+                 */
+                try { recalculateBlocFuel(); } catch (_) {}
                 masterRecalculate();
                 saveCalculatorState();
+
                 closeFuelSplitModal();
-            });
+                setTimeout(closeFuelSplitModal, 80);
+                setTimeout(closeFuelSplitModal, 250);
+            }, { capture: true });
         }
 
         if (clearBtn) {
@@ -7009,7 +8910,9 @@ function initializeCalculator() {
         if (rightInput) rightInput.value = '';
         totalInput.value = cleanFuelDigits(displayInput?.value || '');
         resetFuelSplitKeyboardOffset();
+        modal.style.removeProperty('display');
         modal.style.display = 'flex';
+        modal.removeAttribute('aria-hidden');
 
         /*
          * Focus immédiat : indispensable sur iPad/iPhone pour ouvrir le clavier
@@ -7074,18 +8977,341 @@ function initializeCalculator() {
         if (clearBtn) { clearBtn.addEventListener('click', () => { displayInput.value = ''; masterRecalculate(); saveCalculatorState(); }); }
     }
 
+
+    function parseDecimalInput(value) {
+        if (value === null || value === undefined) return null;
+        const normalized = String(value).trim().replace(',', '.').replace(/[^0-9.]/g, '');
+        if (!normalized) return null;
+        const number = Number(normalized);
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function normalizeRltDensityInput(value) {
+        const raw = String(value || '').replace(',', '.').replace(/[^0-9.]/g, '');
+
+        /*
+         * v12.42 — densité retardant :
+         * l'usage attendu est toujours 1.06 à 1.10.
+         * On garde donc le préfixe visuel "1." et l'utilisateur ne saisit
+         * que la partie décimale si besoin.
+         */
+        const digits = raw.replace(/\D/g, '');
+
+        if (!digits) return '1.';
+
+        let decimals = '';
+        if (digits.startsWith('1')) {
+            decimals = digits.slice(1);
+        } else {
+            decimals = digits;
+        }
+
+        decimals = decimals.slice(0, 3);
+        return `1.${decimals}`;
+    }
+
+    function parseRltDensityInput(value) {
+        const normalized = String(value || '').trim().replace(',', '.');
+        if (normalized === '1.' || normalized === '1') return null;
+        const density = parseDecimalInput(normalized);
+        if (density === null || density <= 0) return null;
+        return density;
+    }
+
+    function markRltCalculatedField(fieldName) {
+        const { volumeInput, densityInput, massInput } = getRltMassModalElements();
+        [volumeInput, densityInput, massInput].filter(Boolean).forEach(input => {
+            input.classList.remove('rlt-calculated-field');
+        });
+
+        if (fieldName === 'volume') volumeInput?.classList.add('rlt-calculated-field');
+        if (fieldName === 'mass') massInput?.classList.add('rlt-calculated-field');
+    }
+
+    function formatDecimalValue(value, decimals = 2) {
+        if (!Number.isFinite(value)) return '';
+        return value.toFixed(decimals).replace(/\.?0+$/, '').replace('.', ',');
+    }
+
+    function formatKgValue(value) {
+        if (!Number.isFinite(value)) return '';
+        return `${Math.round(value)} kg`;
+    }
+
+    function getRltMassModalElements() {
+        return {
+            modal: document.getElementById('rlt-mass-modal'),
+            volumeInput: document.getElementById('rlt-volume-input'),
+            densityInput: document.getElementById('rlt-density-input'),
+            massInput: document.getElementById('rlt-mass-input'),
+            validateBtn: document.getElementById('rlt-mass-validate-btn'),
+            clearBtn: document.getElementById('rlt-mass-clear-btn'),
+            cancelBtn: document.getElementById('rlt-mass-cancel-btn'),
+            closeBtn: document.getElementById('rlt-mass-close-btn')
+        };
+    }
+
+    function closeRltMassModal() {
+        const { modal, volumeInput, densityInput, massInput } = getRltMassModalElements();
+        try {
+            [volumeInput, densityInput, massInput].forEach(input => input && input.blur && input.blur());
+        } catch (_) {}
+        if (modal) {
+            modal.style.setProperty('display', 'none', 'important');
+            modal.setAttribute('aria-hidden', 'true');
+        }
+        activeRltMassWrapper = null;
+        activeRltMassLastEdited = null;
+        activeRltMassCalculationMode = null;
+        markRltCalculatedField(null);
+    }
+
+    function syncRltMassModalFromInputs() {
+        const { volumeInput, densityInput, massInput } = getRltMassModalElements();
+        if (!volumeInput || !densityInput || !massInput) return;
+
+        if (!densityInput.value || densityInput.value === '1') {
+            densityInput.value = '1.';
+        }
+
+        const volume = parseDecimalInput(volumeInput.value);
+        const density = parseRltDensityInput(densityInput.value);
+        const mass = parseDecimalInput(massInput.value);
+
+        if (density === null) {
+            markRltCalculatedField(null);
+            return;
+        }
+
+        /*
+         * v12.42 :
+         * - mode normal : Volume + Densité => Masse calculée sur fond vert pastel.
+         * - mode prévision : Masse + Densité => Volume calculé sur fond vert pastel.
+         */
+        if (activeRltMassLastEdited === 'mass') {
+            activeRltMassCalculationMode = 'massToVolume';
+        } else if (activeRltMassLastEdited === 'volume') {
+            activeRltMassCalculationMode = 'volumeToMass';
+        }
+
+        if (activeRltMassCalculationMode === 'massToVolume' && mass !== null) {
+            volumeInput.value = formatDecimalValue(mass / density, 0);
+            markRltCalculatedField('volume');
+            return;
+        }
+
+        if (volume !== null) {
+            massInput.value = formatDecimalValue(volume * density, 0);
+            activeRltMassCalculationMode = 'volumeToMass';
+            markRltCalculatedField('mass');
+            return;
+        }
+
+        if (mass !== null) {
+            volumeInput.value = formatDecimalValue(mass / density, 0);
+            activeRltMassCalculationMode = 'massToVolume';
+            markRltCalculatedField('volume');
+            return;
+        }
+
+        markRltCalculatedField(null);
+    }
+
+    function setupRltMassModalOnce() {
+        const { modal, volumeInput, densityInput, massInput, validateBtn, clearBtn, cancelBtn, closeBtn } = getRltMassModalElements();
+        if (!modal || modal.dataset.bound === '1') return;
+        modal.dataset.bound = '1';
+
+        const bindInput = (input, field) => {
+            if (!input) return;
+            input.addEventListener('input', () => {
+                if (field === 'density') {
+                    input.value = normalizeRltDensityInput(input.value);
+                    try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) {}
+                } else if (field === 'volume') {
+                    input.value = String(input.value || '').replace(/[^0-9]/g, '');
+                } else {
+                    input.value = String(input.value || '').replace(',', '.').replace(/[^0-9.]/g, '');
+                }
+                activeRltMassLastEdited = field;
+                syncRltMassModalFromInputs();
+            });
+            input.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    validateBtn?.click();
+                }
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeRltMassModal();
+                }
+            });
+        };
+
+        bindInput(volumeInput, 'volume');
+        bindInput(densityInput, 'density');
+        bindInput(massInput, 'mass');
+
+        if (validateBtn) {
+            validateBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (!activeRltMassWrapper) {
+                    closeRltMassModal();
+                    return;
+                }
+
+                syncRltMassModalFromInputs();
+
+                let volume = parseDecimalInput(volumeInput?.value);
+                const density = parseRltDensityInput(densityInput?.value);
+                let mass = parseDecimalInput(massInput?.value);
+
+                if (density !== null) {
+                    if (activeRltMassCalculationMode === 'massToVolume' && mass !== null) {
+                        volume = mass / density;
+                        if (volumeInput) volumeInput.value = formatDecimalValue(volume, 1);
+                    } else if (volume !== null) {
+                        mass = volume * density;
+                        if (massInput) massInput.value = formatDecimalValue(mass, 0);
+                    } else if (mass !== null) {
+                        volume = mass / density;
+                        if (volumeInput) volumeInput.value = formatDecimalValue(volume, 1);
+                    }
+                }
+
+                activeRltMassWrapper.dataset.volume = volume !== null ? formatDecimalValue(volume, 0) : '';
+                activeRltMassWrapper.dataset.density = density !== null ? formatDecimalValue(density, 3) : '';
+                activeRltMassWrapper.dataset.mass = mass !== null ? String(Math.round(mass)) : '';
+
+                const displayInput = activeRltMassWrapper.querySelector('.display-input');
+                if (displayInput) displayInput.value = mass !== null ? formatKgValue(mass) : '';
+
+                masterRecalculate();
+                saveCalculatorState();
+                closeRltMassModal();
+            }, { capture: true });
+        }
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', () => {
+                if (volumeInput) volumeInput.value = '';
+                if (densityInput) densityInput.value = '1.';
+                if (massInput) massInput.value = '';
+                activeRltMassLastEdited = null;
+                activeRltMassCalculationMode = null;
+                markRltCalculatedField(null);
+            });
+        }
+
+        if (cancelBtn) cancelBtn.addEventListener('click', closeRltMassModal);
+        if (closeBtn) closeBtn.addEventListener('click', closeRltMassModal);
+        modal.addEventListener('click', (event) => {
+            if (event.target === modal) closeRltMassModal();
+        });
+    }
+
+    function openRltMassModal(wrapper) {
+        const { modal, volumeInput, densityInput, massInput } = getRltMassModalElements();
+        if (!modal || !wrapper) return;
+
+        setupRltMassModalOnce();
+        activeRltMassWrapper = wrapper;
+        activeRltMassLastEdited = null;
+
+        if (volumeInput) volumeInput.value = wrapper.dataset.volume || '';
+        if (densityInput) densityInput.value = wrapper.dataset.density || '1.';
+        if (massInput) massInput.value = wrapper.dataset.mass || String(wrapper.querySelector('.display-input')?.value || '').replace(/[^0-9]/g, '');
+
+        activeRltMassCalculationMode = null;
+        markRltCalculatedField(null);
+
+        modal.style.removeProperty('display');
+        modal.style.display = 'flex';
+        modal.removeAttribute('aria-hidden');
+
+        setTimeout(() => {
+            try {
+                if (volumeInput && !volumeInput.value) volumeInput.focus({ preventScroll: false });
+                else if (massInput) massInput.focus({ preventScroll: false });
+            } catch (_) {}
+        }, 50);
+    }
+
+    function initializeRltMassInput(wrapper, data = {}) {
+        if (!wrapper) return;
+        const displayInput = wrapper.querySelector('.display-input');
+        const clearBtn = wrapper.querySelector('.clear-btn');
+
+        wrapper.dataset.volume = data?.rltVolume || '';
+        wrapper.dataset.density = data?.rltDensity || '';
+        wrapper.dataset.mass = data?.rltMass ? String(data.rltMass).replace(/[^0-9]/g, '') : '';
+        if (displayInput) displayInput.value = data?.rltMass || '';
+
+        setupRltMassModalOnce();
+
+        const open = (event) => {
+            if (event) {
+                event.preventDefault();
+                event.stopPropagation();
+            }
+            if (wrapper.closest('#bloc-fuel') && wrapper.classList.contains('locked-input-wrapper')) return;
+            openRltMassModal(wrapper);
+        };
+
+        wrapper.addEventListener('click', open);
+        if (displayInput) displayInput.addEventListener('click', open);
+
+        if (clearBtn) {
+            clearBtn.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                wrapper.dataset.volume = '';
+                wrapper.dataset.density = '';
+                wrapper.dataset.mass = '';
+                if (displayInput) displayInput.value = '';
+                masterRecalculate();
+                saveCalculatorState();
+            });
+        }
+    }
+
     const addNewRow = (tableBody, data, isLastRow = false) => {
         const row = document.createElement('tr');
-        row.innerHTML = `<td><div class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></td><td><div class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></td><td class="airport-oaci-cell">--</td><td class="duree-rotation-cell"></td><td class="fuel-rotation-cell"></td><td class="tps-vol-cell"></td><td class="tps-vol-restant-cell"></td>`;
+        row.innerHTML = `<td><div class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></td><td><div class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></td><td class="airport-oaci-cell">--</td><td><div class="input-wrapper rlt-mass-input-wrapper" data-unit="kg"><input type="text" class="display-input" readonly placeholder="[kg]"><span class="clear-btn">&times;</span></div></td><td class="duree-rotation-cell"></td><td class="fuel-rotation-cell"></td><td class="tps-vol-cell"></td><td class="tps-vol-restant-cell"></td>`;
         tableBody.appendChild(row);
 
         const timeWrapper = row.querySelector('.time-input-wrapper');
         const numericWrapper = row.querySelector('.numeric-input-wrapper');
+        const rltMassWrapper = row.querySelector('.rlt-mass-input-wrapper');
 
         initializeTimeInput(timeWrapper, data ? data.time : '');
         initializeNumericInput(numericWrapper, data ? data.fuel : '');
+        initializeRltMassInput(rltMassWrapper, data || {});
         row.dataset.airportOaci = data?.oaci || '';
         updateRowAirportOaci(row);
+
+        const forceRowRecalculateAndSave = () => {
+            /*
+             * v12.30 — sécurité : une modification dans une ligne BLOC/FUEL doit
+             * toujours recalculer les colonnes Durée/Fuel/Tps de vol.
+             */
+            try { updateRowAirportOaci(row); } catch (_) {}
+            try { recalculateBlocFuel(); } catch (_) {}
+            masterRecalculate();
+            saveCalculatorState();
+        };
+
+        [
+            timeWrapper.querySelector('.display-input'),
+            timeWrapper.querySelector('.engine-input'),
+            numericWrapper.querySelector('.display-input'),
+            rltMassWrapper.querySelector('.display-input')
+        ].filter(Boolean).forEach(input => {
+            input.addEventListener('change', forceRowRecalculateAndSave);
+            input.addEventListener('input', forceRowRecalculateAndSave);
+            input.addEventListener('blur', forceRowRecalculateAndSave);
+        });
 
         const checkAndAddRow = () => {
             if (row.nextSibling) {
@@ -7107,37 +9333,7 @@ function initializeCalculator() {
     };
 
     function loadCalculatorState() {
-        const tableBody = document.querySelector('#bloc-fuel tbody');
-        tableBody.innerHTML = '';
-        const savedStateJSON = localStorage.getItem('calculator_state');
-        let state = {};
-        if (savedStateJSON) { state = JSON.parse(savedStateJSON); }
-        initializeTimeInput(document.getElementById('bloc-depart'), state['bloc-depart']);
-        initializeNumericInput(document.getElementById('fuel-depart'), state['fuel-depart'] || '3400 kg');
-        initializeTimeInput(document.getElementById('tmd'), state['tmd'] || '21:30');
-        initializeTimeInput(document.getElementById('limite-hdv'), state['limite-hdv'] || '08:00');
-
-        initializeTimeInput(document.getElementById('previ-bloc-depart'), state['bloc-depart']);
-        initializeNumericInput(document.getElementById('previ-fuel-depart'), state['fuel-depart'] || '3400 kg');
-        initializeTimeInput(document.getElementById('previ-tmd'), state['tmd'] || '21:30');
-        initializeTimeInput(document.getElementById('previ-limite-hdv'), state['limite-hdv'] || '08:00');
-        refreshSharedHeaderMirrorValues();
-        initializeTimeInput(document.getElementById('deroutement-heure-wrapper'), state['deroutement-heure-wrapper']);
-        initializeNumericInput(document.getElementById('deroutement-fuel-wrapper'), state['deroutement-fuel-wrapper']);
-        initializeNumericInput(document.getElementById('fuel-sur-feu-wrapper'), state['fuel-sur-feu-wrapper']);
-        initializeNumericInput(document.getElementById('suivi-conso-rotation-wrapper'), state['suivi-conso-rotation-wrapper']);
-        initializeTimeInput(document.getElementById('suivi-duree-rotation-wrapper'), state['suivi-duree-rotation-wrapper']);
-
-        const tableData = state.calculator_table_data || [];
-        tableData.forEach(rowData => {
-            addNewRow(tableBody, rowData, false);
-        });
-
-        const rowsToAdd = Math.max(6, tableBody.rows.length + 1) - tableBody.rows.length;
-        for (let i = 0; i < rowsToAdd; i++) {
-             const isLastRow = (i === rowsToAdd - 1);
-             addNewRow(tableBody, null, isLastRow);
-        }
+        loadActiveFlightState();
     }
 
     loadCalculatorState();
@@ -7197,15 +9393,99 @@ function initializeCalculator() {
         });
     });
 
+    const flightSelect = document.getElementById('flight-select');
+    const newFlightButton = document.getElementById('new-flight-btn');
+    const closeFlightButton = document.getElementById('close-flight-btn');
+    const deleteFlightButton = document.getElementById('delete-flight-btn');
+
+    if (flightSelect) {
+        flightSelect.addEventListener('change', () => {
+            updateActiveFlightStateFromDom();
+            activeFlightId = flightSelect.value;
+            persistFlights();
+            loadActiveFlightState();
+        });
+    }
+
+    if (newFlightButton) {
+        newFlightButton.addEventListener('click', () => {
+            updateActiveFlightStateFromDom();
+            const newFlight = createEmptyFlight(dailyFlights.length + 1);
+            const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+            if (activeFlight) {
+                newFlight.state['tmd'] = activeFlight.state?.['tmd'] || document.getElementById('tmd')?.querySelector('.display-input')?.value || '21:30';
+                newFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '08:00';
+                newFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '3400 kg';
+            }
+            dailyFlights.push(newFlight);
+            activeFlightId = newFlight.id;
+            persistFlights();
+            loadActiveFlightState();
+        });
+    }
+
+    if (closeFlightButton) {
+        closeFlightButton.addEventListener('click', () => {
+            updateActiveFlightStateFromDom();
+            const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+            if (!activeFlight) return;
+            activeFlight.closed = !activeFlight.closed;
+            persistFlights();
+            refreshFlightSelector();
+            updateActiveFlightLockState();
+
+            if (activeFlight.closed) {
+                const allClosed = dailyFlights.every(flight => flight.closed);
+                if (allClosed) {
+                    const nextFlight = createEmptyFlight(dailyFlights.length + 1);
+                    nextFlight.state['tmd'] = activeFlight.state?.['tmd'] || '21:30';
+                    nextFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || '08:00';
+                    nextFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || '3400 kg';
+                    dailyFlights.push(nextFlight);
+                    activeFlightId = nextFlight.id;
+                    persistFlights();
+                    loadActiveFlightState();
+                }
+            }
+        });
+    }
+
+    if (deleteFlightButton) {
+        deleteFlightButton.addEventListener('click', () => {
+            if (!confirm('Supprimer ce vol ?')) return;
+            dailyFlights = dailyFlights.filter(flight => flight.id !== activeFlightId);
+            if (!dailyFlights.length) {
+                dailyFlights = [createEmptyFlight(1)];
+            }
+            normalizeFlightNumbers();
+            activeFlightId = dailyFlights[Math.min(dailyFlights.length - 1, 0)].id;
+            persistFlights();
+            loadActiveFlightState();
+        });
+    }
+
     resetButton.addEventListener('click', () => {
-        if (confirm("Voulez-vous vraiment remettre tout le tableau à zéro ?")) {
+        if (confirm("Voulez-vous vraiment supprimer tous les vols et remettre le Bloc/Fuel à zéro ?")) {
             localStorage.removeItem('calculator_state');
+            localStorage.removeItem(MULTI_FLIGHT_STORAGE_KEY);
+            localStorage.removeItem(ACTIVE_FLIGHT_ID_STORAGE_KEY);
+            dailyFlights = [createEmptyFlight(1)];
+            activeFlightId = dailyFlights[0].id;
+            persistFlights();
             loadCalculatorState();
             masterRecalculate();
         }
     });
 
-    masterRecalculate = () => { recalculateBlocFuel(); updatePreviTab(); updateSuiviTab(); updateDeroutementTab(); };
+    masterRecalculate = () => {
+        if (!isApplyingFlightState && typeof updateDisplayedLimitHdvForActiveFlight === 'function') {
+            updateDisplayedLimitHdvForActiveFlight();
+        }
+        recalculateBlocFuel();
+        updatePreviTab();
+        updateSuiviTab();
+        updateDeroutementTab();
+    };
 
     masterRecalculate();
 }
