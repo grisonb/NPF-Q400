@@ -4088,3 +4088,1232 @@ body {
 
 /* v12.10 — points noirs aéroports : rendu corrigé côté JS circleMarker */
 
+/* v12.11 — boutons circuits GAAR : forme identique, couleurs explicites */
+#gaar-controls {
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+#gaar-controls .gaar-action-button {
+    min-width: 155px;
+    min-height: 44px;
+    padding: 10px 18px;
+    border-radius: 12px;
+    font-size: 16px;
+    font-weight: 800;
+    line-height: 1.1;
+    cursor: pointer;
+    transition: transform .1s ease, box-shadow .2s ease, background-color .2s ease;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.65), 0 1px 3px rgba(0,0,0,.12);
+}
+
+#gaar-controls .gaar-action-button:active {
+    transform: translateY(1px);
+}
+
+#gaar-controls .gaar-edit-button {
+    color: #0f7a34;
+    background: linear-gradient(180deg, #effff4 0%, #d8f5df 100%);
+    border: 1px solid #16a34a;
+}
+
+#gaar-controls .gaar-edit-button:hover {
+    background: #16a34a;
+    color: #ffffff;
+}
+
+#gaar-controls .gaar-delete-button {
+    color: #b42318;
+    background: linear-gradient(180deg, #fff5f5 0%, #ffdede 100%);
+    border: 1px solid #ef4444;
+}
+
+#gaar-controls .gaar-delete-button:hover {
+    background: #ef4444;
+    color: #ffffff;
+}
+
+/* v12.12 — cartes offline groupées : OpenStreet_01...OpenStreet_05 = OpenStreet */
+.offline-map-group-line .offline-map-name-line strong {
+    color: #005a9c;
+}
+
+.offline-map-select-checkbox[data-partial="true"] {
+    outline: 2px solid #f59e0b;
+    outline-offset: 2px;
+}
+
+/* v12.13 — import gros ZIP : texte de progression plus lisible */
+#import-status-message {
+    line-height: 1.25;
+}
+
+/* v12.19 — bouton reset complet stockage offline */
+.offline-map-reset-line {
+    background: #fff4f4;
+    border: 1px solid rgba(227, 0, 27, 0.25);
+    border-radius: 12px;
+    margin-bottom: 8px;
+}
+
+.offline-map-reset-line small {
+    color: #8a1f2a;
+    font-weight: 600;
+}
+
+.offline-full-reset-btn {
+    background: #b00020 !important;
+    color: #ffffff !important;
+    border-color: #b00020 !important;
+    font-weight: 900 !important;
+}
+
+/* v12.22 — chat : fermeture plus visible + bouton reconnecter */
+#chat-minimize-button {
+    background: #b00020 !important;
+    color: #ffffff !important;
+    border-color: #b00020 !important;
+    width: 46px !important;
+    min-width: 46px !important;
+    height: 34px !important;
+    font-size: 22px !important;
+    font-weight: 900 !important;
+}
+
+#chat-minimize-button::after {
+    content: " Fermer";
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.chat-reconnect-button {
+    border: 1px solid #0d6efd;
+    background: #ffffff;
+    color: #0d4f8b;
+    border-radius: 8px;
+    height: 34px;
+    padding: 0 10px;
+    font-weight: 800;
+    cursor: pointer;
+    white-space: nowrap;
+}
+
+.chat-reconnect-button:disabled {
+    opacity: .65;
+    cursor: wait;
+}
+
+/* v12.23 — chat : fermeture plus propre */
+#chat-minimize-button {
+    background: #ffffff !important;
+    color: #b00020 !important;
+    border: 2px solid #b00020 !important;
+    border-radius: 999px !important;
+    width: auto !important;
+    min-width: 86px !important;
+    height: 34px !important;
+    padding: 0 12px !important;
+    font-size: 13px !important;
+    font-weight: 900 !important;
+    line-height: 1 !important;
+    box-shadow: 0 2px 8px rgba(176, 0, 32, .15);
+}
+
+#chat-minimize-button::after {
+    content: "" !important;
+}
+
+#chat-minimize-button:active {
+    transform: scale(.98);
+}
+
+.chat-reconnect-button {
+    min-height: 34px;
+}
+
+/* v12.24 — chat : bouton Valider qui se dégrise sur modification */
+.chat-validate-config-button {
+    border: 1px solid #0d6efd;
+    background: #0d6efd;
+    color: #ffffff;
+    border-radius: 8px;
+    height: 34px;
+    padding: 0 12px;
+    font-weight: 900;
+    cursor: pointer;
+    white-space: nowrap;
+    min-height: 34px;
+}
+
+.chat-validate-config-button:disabled {
+    background: #e9ecef;
+    border-color: #c9d3e1;
+    color: #7b8794;
+    cursor: default;
+    opacity: 1;
+}
+
+.chat-validate-config-button.is-dirty:not(:disabled) {
+    box-shadow: 0 0 0 3px rgba(13, 110, 253, .18);
+}
+
+/* v12.26 — cellule Base OACI dans les deux premiers onglets */
+.base-oaci-input-wrapper {
+    position: relative;
+}
+
+.base-oaci-input {
+    text-align: center;
+    font-weight: 900;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.base-oaci-input.base-oaci-invalid {
+    border-color: #b00020 !important;
+    background: #fff2f4 !important;
+    color: #b00020 !important;
+}
+
+.base-sunset-hidden {
+    display: none !important;
+}
+
+/* v12.27 — alignement bandeau PREVI avec BLOC/FUEL */
+.previ-shared-header-section {
+    margin: 0 !important;
+    border-bottom: 2px solid var(--border-color) !important;
+    padding: 20px !important;
+    background-color: var(--background-color) !important;
+    box-sizing: border-box !important;
+    width: 100% !important;
+}
+
+#previ-rotations > .header-section.previ-shared-header-section,
+#bloc-fuel > .header-section {
+    align-self: stretch !important;
+}
+
+@media (max-width: 760px) {
+    .previ-shared-header-section {
+        padding: 10px !important;
+        border-bottom-width: 1px !important;
+    }
+}
+
+@media (max-width: 380px) {
+    .previ-shared-header-section {
+        padding: 8px !important;
+    }
+}
+
+/* v12.28 — Bloc/Fuel multi-vols */
+.flight-manager-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 16px;
+    background: #f8fbff;
+    border-bottom: 1px solid var(--border-color);
+    box-sizing: border-box;
+    flex-wrap: wrap;
+}
+
+.flight-manager-bar label {
+    font-weight: 900;
+    color: var(--primary-color);
+    text-transform: uppercase;
+}
+
+#flight-select {
+    min-width: 170px;
+    height: 36px;
+    border: 1px solid var(--border-color);
+    border-radius: 9px;
+    padding: 0 10px;
+    font-weight: 800;
+    background: #fff;
+}
+
+.flight-manager-bar button {
+    height: 36px;
+    border: 1px solid var(--primary-color);
+    border-radius: 9px;
+    padding: 0 12px;
+    background: #fff;
+    color: var(--primary-color);
+    font-weight: 900;
+    cursor: pointer;
+}
+
+#close-flight-btn {
+    background: var(--primary-color);
+    color: #fff;
+}
+
+#delete-flight-btn {
+    border-color: #b00020;
+    color: #b00020;
+}
+
+@media (max-width: 760px) {
+    .flight-manager-bar {
+        gap: 6px;
+        padding: 8px 10px;
+    }
+
+    #flight-select {
+        min-width: 135px;
+        flex: 1 1 135px;
+    }
+
+    .flight-manager-bar button {
+        padding: 0 8px;
+        font-size: 12px;
+    }
+}
+
+/* v12.29 — Déroutement vide retardant */
+.derout-empty-retardant-line {
+    align-items: center;
+}
+
+.derout-empty-retardant-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 900;
+    color: var(--primary-color);
+    background: #f2f8ff;
+    border: 1px solid #cfe2ff;
+    border-radius: 10px;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.derout-empty-retardant-toggle input {
+    width: 18px;
+    height: 18px;
+    accent-color: var(--primary-color);
+}
+
+/* v12.30 — fermeture robuste fenêtre Fuel */
+.fuel-split-modal[aria-hidden="true"] {
+    display: none !important;
+}
+
+/* v12.31 — ordre BLOC/FUEL : header puis Vol n° */
+#bloc-fuel .flight-manager-bar {
+    border-top: 0;
+    border-bottom: 1px solid var(--border-color);
+}
+
+/* v12.33 — Statut GPS DEROUTEMENT/GAAR */
+.derout-gps-status-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-top: 8px;
+}
+
+.derout-gps-status {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    padding: 6px 10px;
+    border-radius: 10px;
+    font-weight: 900;
+    font-size: 13px;
+    border: 1px solid var(--border-color);
+    background: #fff;
+}
+
+.derout-gps-status-ok {
+    color: #0f5132;
+    background: #eaf7ef;
+    border-color: #badbcc;
+}
+
+.derout-gps-status-missing {
+    color: #842029;
+    background: #fff3f3;
+    border-color: #f5c2c7;
+}
+
+@media (max-width: 760px) {
+    .derout-gps-status-row {
+        align-items: stretch;
+    }
+
+    .derout-gps-status-row #refresh-gps-btn,
+    .derout-gps-status {
+        width: 100%;
+        justify-content: center;
+        box-sizing: border-box;
+    }
+}
+
+/* v12.34 — Feux de l'historique affichés sur la carte */
+.fire-history-map-marker {
+    background-color: #d90429 !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 0 0 2px rgba(217, 4, 41, 0.35), 0 2px 7px rgba(0,0,0,0.45) !important;
+    cursor: pointer;
+}
+
+.fire-history-map-tooltip {
+    background: rgba(255, 245, 245, 0.96) !important;
+    border: 1px solid #d90429 !important;
+    border-radius: 7px !important;
+    color: #7f0015 !important;
+    font-weight: 900 !important;
+    box-shadow: 0 1px 6px rgba(0,0,0,.25) !important;
+}
+
+.custom-marker-icon.fire-marker {
+    width: 32px !important;
+    height: 32px !important;
+    line-height: 32px !important;
+}
+
+/* v12.35 — Feux historiques plus petits + popup sélection */
+.custom-marker-icon.fire-marker,
+.fire-history-map-marker {
+    width: 24px !important;
+    height: 24px !important;
+    line-height: 24px !important;
+    font-size: 15px !important;
+}
+
+.fire-history-map-popup {
+    min-width: 145px;
+    text-align: center;
+    font-weight: 900;
+}
+
+.fire-history-map-select-btn {
+    display: block;
+    width: 100%;
+    margin-top: 8px;
+    padding: 7px 10px;
+    border: none;
+    border-radius: 8px;
+    background: var(--primary-color);
+    color: #fff;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+/* Retour à la taille normale des pélicandromes après v12.34 */
+.custom-marker-icon.airport-marker-base {
+    width: 24px !important;
+    height: 24px !important;
+    line-height: 24px !important;
+    font-size: 1em !important;
+}
+
+/* v12.36 — correctif fort tailles icônes carte */
+/* On sort les feux historiques/actifs de .custom-marker-icon pour éviter les anciens 32 px. */
+.active-fire-map-marker,
+.fire-history-map-marker {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    width: 18px !important;
+    height: 18px !important;
+}
+
+.active-fire-map-marker span,
+.fire-history-map-marker span {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 18px !important;
+    height: 18px !important;
+    line-height: 18px !important;
+    border-radius: 50% !important;
+    background: #d90429 !important;
+    border: 2px solid #ffffff !important;
+    box-shadow: 0 0 0 2px rgba(217, 4, 41, 0.28), 0 1px 5px rgba(0,0,0,0.42) !important;
+    color: #fff !important;
+    font-size: 12px !important;
+    box-sizing: border-box !important;
+}
+
+/* Retour forcé des pélicandromes à une taille compacte. */
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base {
+    width: 20px !important;
+    height: 20px !important;
+    line-height: 20px !important;
+    font-size: 12px !important;
+    border-width: 2px !important;
+    box-sizing: border-box !important;
+}
+
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 16px !important;
+}
+
+/* v12.37 — taille mini icônes carte, alignée sur version pérenne */
+.active-fire-map-marker,
+.fire-history-map-marker {
+    width: 14px !important;
+    height: 14px !important;
+}
+
+.active-fire-map-marker span,
+.fire-history-map-marker span {
+    width: 14px !important;
+    height: 14px !important;
+    line-height: 14px !important;
+    font-size: 9px !important;
+    border-width: 1px !important;
+    box-shadow: 0 0 0 1px rgba(217, 4, 41, 0.35), 0 1px 3px rgba(0,0,0,0.38) !important;
+}
+
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-active,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-water,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    width: 14px !important;
+    height: 14px !important;
+    line-height: 14px !important;
+    font-size: 9px !important;
+    border-width: 1px !important;
+    box-shadow: 0 0 0 1px rgba(0,0,0,.30), 0 1px 3px rgba(0,0,0,.30) !important;
+    box-sizing: border-box !important;
+}
+
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 12px !important;
+    font-size: 12px !important;
+}
+
+/* v12.40 — colonne Masse Rlt et fenêtre Volume × Densité = Masse */
+.rlt-mass-input-wrapper .display-input {
+    cursor: pointer;
+}
+
+.rlt-mass-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2600;
+    background: rgba(10, 25, 45, 0.35);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 10px;
+    box-sizing: border-box;
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.rlt-mass-modal[aria-hidden="true"] {
+    display: none !important;
+}
+
+.rlt-mass-modal-content {
+    position: relative;
+    width: min(560px, calc(100vw - 24px));
+    background: linear-gradient(180deg, #ffffff 0%, #f2f7fc 100%);
+    border: 2px solid #d8e4f0;
+    border-radius: 18px;
+    box-shadow: 0 14px 36px rgba(0,0,0,.30);
+    padding: 14px;
+    box-sizing: border-box;
+}
+
+.rlt-mass-modal-content h3 {
+    margin: 0 36px 12px;
+    text-align: center;
+    color: var(--primary-color);
+    font-size: 18px;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.rlt-mass-close-btn {
+    position: absolute;
+    top: 8px;
+    right: 9px;
+    width: 32px;
+    height: 32px;
+    border: 1px solid #d6dde8;
+    border-radius: 999px;
+    background: #fff;
+    color: #6b7280;
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.rlt-mass-formula-row {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr auto 1fr;
+    gap: 10px;
+    align-items: end;
+}
+
+.rlt-mass-formula-row label {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+    font-weight: 900;
+    color: #34495e;
+    text-align: center;
+}
+
+.rlt-mass-formula-row span {
+    font-size: 24px;
+    font-weight: 900;
+    color: var(--primary-color);
+    padding-bottom: 12px;
+}
+
+.rlt-mass-formula-row input {
+    height: 44px;
+    border: 2px solid #d1d8e0;
+    border-radius: 10px;
+    text-align: center;
+    font-size: 22px;
+    font-weight: 900;
+    color: #111827;
+    background: #fff;
+}
+
+.rlt-mass-actions {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 10px;
+    margin-top: 14px;
+}
+
+.rlt-mass-actions button {
+    border: none;
+    border-radius: 10px;
+    padding: 11px 10px;
+    font-size: 15px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+#rlt-mass-clear-btn {
+    background: #e9ecef;
+    color: #374151;
+}
+
+#rlt-mass-cancel-btn {
+    background: var(--secondary-color);
+    color: #fff;
+}
+
+#rlt-mass-validate-btn {
+    background: var(--success-color);
+    color: #fff;
+}
+
+@media (max-width: 760px) {
+    .rlt-mass-formula-row {
+        grid-template-columns: 1fr;
+        gap: 7px;
+    }
+
+    .rlt-mass-formula-row span {
+        padding-bottom: 0;
+        text-align: center;
+        line-height: 1;
+    }
+
+    .rlt-mass-actions {
+        grid-template-columns: 1fr;
+    }
+}
+
+/* v12.41 — correction largeur colonne OACI / Masse Rlt */
+#bloc-fuel .table-section th:nth-child(3),
+#bloc-fuel .table-section td:nth-child(3) {
+    width: 52px !important;
+    min-width: 52px !important;
+    max-width: 52px !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+}
+
+#bloc-fuel .table-section th:nth-child(4),
+#bloc-fuel .table-section td:nth-child(4) {
+    width: 128px !important;
+    min-width: 128px !important;
+    max-width: 128px !important;
+    padding-left: 4px !important;
+    padding-right: 4px !important;
+}
+
+#bloc-fuel .rlt-mass-input-wrapper {
+    width: 118px !important;
+    min-width: 118px !important;
+}
+
+#bloc-fuel .rlt-mass-input-wrapper .display-input {
+    font-size: 17px !important;
+    padding-left: 28px !important;
+    padding-right: 4px !important;
+    text-align: center !important;
+}
+
+/* v12.41 — fenêtre Masse retardant compacte, sans débordement horizontal */
+.rlt-mass-modal-content {
+    width: min(760px, calc(100vw - 28px)) !important;
+    overflow: hidden !important;
+}
+
+.rlt-mass-formula-row {
+    grid-template-columns: minmax(130px, 1fr) 22px minmax(120px, 0.85fr) 22px minmax(140px, 1fr) !important;
+    gap: 8px !important;
+    width: 100% !important;
+    box-sizing: border-box !important;
+}
+
+.rlt-mass-formula-row label {
+    min-width: 0 !important;
+}
+
+.rlt-mass-formula-row input {
+    width: 100% !important;
+    min-width: 0 !important;
+    box-sizing: border-box !important;
+    font-size: 20px !important;
+}
+
+.rlt-mass-formula-row span {
+    text-align: center !important;
+}
+
+@media (max-width: 760px) {
+    .rlt-mass-modal-content {
+        width: min(560px, calc(100vw - 18px)) !important;
+    }
+
+    .rlt-mass-formula-row {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+/* v12.42 — Masse Rlt : densité 1., bouton Effacer, champ calculé vert pastel */
+#rlt-mass-clear-btn {
+    background: #f59e0b !important;
+    color: #111827 !important;
+}
+
+.rlt-mass-formula-row input.rlt-calculated-field {
+    background: #dcfce7 !important;
+    border-color: #22c55e !important;
+    box-shadow: 0 0 0 2px rgba(34, 197, 94, 0.18) !important;
+}
+
+#rlt-density-input {
+    color: #0f172a !important;
+}
+
+/* v12.43 — Vol n° et boutons Bloc/Fuel : police + couleurs */
+#bloc-fuel #flight-select {
+    font-size: 17px !important;
+    font-weight: 950 !important;
+    height: 36px !important;
+    line-height: 36px !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+#bloc-fuel .flight-manager-bar button {
+    font-size: 17px !important;
+    font-weight: 950 !important;
+    height: 36px !important;
+    line-height: 1 !important;
+    padding-top: 0 !important;
+    padding-bottom: 0 !important;
+}
+
+#bloc-fuel #new-flight-btn {
+    background: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
+    color: #ffffff !important;
+}
+
+#bloc-fuel #close-flight-btn {
+    background: var(--success-color) !important;
+    border-color: var(--success-color) !important;
+    color: #ffffff !important;
+}
+
+#bloc-fuel #delete-flight-btn {
+    background: #dc3545 !important;
+    border-color: #dc3545 !important;
+    color: #ffffff !important;
+}
+
+#bloc-fuel #new-flight-btn:active,
+#bloc-fuel #close-flight-btn:active,
+#bloc-fuel #delete-flight-btn:active {
+    transform: translateY(1px);
+}
+
+/* v12.44 — verrouillage des vols clôturés Bloc/Fuel */
+#bloc-fuel.flight-locked .header-section,
+#bloc-fuel.flight-locked .table-wrapper {
+    position: relative;
+}
+
+#bloc-fuel.flight-locked .locked-input-wrapper {
+    pointer-events: none !important;
+    opacity: 0.72;
+    filter: grayscale(0.15);
+}
+
+#bloc-fuel.flight-locked .locked-input-wrapper .display-input {
+    background: #f3f4f6 !important;
+    color: #4b5563 !important;
+    cursor: not-allowed !important;
+}
+
+.flight-lock-status {
+    display: none;
+    align-items: center;
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #fff3cd;
+    border: 1px solid #ffda6a;
+    color: #7a5200;
+    font-size: 14px;
+    font-weight: 950;
+    white-space: nowrap;
+}
+
+#bloc-fuel.flight-locked #close-flight-btn {
+    background: var(--success-color) !important;
+    border-color: var(--success-color) !important;
+    color: #ffffff !important;
+}
+
+#bloc-fuel.flight-locked #new-flight-btn,
+#bloc-fuel.flight-locked #delete-flight-btn,
+#bloc-fuel.flight-locked #flight-select,
+#bloc-fuel.flight-locked #close-flight-btn {
+    pointer-events: auto !important;
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+/* v12.45 — étiquette permanente des feux historiques */
+.leaflet-tooltip.fire-history-map-tooltip-permanent {
+    background: rgba(255, 255, 255, 0.96) !important;
+    border: 2px solid #c1121f !important;
+    border-radius: 8px !important;
+    color: #8a0012 !important;
+    font-weight: 950 !important;
+    font-size: 12px !important;
+    padding: 5px 9px !important;
+    box-shadow: 0 2px 7px rgba(0,0,0,.25) !important;
+    white-space: nowrap !important;
+}
+
+.leaflet-tooltip.fire-active-map-tooltip {
+    border-color: #c1121f !important;
+}
+
+/* v12.46 — étiquettes feu réduites et zone tactile agrandie */
+.leaflet-tooltip.fire-history-map-tooltip-permanent {
+    font-size: 8px !important;
+    padding: 3px 6px !important;
+    border-width: 1px !important;
+    border-radius: 6px !important;
+    line-height: 1.05 !important;
+}
+
+.active-fire-map-marker.fire-touch-hitbox,
+.fire-history-map-marker.fire-touch-hitbox {
+    width: 34px !important;
+    height: 34px !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.active-fire-map-marker.fire-touch-hitbox span,
+.fire-history-map-marker.fire-touch-hitbox span {
+    position: absolute !important;
+    left: 50% !important;
+    top: 50% !important;
+    transform: translate(-50%, -50%) !important;
+    width: 14px !important;
+    height: 14px !important;
+    line-height: 14px !important;
+    font-size: 9px !important;
+}
+
+/* v12.46 — icône GPS avion orientable */
+.own-gps-plane-icon {
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.own-gps-plane-body {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    width: 34px;
+    height: 34px;
+    margin-left: -17px;
+    margin-top: -11px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transform-origin: center center;
+    border-radius: 50%;
+    background: rgba(102, 43, 232, 0.13);
+    border: 2px solid rgba(102, 43, 232, 0.90);
+    box-shadow: 0 1px 6px rgba(0,0,0,.30);
+    box-sizing: border-box;
+}
+
+.own-gps-plane-shape {
+    display: inline-block;
+    color: #662be8;
+    font-size: 22px;
+    line-height: 1;
+    text-shadow: 0 1px 2px rgba(255,255,255,.90);
+}
+
+.own-gps-plane-altitude {
+    position: absolute;
+    left: 50%;
+    top: -11px;
+    transform: translateX(-50%);
+    background: #ffffff;
+    color: #111827;
+    border: 2px solid #662be8;
+    border-radius: 8px;
+    padding: 2px 8px;
+    font-size: 12px;
+    font-weight: 950;
+    white-space: nowrap;
+    box-shadow: 0 1px 5px rgba(0,0,0,.25);
+}
+
+/* v12.47 — étiquettes feu légèrement ré-augmentées */
+.leaflet-tooltip.fire-history-map-tooltip-permanent {
+    font-size: 9px !important;
+    padding: 4px 7px !important;
+    line-height: 1.08 !important;
+}
+
+/* v12.49 — étiquette feu collée à l'icône + bouton Supprimer */
+.leaflet-tooltip.fire-history-map-tooltip-permanent {
+    margin-top: 0 !important;
+}
+
+.fire-history-map-popup-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 8px;
+}
+
+.fire-history-map-delete-btn {
+    width: 100%;
+    border: none;
+    border-radius: 8px;
+    background: #dc3545;
+    color: #ffffff;
+    font-weight: 950;
+    padding: 8px 10px;
+    cursor: pointer;
+}
+
+.fire-history-map-select-btn {
+    width: 100%;
+}
+
+
+/* v12.50 — feu : nom collé à l'icône, sans tooltip Leaflet séparé */
+.leaflet-marker-icon.active-fire-map-marker.fire-with-label,
+.leaflet-marker-icon.fire-history-map-marker.fire-with-label {
+    width: 34px !important;
+    height: 34px !important;
+    overflow: visible !important;
+    background: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+}
+
+.leaflet-marker-icon.active-fire-map-marker.fire-with-label .fire-marker-glyph,
+.leaflet-marker-icon.fire-history-map-marker.fire-with-label .fire-marker-glyph {
+    position: absolute !important;
+    left: 17px !important;
+    top: 17px !important;
+    transform: translate(-50%, -50%) !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 14px !important;
+    height: 14px !important;
+    line-height: 14px !important;
+    border-radius: 50% !important;
+    background: #d90429 !important;
+    border: 1px solid #ffffff !important;
+    box-shadow: 0 0 0 1px rgba(217, 4, 41, 0.35), 0 1px 3px rgba(0,0,0,0.38) !important;
+    color: #fff !important;
+    font-size: 9px !important;
+    box-sizing: border-box !important;
+    pointer-events: none !important;
+}
+
+.leaflet-marker-icon.active-fire-map-marker.fire-with-label .fire-marker-label,
+.leaflet-marker-icon.fire-history-map-marker.fire-with-label .fire-marker-label {
+    position: absolute !important;
+    left: 24px !important;
+    top: 17px !important;
+    transform: translateY(-50%) !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    width: auto !important;
+    height: auto !important;
+    min-height: 14px !important;
+    max-width: 145px !important;
+    line-height: 1.05 !important;
+    padding: 2px 5px !important;
+    border-radius: 0 6px 6px 0 !important;
+    background: rgba(255,255,255,0.97) !important;
+    border: 1px solid #c1121f !important;
+    border-left: none !important;
+    box-shadow: 0 1px 4px rgba(0,0,0,.24) !important;
+    color: #8a0012 !important;
+    font-size: 9px !important;
+    font-weight: 950 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    box-sizing: border-box !important;
+    pointer-events: none !important;
+}
+
+.leaflet-marker-icon.active-fire-map-marker.fire-with-label .fire-marker-label {
+    border-color: #c1121f !important;
+    color: #7f0015 !important;
+}
+
+
+/* v12.51 — retour étiquette feu au-dessus avec flèche, rapprochée de l'icône */
+.leaflet-tooltip.fire-history-map-tooltip-permanent {
+    margin-top: 2px !important;
+    font-size: 9px !important;
+    padding: 3px 7px !important;
+    line-height: 1.05 !important;
+    border-width: 1px !important;
+    border-radius: 6px !important;
+    background: rgba(255, 255, 255, 0.97) !important;
+    border-color: #c1121f !important;
+    color: #8a0012 !important;
+    font-weight: 950 !important;
+    box-shadow: 0 1px 5px rgba(0,0,0,.24) !important;
+    white-space: nowrap !important;
+}
+
+.leaflet-tooltip-top.fire-history-map-tooltip-permanent:before {
+    border-top-color: #c1121f !important;
+}
+
+.leaflet-tooltip.fire-active-map-tooltip {
+    color: #7f0015 !important;
+}
+
+
+/* v12.52 — calque lignes haute tension RTE */
+#high-voltage-lines-button.active {
+    background-color: #d8232a;
+    border-color: #d8232a;
+    color: #ffffff;
+}
+
+#high-voltage-lines-button.loading {
+    opacity: 0.68;
+    cursor: wait;
+}
+
+.leaflet-pane.highVoltageLinesPane,
+.leaflet-high-voltage-lines-pane {
+    pointer-events: none;
+}
+
+/* ==========================================================================
+   v12.53 — bouton carte Lignes HT à gauche, opposé à la loupe
+   ========================================================================== */
+#left-map-action-buttons {
+    position: absolute;
+    top: var(--safe-area-top);
+    left: 20px;
+    z-index: 1001;
+    display: flex;
+    flex-direction: column;
+    gap: 15px;
+    align-items: center;
+    pointer-events: none;
+}
+
+.left-map-action-button {
+    width: 90px;
+    height: 90px;
+    font-size: 48px;
+    border: 2px solid var(--border-color);
+    border-radius: 20px;
+    background-color: rgba(255, 255, 255, 0.86);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+    color: var(--primary-color);
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow);
+    padding: 0;
+    line-height: 1;
+    pointer-events: auto;
+    position: relative;
+    touch-action: manipulation;
+}
+
+.left-map-action-button.active {
+    background-color: var(--primary-color);
+    border-color: var(--primary-color);
+    color: #ffffff;
+}
+
+.left-map-action-button.loading {
+    opacity: 0.72;
+}
+
+.left-map-action-button:disabled {
+    cursor: wait;
+}
+
+.high-voltage-map-button .powerline-icon {
+    width: 62px;
+    height: 62px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.high-voltage-map-button svg {
+    width: 62px;
+    height: 62px;
+    overflow: visible;
+}
+
+.high-voltage-map-button .powerline-tower,
+.high-voltage-map-button .powerline-wire {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.high-voltage-map-button .powerline-wire {
+    stroke-width: 3.5;
+}
+
+.high-voltage-map-button .powerline-label {
+    position: absolute;
+    right: 7px;
+    bottom: 6px;
+    min-width: 25px;
+    height: 19px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.92);
+    color: var(--primary-color);
+    border: 1px solid rgba(0,90,156,.28);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .02em;
+}
+
+.left-map-action-button.active .powerline-label {
+    background: rgba(255,255,255,.96);
+    color: var(--primary-color);
+    border-color: rgba(255,255,255,.75);
+}
+
+@media (max-width: 760px) {
+    #left-map-action-buttons {
+        top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
+        left: 7px !important;
+        gap: var(--right-tools-gap, 7px) !important;
+        z-index: 1001 !important;
+    }
+
+    .left-map-action-button {
+        width: var(--right-tools-size, 52px) !important;
+        height: var(--right-tools-size, 52px) !important;
+        min-width: var(--right-tools-size, 52px) !important;
+        min-height: var(--right-tools-size, 52px) !important;
+        max-width: var(--right-tools-size, 52px) !important;
+        max-height: var(--right-tools-size, 52px) !important;
+        border-radius: 15px !important;
+        font-size: 26px !important;
+        border-width: 1px !important;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.16) !important;
+    }
+
+    .high-voltage-map-button .powerline-icon,
+    .high-voltage-map-button svg {
+        width: 36px !important;
+        height: 36px !important;
+    }
+
+    .high-voltage-map-button .powerline-tower,
+    .high-voltage-map-button .powerline-wire {
+        stroke-width: 4.2 !important;
+    }
+
+    .high-voltage-map-button .powerline-label {
+        right: 3px !important;
+        bottom: 3px !important;
+        min-width: 18px !important;
+        height: 14px !important;
+        padding: 0 3px !important;
+        font-size: 9px !important;
+    }
+}
+
+@media (max-width: 430px) {
+    #left-map-action-buttons {
+        top: 20px !important;
+        left: 8px !important;
+        gap: 8px !important;
+    }
+
+    .left-map-action-button {
+        width: 56px !important;
+        height: 56px !important;
+        min-width: 56px !important;
+        min-height: 56px !important;
+        max-width: 56px !important;
+        max-height: 56px !important;
+        border-radius: 14px !important;
+    }
+
+    .high-voltage-map-button .powerline-icon,
+    .high-voltage-map-button svg {
+        width: 38px !important;
+        height: 38px !important;
+    }
+}
+
