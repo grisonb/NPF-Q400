@@ -5,13 +5,13 @@ But du fichier
 Ce fichier sert de mémoire technique en cas de perte d'historique de chat.
 Il doit rester à la racine du dépôt, à côté de index.html, script.js, style.css, manifest.json et sw.js.
 
-Version actuelle pérenne : v2026.49
+Version actuelle TEST : v12.65
 Date de génération : 2026-07-05
 
 Règle de méthode
 ----------------
-- Tester en dépôt de validation avant production.
-- Ne jamais modifier l'import offline, le service worker ou IndexedDB en production sans validation préalable.
+- Tester en dépôt TEST avant production.
+- Ne jamais modifier l'import offline, le service worker ou IndexedDB en production sans validation TEST.
 - Quand une version fonctionne, elle devient la nouvelle base.
 - Conserver ce fichier et l'enrichir à chaque version.
 
@@ -463,10 +463,10 @@ v12.55 — Mise à jour PWA sécurisée avant nouvelle pérenne
 - Modification index.html : si un service worker neuf est déjà en attente, envoi explicite de `SKIP_WAITING` et demande `registration.update()`.
 - Sécurité : aucune suppression IndexedDB ; les cartes offline et les tuiles importées ne sont pas touchées.
 - Fonctionnalités conservées : import ZIP inchangé, centrage GPS v12.54 conservé, calque Lignes HT conservé.
-- Cette version reste une version de validation avant préparation d'une nouvelle version pérenne.
+- Cette version reste une version TEST avant préparation d'une nouvelle version pérenne.
 
 v12.56 — Rappel MAJ 5 jours + fermeture feu centrée GPS
-- Base : v12.55 maj_pwa.
+- Base : v12.55 TEST maj_pwa.
 - Modification : ajout d’un rappel non bloquant à l’ouverture tous les 5 jours.
 - Message : “Pensez à cliquer sur [icône MAJ] de temps en temps pour être certain d’avoir la dernière version à jour.”
 - Action : bouton “Vérifier maintenant” lance la logique MAJ existante ; “Plus tard” mémorise le rappel pour 5 jours.
@@ -475,7 +475,7 @@ v12.56 — Rappel MAJ 5 jours + fermeture feu centrée GPS
 - Non modifié : import ZIP, cartes offline, IndexedDB, calque Lignes HT.
 
 v12.57 — Interface iPad, GPS chat et communes par polygones
-- Base : v12.56 info_maj_5j_zoom_x.
+- Base : v12.56 TEST info_maj_5j_zoom_x.
 - Modification rappel MAJ : dans la fenêtre de rappel, l'icône générique est remplacée par un petit bouton “🔄 MAJ” reprenant le visuel du bouton réel de l'application.
 - Modification GPS avion : l'altitude n'est plus affichée sur l'icône avion par défaut. Elle est affichée uniquement si le chat est connecté et si le partage de position GPS du chat est activé.
 - Modification communes/feux : le nom d'un feu manuel ou GPS est déterminé par le polygone communal uniquement. La commune la plus proche n'est plus utilisée pour nommer ou enrichir un feu.
@@ -486,7 +486,7 @@ v12.57 — Interface iPad, GPS chat et communes par polygones
 
 
 v12.58 — Retardant, PDF aérodromes et clôture vols
-- Base : v12.57 interface_gps_communes.
+- Base : v12.57 TEST interface_gps_communes.
 - Modification PDF : le bouton PDF des pélicandromes/aérodromes ne dirige plus vers une page inexistante si aucun PDF offline ni serveur n'est disponible. L'application affiche désormais “Aucun PDF associé à OACI”.
 - Modification fenêtre retardant : titre renommé “VOLUME/MASSE RETARDANT”.
 - Modification fenêtre retardant : ajout d'une première ligne “Masse ÷ Densité = Volume”.
@@ -499,7 +499,7 @@ v12.58 — Retardant, PDF aérodromes et clôture vols
 
 
 v12.59 — Masse RLT issue du calcul Volume × Densité
-- Base : v12.58 retardant_pdf_vols.
+- Base : v12.58 TEST retardant_pdf_vols.
 - Précision utilisateur : dans la colonne “Masse RLT”, la masse affichée doit correspondre au résultat de la ligne “Volume × Densité = Masse”.
 - Modification script.js : la valeur validée pour la colonne “Masse RLT” est désormais toujours calculée à partir de Volume × Densité.
 - Si l'utilisateur utilise la ligne “Masse ÷ Densité = Volume”, le volume calculé sert d'entrée implicite pour recalculer ensuite la masse via Volume × Densité.
@@ -508,7 +508,7 @@ v12.59 — Masse RLT issue du calcul Volume × Densité
 
 
 v12.60 — Clavier Masse RLT et libellé temps de vol
-- Base : v12.59 masse_rlt_resultat_volume.
+- Base : v12.59 TEST masse_rlt_resultat_volume.
 - Modification Bloc/Fuel : la synthèse à droite du bouton Supprimer affiche maintenant “Tps de vol n°X : HH:MM”.
 - Modification Bloc/Fuel : la taille de police de cette synthèse est légèrement augmentée pour améliorer la lisibilité sur iPad.
 - Modification fenêtre VOLUME/MASSE RETARDANT : à l'ouverture d'une cellule Masse RLT vide, le focus est placé sur la ligne opérationnelle “Volume × Densité = Masse”.
@@ -517,7 +517,7 @@ v12.60 — Clavier Masse RLT et libellé temps de vol
 
 
 v12.61 — Retardant, rappel MAJ et résumé temps de vol
-- Base : v12.60 clavier_rlt_tps_vol.
+- Base : v12.60 TEST clavier_rlt_tps_vol.
 - Modification fenêtre VOLUME/MASSE RETARDANT : le bouton “Annuler” utilise désormais la même fermeture immédiate que le bouton X, même quand le clavier iPad est ouvert.
 - Modification Bloc/Fuel : le résumé affiche “Tps de vol n°X : HHhMM / Total : HHhMM” à partir du vol n°2.
 - Modification Bloc/Fuel : le séparateur entre le temps du vol et le total est “/”.
@@ -527,7 +527,7 @@ v12.61 — Retardant, rappel MAJ et résumé temps de vol
 
 
 v12.62 — Calque Communes limité à l'écran
-- Base : v12.61 retardant_maj_tps_vol.
+- Base : v12.61 TEST retardant_maj_tps_vol.
 - Constat utilisateur : lorsque le calque Communes est activé, les déplacements et zooms deviennent très lents sur iPad.
 - Décision utilisateur : ne pas modifier les seuils de zoom ni l'affichage des noms de communes.
 - Modification script.js : les polygones des communes ne sont plus tous ajoutés simultanément à la carte.
@@ -536,11 +536,74 @@ v12.62 — Calque Communes limité à l'écran
 - Objectif : conserver le rendu et les noms existants tout en réduisant fortement le nombre d'objets Leaflet actifs pendant la navigation.
 - Non modifié : seuils de zoom des communes, noms des communes, feux par polygones, retardant, PDF aérodromes, import ZIP, IndexedDB, cartes offline, calque Lignes HT, centrage GPS et rappel MAJ.
 
-v2026.49 — Version pérenne depuis v12.62 validée
-- Base : v12.62 communes_ecran validée.
+v12.63 — Gestion des cartes, simulation avion et onglets
+- Base : v12.62 TEST communes_ecran.
+- Modification interface Cartes : titre renommé “Gestion des Cartes”, sans mention “hors ligne”.
+- Modification interface Cartes : suppression du texte explicatif “Importez un pack de tuiles...” au-dessus du bouton d'import ZIP.
+- Modification interface Cartes : ajout du bouton “Mode simulation avion” au-dessus du bouton “Importer un pack de tuiles (.zip)”.
+- Modification interface Cartes : les boutons techniques “Rafraîchir l'affichage des cartes” et “Vider le cache des packs désélectionnés” sont déplacés dans une section repliable “Maintenance / dépannage”.
+- Ajout mode simulation avion : après activation, toucher la carte place l'avion à la position choisie.
+- Le mode simulation interrompt le suivi GPS affiché afin que le GPS réel ne remplace pas la position simulée.
+- La position simulée est visuellement identifiée par un badge “SIM” et n'est pas enregistrée comme dernière position GPS réelle.
+- Le chat continue à demander et publier la vraie position GPS lorsqu'il est activé ; la position simulée ne sert qu'aux calculs/affichages locaux basés sur l'icône avion.
+- Retour GPS : quitter le mode simulation relance une demande GPS ponctuelle pour rétablir la position réelle.
+- Correction onglets calculateur : toute la barre d'onglets devient une zone tactile effective, avec interception de sécurité par coordonnées écran.
+- Correction CSS onglets : hauteur tactile renforcée et texte recentré pour éviter que seuls le bas ou le dessous du titre soient cliquables.
+- Non modifié : calque Communes limité à l'écran, retardant, PDF aérodromes, feux par polygones, import ZIP, IndexedDB, calque Lignes HT, centrage GPS et rappel MAJ.
+
+
+v12.64 — Simulation avion/feu par appui long
+- Base : v12.63 TEST cartes_sim_onglets.
+- Modification interface recherche/carte : suppression du bouton “Route BASE LFTW” à côté du bouton “Circuits GAAR”. La logique interne de route base reste disponible pour les calculs existants.
+- Modification mode simulation : un appui long sur la carte ouvre une petite fenêtre avec deux actions : “Positionner avion” et “Positionner feu”.
+- En mode simulation, le toucher simple conserve le positionnement rapide de l’avion.
+- Le feu créé depuis le mode simulation utilise la même logique de nommage par polygone communal que les feux manuels/GPS.
+- Protection ajoutée : après un appui long simulation, le clic résiduel éventuel est ignoré pour éviter de positionner l’avion en plus de l’action choisie.
+- Non modifié : import ZIP, IndexedDB, cartes offline, calque Communes limité à l'écran, calque Lignes HT, retardant, PDF aérodromes, rappel MAJ et centrage GPS.
+
+v12.65 — Simulation uniquement par appui long
+- Base : v12.64 TEST sim_feu.
+- Demande utilisateur : supprimer le toucher simple en mode simulation.
+- Modification mode simulation : le toucher simple ne positionne plus l'avion ; la carte reste donc manipulable normalement.
+- En mode simulation, seul l'appui long ouvre la fenêtre avec deux choix : “Positionner avion” et “Positionner feu”.
+- Hors mode simulation, l'appui long conserve le comportement opérationnel existant : création directe d'un feu à l'endroit touché, avec nommage par polygone communal.
+- Texte d'information du mode simulation ajusté pour indiquer l'appui long uniquement.
+- Non modifié : suppression du bouton Route BASE LFTW, import ZIP, IndexedDB, cartes offline, calque Communes limité à l'écran, calque Lignes HT, retardant, PDF aérodromes, rappel MAJ et centrage GPS.
+
+
+
+v12.66 — Simulation GPS et ajustements interface
+- Base : v12.65 TEST sim_appui_long.
+- Modification simulation : à la sortie du mode simulation, le positionnement GPS est relancé automatiquement par un watch GPS, et non plus par une simple demande ponctuelle.
+- Modification simulation : ajout d'une bordure rouge tout autour de la carte lorsque le mode simulation est actif, afin d'éviter toute confusion avec le mode opérationnel normal.
+- Modification interface recherche : les boutons Circuits GAAR / Départements / Communes / Plan d'eau / Cartes sont recentrés dans la fenêtre.
+- Modification onglets calculateur : zone tactile encore élargie vers le haut ; la détection par coordonnées accepte maintenant une marge verticale plus importante au-dessus de la barre.
+- Modification statut bas de recherche : le texte est limité à “Mode ONLINE” ou “Mode OFFLINE”. Les messages de chargement du calque Communes ne remplacent plus cette indication.
+- Modification recherche feu : si un feu est déjà dans la barre de recherche et que l'utilisateur clique sur X, le focus est forcé immédiatement pour rouvrir/conserver le clavier iPad.
+- Non modifié : appui long simulation avion/feu, appui long normal feu direct, suppression Route BASE LFTW, import ZIP, IndexedDB, cartes offline, calque Communes limité à l'écran, calque Lignes HT, retardant, PDF aérodromes et rappel MAJ.
+
+
+v12.67 — Route base active sans bouton
+- Base : v12.66 TEST sim_gps_ui.
+- Correction : le bouton “Route BASE LFTW” reste supprimé de l’interface, mais la fonction de route base est de nouveau forcée active.
+- Modification script.js : l’ancien état local `showLftwRoute=false` est ignoré, car il n’y a plus de bouton pour réactiver manuellement la route.
+- Résultat attendu : la route vers la base sélectionnée reste affichée/calculée automatiquement lorsqu’un feu est sélectionné, même après mise à jour depuis une version où l’utilisateur avait désactivé le bouton.
+- Non modifié : simulation par appui long, GPS, bordure rouge simulation, interface Cartes, Communes, Lignes HT, retardant, PDF, import ZIP, IndexedDB et rappel MAJ.
+
+
+v12.68 — Onglets plus hauts et popup simulation persistante
+- Base : v12.67 TEST route_base_active.
+- Correction onglets calculateur : la zone tactile des titres d'onglets est encore remontée. La détection par coordonnées accepte désormais une marge supérieure plus importante et intercepte aussi pointerdown, pointerup, touchend et click.
+- Protection onglets : les boutons et champs hors barre d'onglets ne sont pas détournés par cette interception, afin d'éviter une activation parasite lors d'un clic sur le X ou sur un champ.
+- Correction mode simulation : la fenêtre ouverte par appui long ne se ferme plus au relâchement du doigt. Le popup Leaflet n'est plus fermé par le clic résiduel de la carte.
+- Modification popup simulation : les événements tactiles/clics dans la fenêtre sont isolés de la carte ; fermeture uniquement par le X Leaflet ou par les boutons Positionner avion / Positionner feu.
+- Non modifié : route base active sans bouton, GPS, bordure rouge simulation, interface Cartes, Communes, Lignes HT, retardant, PDF, import ZIP, IndexedDB et rappel MAJ.
+
+v2026.50 — Version pérenne depuis v12.68 validée
+- Base : v12.68 sim_popup_onglets validée.
 - Nettoyage pérenne : suppression des mentions applicatives TEST dans index.html et manifest.json.
-- Modification index.html : APP_VERSION passé à v2026.49 et paramètres appv passés à v2026.49-perenne pour forcer la prise en compte des fichiers pérennes.
-- Modification manifest.json : nom et short_name repassés à NPF-Q400, id supprimant ?test=1, start_url passé à v2026.49, description repassée en version pérenne.
-- Modification sw.js : SW_VERSION passé à sw-v2026-49-perenne.
-- Fonctionnalités conservées depuis v12.62 : calque Communes limité à l'écran, rappel MAJ 5 jours avec consigne de relance, calcul Masse RLT par Volume × Densité, PDF aérodromes sécurisé, nommage des feux par polygones, centrage GPS au démarrage, calque Lignes HT, correction du X du bandeau feu et import ZIP inchangé.
+- Modification index.html : APP_VERSION passé à v2026.50 et paramètres appv passés à v2026.50-perenne pour forcer la prise en compte des fichiers pérennes.
+- Modification manifest.json : nom et short_name repassés à NPF-Q400, id supprimant ?test=1, start_url passé à v2026.50, description repassée en version pérenne.
+- Modification sw.js : SW_VERSION passé à sw-v2026-50-perenne.
+- Fonctionnalités conservées depuis v12.68 : popup simulation persistante par appui long, zone tactile des onglets renforcée, route base active sans bouton, bordure rouge simulation, retour GPS automatique après simulation, gestion des cartes, calque Communes limité à l'écran, rappel MAJ 5 jours, retardant, PDF sécurisé, feux par polygones, centrage GPS et calque Lignes HT.
 - Sécurité : aucune suppression IndexedDB, aucune suppression des cartes offline, aucune modification du moteur d'import ZIP.
