@@ -231,6 +231,11 @@ const UPDATE_REMINDER_STORAGE_KEY = 'npfUpdateReminderLastShownAt';
 const UPDATE_REMINDER_INTERVAL_MS = 5 * 24 * 60 * 60 * 1000;
 let startupGpsAutoCenteredWithRealPosition = false;
 let startupGpsStoredCenterAppliedAt = 0;
+let isSimulationMode = false;
+let simulationMapClickHandler = null;
+let simulationSuppressNextClickUntil = 0;
+let simulationActionPopup = null;
+let simulationWasLiveGpsActiveBeforeSimulation = false;
 
 // v12.22 — sécurité : un import interrompu ne doit pas bloquer les suppressions suivantes.
 try {
@@ -979,8 +984,10 @@ async function initializeApp() {
         localStorage.removeItem('water_airports');
         localStorage.removeItem('selected_base_oaci');
     }
-    const savedLftwState = localStorage.getItem('showLftwRoute');
-    showLftwRoute = savedLftwState === null ? true : (savedLftwState === 'true');
+    // v12.67 — le bouton Route BASE a été retiré de l'interface, mais la route base reste active.
+    // On ignore donc l'ancien état local éventuel (ex. utilisateur avait désactivé la route avant suppression du bouton).
+    showLftwRoute = true;
+    localStorage.setItem('showLftwRoute', 'true');
     localStorage.setItem(SHOW_DEPARTMENTS_LAYER_KEY, 'false');
     const savedGaarJSON = localStorage.getItem('gaarCircuits');
     if (savedGaarJSON) {
@@ -1505,8 +1512,16 @@ function initMap() {
 
     map.on('contextmenu', async (e) => {
         if (isDrawingMode) return;
-        selectedPelicanOACI = null;
+        if (!e || !e.latlng) return;
         L.DomEvent.preventDefault(e.originalEvent);
+
+        if (isSimulationMode) {
+            simulationSuppressNextClickUntil = Date.now() + 900;
+            openSimulationActionPopup(e.latlng);
+            return;
+        }
+
+        selectedPelicanOACI = null;
         const manualCommune = await buildManualFireCommuneFromPointAsync(e.latlng.lat, e.latlng.lng, 'Feu manuel');
         currentCommune = manualCommune;
         localStorage.setItem('currentCommune', JSON.stringify(manualCommune));
@@ -1754,6 +1769,7 @@ function setupEventListeners() {
     const mapSourceOfflineBtn = document.getElementById('map-source-offline-btn');
     const purgeInactivePacksBtn = document.getElementById('purge-inactive-packs-btn');
     const refreshOfflineTilesBtn = document.getElementById('refresh-offline-tiles-btn');
+    const simulationModeButton = document.getElementById('simulation-mode-button');
     
     if (mainActionButtons) {
         const versionDisplay = document.getElementById('app-version-display');
@@ -1951,31 +1967,53 @@ function setupEventListeners() {
         searchInput.readOnly = false;
     });
 
+    const focusSearchInputForKeyboard = () => {
+        searchInput.disabled = false;
+        searchInput.readOnly = false;
+        try {
+            searchInput.focus({ preventScroll: true });
+        } catch (_) {
+            searchInput.focus();
+        }
+    };
+
+    const prepareSearchClearAndKeyboard = (event = null) => {
+        if (event) event.stopPropagation();
+        focusSearchInputForKeyboard();
+    };
+
     const clearSearchInputAndKeepKeyboard = (event = null) => {
         /*
-         * v12.00 — iPad : correction du bouton X de la barre de recherche.
-         * En v11.99, preventDefault sur touchstart/pointerdown pouvait empêcher
-         * le bouton de fonctionner sur Safari iPad. On laisse le toucher se faire,
-         * puis on efface explicitement au click/touchend et on remet le focus.
+         * v12.66 — iPad : lorsque le champ contient déjà un feu et que l'on clique
+         * sur X, on force le focus dans le geste utilisateur pour rouvrir le clavier.
          */
         if (event) {
             event.stopPropagation();
         }
 
+        focusSearchInputForKeyboard();
         searchInput.value = '';
         clearSearchBtn.style.display = 'none';
         document.getElementById('results-list').style.display = 'none';
         displayFireHistory();
 
-        setTimeout(() => {
+        const refocus = () => {
             try {
                 searchInput.focus({ preventScroll: true });
                 searchInput.setSelectionRange(0, 0);
             } catch (_) {
                 searchInput.focus();
             }
-        }, 0);
+        };
+
+        refocus();
+        setTimeout(refocus, 40);
+        setTimeout(refocus, 140);
     };
+
+    ['touchstart', 'pointerdown', 'mousedown'].forEach((eventName) => {
+        clearSearchBtn.addEventListener(eventName, prepareSearchClearAndKeyboard, { passive: false });
+    });
 
     clearSearchBtn.addEventListener('touchend', (event) => {
         event.preventDefault();
@@ -2014,7 +2052,9 @@ function setupEventListeners() {
     }
 
     liveGpsButton.addEventListener('click', toggleLiveGps);
-    lftwRouteButton.addEventListener('click', toggleLftwRoute);
+    if (lftwRouteButton) {
+        lftwRouteButton.addEventListener('click', toggleLftwRoute);
+    }
     gaarModeButton.addEventListener('click', toggleGaarVisibility);
     editCircuitsButton.addEventListener('click', toggleGaarDrawingMode);
     deleteCircuitsButton.addEventListener('click', () => { if (confirm("Voulez-vous vraiment supprimer tous les circuits GAAR ?")) { clearAllGaarCircuits(); } });
@@ -2065,7 +2105,7 @@ function setupEventListeners() {
     closeCalculatorButton.addEventListener('click', () => { calculatorModal.style.display = 'none'; });
     calculatorModal.addEventListener('click', (e) => { if (e.target === calculatorModal) { calculatorModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && calculatorModal.style.display === 'flex') { calculatorModal.style.display = 'none'; } });
-    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; displayInstalledMaps(); displayInstalledAirportPdfs(); });
+    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; displayInstalledMaps(); displayInstalledAirportPdfs(); refreshSimulationModeButtonState(); });
     closeOfflineMapButton.addEventListener('click', () => { offlineMapModal.style.display = 'none'; });
     offlineMapModal.addEventListener('click', (e) => { if (e.target === offlineMapModal) { offlineMapModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && offlineMapModal.style.display === 'flex') { offlineMapModal.style.display = 'none'; } });
@@ -2138,6 +2178,14 @@ function setupEventListeners() {
                 refreshOfflineTilesBtn.disabled = false;
                 refreshOfflineTilesBtn.textContent = "Rafraîchir l'affichage des cartes offline";
             }
+        });
+    }
+
+
+    if (simulationModeButton) {
+        refreshSimulationModeButtonState();
+        simulationModeButton.addEventListener('click', () => {
+            toggleSimulationMode();
         });
     }
 
@@ -2592,7 +2640,7 @@ function refreshHighVoltageLinesButtonState() {
 }
 
 async function fetchHighVoltageLinesGeojson() {
-    const url = `${HIGH_VOLTAGE_LINES_GEOJSON_URL}?appv=${encodeURIComponent(window.APP_VERSION || 'v2026.49')}`;
+    const url = `${HIGH_VOLTAGE_LINES_GEOJSON_URL}?appv=${encodeURIComponent(window.APP_VERSION || 'v2026.50')}`;
     let response = null;
 
     try {
@@ -2608,7 +2656,7 @@ async function fetchHighVoltageLinesGeojson() {
 
         try {
             if ('caches' in window) {
-                const cache = await caches.open(`npf-q400-lignes-ht-${window.APP_VERSION || 'v2026.49'}`);
+                const cache = await caches.open(`npf-q400-lignes-ht-${window.APP_VERSION || 'v2026.50'}`);
                 await cache.put(HIGH_VOLTAGE_LINES_GEOJSON_URL, response.clone());
             }
         } catch (cacheError) {
@@ -3607,10 +3655,7 @@ function updateCommunesLayerAppearance() {
             map.removeLayer(communesLayerGroup);
         }
 
-        const status = document.getElementById('offline-status');
-        if (status && areCommunesVisible) {
-            status.textContent = 'Calque Communes actif : zoome davantage pour afficher les contours et noms.';
-        }
+        updateOfflineStatus();
         return;
     }
 
@@ -3651,10 +3696,7 @@ function renderVisibleCommuneLayers() {
         visibleCount += 1;
     }
 
-    const status = document.getElementById('offline-status');
-    if (status && areCommunesVisible) {
-        status.textContent = `Calque Communes actif : ${visibleCount} communes affichées à l'écran.`;
-    }
+    updateOfflineStatus();
 }
 
 
@@ -3879,10 +3921,7 @@ async function loadCommunesLayerData() {
     const communesSource = getCommunesGeojsonUrl();
     const COMMUNES_GEOJSON_URL = communesSource.url;
 
-    const status = document.getElementById('offline-status');
-    if (status) {
-        status.textContent = `Chargement du calque Communes ${communesSource.precision}... patienter.`;
-    }
+    updateOfflineStatus();
 
     if (!communesLayerLoadController) {
         communesLayerLoadController = new AbortController();
@@ -3930,9 +3969,7 @@ async function loadCommunesLayerData() {
     hasLoadedCommunes = true;
     updateCommunesLayerAppearance();
 
-    if (status) {
-        status.textContent = `Calque Communes ${communesSource.precision} chargé : ${communesLabelData.length} communes.`;
-    }
+    updateOfflineStatus();
 }
 
 async function toggleCommunesLayer(shouldShow) {
@@ -4588,17 +4625,19 @@ function ensureOwnGpsAltitudeMarkerStyle() {
     document.head.appendChild(style);
 }
 
-function buildOwnGpsIcon(altitudeLabel = '') {
+function buildOwnGpsIcon(altitudeLabel = '', options = {}) {
     ensureOwnGpsAltitudeMarkerStyle();
+    const isSimulation = options && options.simulation === true;
     const hasAltitudeLabel = !!String(altitudeLabel || '').trim();
     const safeAltitude = escapeHtml(altitudeLabel || '');
     const altitudeHtml = hasAltitudeLabel
         ? `<div class="own-gps-plane-altitude">${safeAltitude}</div>`
         : '';
+    const simulationHtml = isSimulation ? '<div class="own-gps-sim-badge">SIM</div>' : '';
 
     return L.divIcon({
-        className: `own-gps-altitude-marker own-gps-plane-icon${hasAltitudeLabel ? ' has-own-gps-altitude' : ' no-own-gps-altitude'}`,
-        html: `${altitudeHtml}<div class="own-gps-plane-body"><span class="own-gps-plane-shape">✈</span></div>`,
+        className: `own-gps-altitude-marker own-gps-plane-icon${hasAltitudeLabel ? ' has-own-gps-altitude' : ' no-own-gps-altitude'}${isSimulation ? ' own-gps-simulation-icon' : ''}`,
+        html: `${altitudeHtml}${simulationHtml}<div class="own-gps-plane-body"><span class="own-gps-plane-shape">✈</span></div>`,
         iconSize: [74, 58],
         iconAnchor: [37, 38]
     });
@@ -4737,31 +4776,46 @@ function updateOwnGpsVector(latitude, longitude, headingDeg, speedMps) {
 }
 
 function updateUserPosition(pos) {
+    if (!pos || !pos.coords) return;
+
+    const isSimulationPosition = pos.npfIsSimulation === true;
+    if (isSimulationMode && !isSimulationPosition) {
+        return;
+    }
+
     const { latitude, longitude } = pos.coords;
-    const ownAltitudeLabel = shouldShowOwnGpsAltitude() ? formatGpsAltitudeFtFromCoords(pos.coords) : '';
+    if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
+
+    const ownAltitudeLabel = (!isSimulationPosition && shouldShowOwnGpsAltitude()) ? formatGpsAltitudeFtFromCoords(pos.coords) : '';
     const gpsTimestampMs = Number(pos.timestamp) || Date.now();
-    const estimatedMotion = estimateMotionFromLastPosition(latitude, longitude, gpsTimestampMs);
+    const estimatedMotion = isSimulationPosition ? { heading: null, speed: null } : estimateMotionFromLastPosition(latitude, longitude, gpsTimestampMs);
     const rawHeading = Number(pos.coords.heading);
     const rawSpeed = Number(pos.coords.speed);
     const motionHeading = Number.isFinite(rawHeading) ? rawHeading : estimatedMotion.heading;
     const motionSpeed = Number.isFinite(rawSpeed) ? rawSpeed : estimatedMotion.speed;
-    updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
-    lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs };
-    saveStoredGpsPosition(latitude, longitude, gpsTimestampMs);
-    applyStartupGpsAutoCenter(latitude, longitude, {
-        source: pos && pos.npfIsStoredPosition ? 'stored' : 'real'
-    });
 
-    const ownGpsPopupHtml = ownAltitudeLabel
-        ? `Votre position<br>${escapeHtml(ownAltitudeLabel)}`
-        : 'Votre position';
+    if (isSimulationPosition) {
+        clearOwnGpsVector();
+        lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs, simulation: true };
+    } else {
+        updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
+        lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs };
+        saveStoredGpsPosition(latitude, longitude, gpsTimestampMs);
+        applyStartupGpsAutoCenter(latitude, longitude, {
+            source: pos && pos.npfIsStoredPosition ? 'stored' : 'real'
+        });
+    }
+
+    const ownGpsPopupHtml = isSimulationPosition
+        ? 'Position simulée'
+        : (ownAltitudeLabel ? `Votre position<br>${escapeHtml(ownAltitudeLabel)}` : 'Votre position');
 
     if (!userMarker) {
-        const userIcon = buildOwnGpsIcon(ownAltitudeLabel);
+        const userIcon = buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition });
         userMarker = L.marker([latitude, longitude], { icon: userIcon }).bindPopup(ownGpsPopupHtml).addTo(map);
     } else {
         userMarker.setLatLng([latitude, longitude]);
-        userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel));
+        userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition }));
         userMarker.bindPopup(ownGpsPopupHtml);
     }
 
@@ -4782,6 +4836,173 @@ function updateUserPosition(pos) {
     drawUserToTargetRoute();
 }
 
+
+
+function closeSimulationActionPopup() {
+    try {
+        if (map && simulationActionPopup) {
+            map.closePopup(simulationActionPopup);
+        }
+    } catch (_) {}
+    simulationActionPopup = null;
+}
+
+async function createSimulatedFireAtPoint(lat, lng) {
+    const numericLat = Number(lat);
+    const numericLng = Number(lng);
+    if (!Number.isFinite(numericLat) || !Number.isFinite(numericLng)) return;
+
+    selectedPelicanOACI = null;
+    const simulatedFire = await buildManualFireCommuneFromPointAsync(numericLat, numericLng, 'Feu SIM');
+    currentCommune = simulatedFire;
+    localStorage.setItem('currentCommune', JSON.stringify(simulatedFire));
+    displayCommuneDetails(simulatedFire, false);
+}
+
+function openSimulationActionPopup(latlng) {
+    if (!map || !latlng) return;
+
+    closeSimulationActionPopup();
+
+    const container = document.createElement('div');
+    container.className = 'simulation-action-popup-content';
+
+    const title = document.createElement('div');
+    title.className = 'simulation-action-popup-title';
+    title.textContent = 'Mode simulation';
+
+    const actions = document.createElement('div');
+    actions.className = 'simulation-action-popup-actions';
+
+    const aircraftButton = document.createElement('button');
+    aircraftButton.type = 'button';
+    aircraftButton.className = 'simulation-action-popup-btn simulation-aircraft-btn';
+    aircraftButton.textContent = 'Positionner avion';
+    aircraftButton.addEventListener('click', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        applySimulatedUserPosition(latlng.lat, latlng.lng);
+        closeSimulationActionPopup();
+    });
+
+    const fireButton = document.createElement('button');
+    fireButton.type = 'button';
+    fireButton.className = 'simulation-action-popup-btn simulation-fire-btn';
+    fireButton.textContent = 'Positionner feu';
+    fireButton.addEventListener('click', async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        await createSimulatedFireAtPoint(latlng.lat, latlng.lng);
+        closeSimulationActionPopup();
+    });
+
+    actions.appendChild(aircraftButton);
+    actions.appendChild(fireButton);
+    container.appendChild(title);
+    container.appendChild(actions);
+
+    try {
+        L.DomEvent.disableClickPropagation(container);
+        L.DomEvent.disableScrollPropagation(container);
+        ['pointerdown', 'pointerup', 'touchstart', 'touchend', 'mousedown', 'mouseup', 'click'].forEach((eventName) => {
+            container.addEventListener(eventName, (event) => {
+                event.stopPropagation();
+            }, { passive: true });
+        });
+    } catch (_) {}
+
+    simulationActionPopup = L.popup({
+        className: 'simulation-action-popup',
+        closeButton: true,
+        autoClose: true,
+        closeOnClick: false,
+        autoPan: true,
+        maxWidth: 280
+    })
+        .setLatLng(latlng)
+        .setContent(container)
+        .openOn(map);
+}
+
+function refreshSimulationModeButtonState() {
+    const button = document.getElementById('simulation-mode-button');
+    if (document.body) {
+        document.body.classList.toggle('simulation-mode-active', isSimulationMode);
+    }
+    if (!button) return;
+    button.classList.toggle('active', isSimulationMode);
+    button.textContent = isSimulationMode ? 'Quitter le mode simulation avion' : 'Mode simulation avion';
+}
+
+function applySimulatedUserPosition(lat, lng) {
+    const numericLat = Number(lat);
+    const numericLng = Number(lng);
+    if (!Number.isFinite(numericLat) || !Number.isFinite(numericLng)) return;
+
+    updateUserPosition({
+        coords: {
+            latitude: numericLat,
+            longitude: numericLng,
+            altitude: null,
+            heading: null,
+            speed: null,
+            accuracy: null
+        },
+        timestamp: Date.now(),
+        npfIsSimulation: true
+    });
+}
+
+function enableSimulationMode() {
+    if (!map || isSimulationMode) return;
+
+    simulationWasLiveGpsActiveBeforeSimulation = (localStorage.getItem('liveGpsActive') === 'true') || !!watchId;
+    isSimulationMode = true;
+    if (watchId && navigator.geolocation) {
+        navigator.geolocation.clearWatch(watchId);
+        watchId = null;
+        const liveGpsButton = document.getElementById('live-gps-button');
+        if (liveGpsButton) liveGpsButton.classList.remove('active');
+        localStorage.setItem('liveGpsActive', 'false');
+    }
+
+    simulationMapClickHandler = null;
+    refreshSimulationModeButtonState();
+
+    const offlineMapModal = document.getElementById('offline-map-modal');
+    if (offlineMapModal) offlineMapModal.style.display = 'none';
+
+    alert('Mode simulation actif : appui long sur la carte pour choisir avion ou feu.');
+}
+
+function disableSimulationMode({ restoreGps = true } = {}) {
+    if (!isSimulationMode && !simulationMapClickHandler) return;
+
+    if (map && simulationMapClickHandler) {
+        map.off('click', simulationMapClickHandler);
+    }
+    simulationMapClickHandler = null;
+    simulationSuppressNextClickUntil = 0;
+    closeSimulationActionPopup();
+    isSimulationMode = false;
+    refreshSimulationModeButtonState();
+
+    if (restoreGps) {
+        localStorage.setItem('liveGpsActive', 'true');
+        restartLiveGpsWatch({ silent: true });
+        setTimeout(() => requestOneShotGps({ silent: true, highAccuracy: true, timeout: 12000, maximumAge: 600000 }), 250);
+    }
+    simulationWasLiveGpsActiveBeforeSimulation = false;
+}
+
+function toggleSimulationMode() {
+    if (isSimulationMode) {
+        disableSimulationMode({ restoreGps: true });
+    } else {
+        enableSimulationMode();
+    }
+}
+
 function findClosestCommuneName(lat, lon) {
     const closestCommune = findClosestCommune(lat, lon, 27);
     return closestCommune ? closestCommune.nom_standard : null;
@@ -4796,6 +5017,7 @@ function toggleLftwRoute() {
 
 function updateLftwButtonState() {
     const lftwRouteButton = document.getElementById('lftw-route-button');
+    if (!lftwRouteButton) return;
     lftwRouteButton.classList.toggle('active', showLftwRoute);
 }
 
@@ -5051,15 +5273,7 @@ async function setMapSourceMode(mode) {
 function updateOfflineStatus() {
     const status = document.getElementById('offline-status');
     if (!status) return;
-    if (mapSourceMode !== 'offline') {
-        status.textContent = 'Mode ONLINE actif : seules les tuiles en ligne sont affichées.';
-        return;
-    }
-
-    const selectedLabel = activeOfflinePacks.length
-        ? `Packs actifs : ${activeOfflinePacks.join(', ')}.`
-        : 'Aucun pack actif.';
-    status.textContent = `Mode OFFLINE strict actif. ${selectedLabel}`;
+    status.textContent = mapSourceMode === 'offline' ? 'Mode OFFLINE' : 'Mode ONLINE';
 }
 
 async function initializeOfflineTilePreference() {
@@ -8418,6 +8632,52 @@ function initializeCalculator() {
             event.preventDefault();
             activateTab(onglet);
         });
+    });
+
+    function handleCalculatorTabHitByCoordinates(event) {
+        if (!calculatorModal || calculatorModal.style.display !== 'flex') return false;
+        const nav = calculatorModal.querySelector('.onglets-navigation');
+        if (!nav) return false;
+
+        const targetElement = event.target instanceof Element ? event.target : null;
+        const blockedInteractive = targetElement?.closest('button, input, select, textarea, a, [role="button"]');
+        if (blockedInteractive && !blockedInteractive.classList.contains('onglet-bouton') && !blockedInteractive.closest('.onglets-navigation')) {
+            return false;
+        }
+
+        const point = event.changedTouches && event.changedTouches[0]
+            ? event.changedTouches[0]
+            : (event.touches && event.touches[0] ? event.touches[0] : event);
+        const x = Number(point.clientX);
+        const y = Number(point.clientY);
+        if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+
+        const rect = nav.getBoundingClientRect();
+        const verticalMarginTop = 105;
+        const verticalMarginBottom = 42;
+        if (x < rect.left || x > rect.right || y < rect.top - verticalMarginTop || y > rect.bottom + verticalMarginBottom) return false;
+
+        const buttons = Array.from(nav.querySelectorAll('.onglet-bouton'));
+        if (!buttons.length) return false;
+
+        let target = buttons.find((button) => {
+            const b = button.getBoundingClientRect();
+            return x >= b.left && x <= b.right;
+        });
+
+        if (!target) {
+            const ratio = Math.max(0, Math.min(0.999, (x - rect.left) / Math.max(1, rect.width)));
+            target = buttons[Math.floor(ratio * buttons.length)];
+        }
+
+        if (!target) return false;
+        event.preventDefault();
+        activateTab(target);
+        return true;
+    }
+
+    ['pointerdown', 'pointerup', 'touchend', 'click'].forEach((eventName) => {
+        document.addEventListener(eventName, handleCalculatorTabHitByCoordinates, { passive: false, capture: true });
     });
 
 
