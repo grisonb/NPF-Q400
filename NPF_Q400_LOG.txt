@@ -5,13 +5,13 @@ But du fichier
 Ce fichier sert de mémoire technique en cas de perte d'historique de chat.
 Il doit rester à la racine du dépôt, à côté de index.html, script.js, style.css, manifest.json et sw.js.
 
-Version actuelle pérenne : v2026.47
-Date de génération : 2026-07-04
+Version actuelle pérenne : v2026.48
+Date de génération : 2026-07-05
 
 Règle de méthode
 ----------------
-- Valider les évolutions en dépôt de validation avant promotion en version pérenne.
-- Ne jamais modifier l'import offline, le service worker ou IndexedDB en version pérenne sans validation préalable.
+- Tester en dépôt TEST avant production.
+- Ne jamais modifier l'import offline, le service worker ou IndexedDB en production sans validation TEST.
 - Quand une version fonctionne, elle devient la nouvelle base.
 - Conserver ce fichier et l'enrichir à chaque version.
 
@@ -56,7 +56,7 @@ v12.12 — Groupes de packs offline
 - Pourquoi : permettre le téléchargement/import d'une carte en plusieurs ZIP.
 
 v12.13 — Progression offline + points d'eau + écran de reprise
-- Modification : version de validation offline_progress_waterpoints_startup.
+- Modification : version TEST offline_progress_waterpoints_startup.
 - Modification : conservation de l'app shell et des icônes dans sw.js.
 - Pourquoi : améliorer le démarrage PWA et conserver les évolutions fonctionnelles.
 
@@ -141,7 +141,7 @@ v12.20 — Nouvelle base IndexedDB offline
 - Modification reset : le bouton “Tout réinitialiser” devient un reset logique. Il vide les listes locales, désactive les packs actifs, nettoie les caches de tuiles, crée/ouvre la nouvelle base et recharge. L'ancienne base est seulement supprimée en tentative non bloquante.
 - Pourquoi : retrouver une application utilisable même si l'ancienne base est verrouillée.
 - Limite : les anciennes tuiles peuvent rester dans les données Safari du site et consommer de l'espace. Si le quota iPad devient insuffisant, il faudra supprimer les données du site NPF-Q400 dans Réglages Safari.
-- Contrôle conseillé : installer v12.20, faire MAJ, fermer/réouvrir, cliquer “Tout réinitialiser”, puis réimporter OpenStreet, IGN et OACI.
+- Test conseillé : installer v12.20, faire MAJ, fermer/réouvrir, cliquer “Tout réinitialiser”, puis réimporter OpenStreet, IGN et OACI.
 
 v12.21 — Version de récupération service worker
 - Constat utilisateur : après installation v12.20, la carte ne charge pas ; les icônes sont visibles mais les boutons ne fonctionnent pas.
@@ -149,7 +149,7 @@ v12.21 — Version de récupération service worker
 - Modification index.html : ajout d'une séquence de récupération exécutée une seule fois en v12.21. Elle désenregistre les anciens service workers, supprime les caches app-shell NPF-Q400, puis recharge une URL fraîche.
 - Modification script.js/sw.js : nouvelle base IndexedDB OfflineTilesDB_v12_21 pour éviter toute base verrouillée précédente.
 - Pourquoi : repartir sur un couple index/script/sw cohérent et éviter les anciens caches après blocage.
-- Contrôle conseillé : remplacer les fichiers, ouvrir avec connexion, laisser l'application recharger automatiquement une fois, puis cliquer MAJ et fermer/réouvrir.
+- Test conseillé : remplacer les fichiers, ouvrir avec connexion, laisser l'application recharger automatiquement une fois, puis cliquer MAJ et fermer/réouvrir.
 
 v12.22 — Stabilisation offline, reprise iPad, chat
 - Constat utilisateur : suppression OpenStreet trop lente/inutilisable ; message “importation en cours” puis suppression extrêmement lente ; OACI redevient lent après nettoyage ; reprise iPad après veille un peu lente ; besoin d'un bouton chat Reconnecter et d'une fermeture plus visible.
@@ -168,7 +168,7 @@ v12.23 — Chat auto-reconnect + fermeture plus propre
 - Modification script.js : ajout d'une reconnexion automatique après modification du canal ou du pseudo, avec temporisation 1,2 s pour éviter une reconnexion à chaque lettre.
 - Modification script.js : si le chat n'est pas connecté, la modification canal/pseudo est simplement mémorisée ; si le chat est connecté ou en connexion, l'app déconnecte puis reconnecte automatiquement.
 - Modification style.css : fermeture en bouton pilule blanc/rouge plus propre, suppression du pseudo-texte CSS précédent.
-- Non modifié : import OpenStreet. Le mode OpenStreet reste volontairement conservateur car c'est le pack de 1 Go le plus risqué pour Safari/iPadOS. À réévaluer après un contrôle complet de durée.
+- Non modifié : import OpenStreet. Le mode OpenStreet reste volontairement conservateur car c'est le pack de 1 Go le plus risqué pour Safari/iPadOS. À réévaluer après un test complet de durée.
 
 v12.24 — Chat Valider + OpenStreet découpé plus rapide
 - Constat utilisateur : l'auto-reconnexion chat n'est pas souhaitée ; il faut un bouton “Valider” qui se dégrise quand canal/pseudo change. OpenStreet était rapide quelques versions avant ; les ZIP actuels ne sont pas volumineux mais l'import est redevenu très long.
@@ -454,18 +454,32 @@ v12.54 — Ouverture centrée sur la position GPS
 - Cas dégradé : si le GPS est refusé ou indisponible et qu'aucune dernière position n'est stockée, l'ancien centrage France reste utilisé.
 - Modification index.html / manifest.json / sw.js : passage de version v12.53 à v12.54 pour forcer la prise en compte des nouveaux fichiers.
 - Aucun changement sur l'import ZIP offline ni sur le calque Lignes HT.
+v12.55 — Mise à jour PWA sécurisée avant nouvelle pérenne
+- Constat utilisateur : passage v2026.46 vers v2026.47 pérenne impossible sans désinstaller/réinstaller ; carte qui ne charge pas et boutons inactifs.
+- Diagnostic probable : transition trop importante avec ancien service worker et ancien app-shell cache-first. L'application pouvait mélanger ancien index, ancien script, nouveau cache ou nouvelle version, surtout en PWA iPad.
+- Modification sw.js : index.html, script.js, style.css et manifest.json passent en stratégie réseau d'abord avec cache en secours hors ligne.
+- Modification sw.js : après activation d'un nouveau service worker, navigation forcée des fenêtres ouvertes vers la même URL avec paramètre `swrefresh`, pour sortir de l'ancien app-shell sans désinstallation.
+- Modification index.html : ajout d'un rechargement unique lors du changement de contrôleur service worker.
+- Modification index.html : si un service worker neuf est déjà en attente, envoi explicite de `SKIP_WAITING` et demande `registration.update()`.
+- Sécurité : aucune suppression IndexedDB ; les cartes offline et les tuiles importées ne sont pas touchées.
+- Fonctionnalités conservées : import ZIP inchangé, centrage GPS v12.54 conservé, calque Lignes HT conservé.
+- Cette version reste une version TEST avant préparation d'une nouvelle version pérenne.
 
+v12.56 — Rappel MAJ 5 jours + fermeture feu centrée GPS
+- Base : v12.55 TEST maj_pwa.
+- Modification : ajout d’un rappel non bloquant à l’ouverture tous les 5 jours.
+- Message : “Pensez à cliquer sur [icône MAJ] de temps en temps pour être certain d’avoir la dernière version à jour.”
+- Action : bouton “Vérifier maintenant” lance la logique MAJ existante ; “Plus tard” mémorise le rappel pour 5 jours.
+- Modification : le bouton X du bandeau feu ne renvoie plus sur la vue France dézoomée.
+- Nouvelle logique : après fermeture du feu, la carte reprend la logique d’ouverture GPS avec zoom 10, en utilisant la position GPS courante, la dernière position connue ou la position stockée.
+- Non modifié : import ZIP, cartes offline, IndexedDB, calque Lignes HT.
 
-v2026.47 — Version pérenne basée sur v12.54 validée
-- Base : v12.54 validée en dépôt de validation.
-- Objectif : préparer la version pérenne v2026.47 en supprimant les identifiants et libellés de validation visibles.
-- Modification index.html : titre navigateur et titre PWA nettoyés pour afficher `NPF-Q400`.
-- Modification index.html : `APP_VERSION` passé à `v2026.47` et paramètres `appv` passés à `v2026.47-perenne` pour forcer la mise à jour.
-- Modification manifest.json : `name` et `short_name` passés à `NPF-Q400`.
-- Modification manifest.json : suppression de l'identifiant de validation ; `id` devient `./index.html`.
-- Modification manifest.json : `start_url` passé à `./index.html?appv=v2026.47`.
-- Modification manifest.json : description nettoyée de la mention de validation.
-- Modification script.js : ancien préfixe de cache de validation remplacé par `npf-q400-communes-tile-cache-`.
-- Modification script.js : fallback de version du calque Lignes HT passé à `v2026.47`.
-- Modification sw.js : version service worker passée à `sw-v2026-47-perenne` pour forcer l'activation du cache pérenne.
-- Conservé : centrage GPS au démarrage, zoom 10, calque Lignes HT, import ZIP confirmé fonctionnel, GeoJSON lignes HT local.
+v2026.48 — Version pérenne depuis v12.56 validée
+- Base : v12.56 avec rappel MAJ tous les 5 jours et correction du bouton X du bandeau feu.
+- Nettoyage pérenne : titre PWA et manifest repassés de NPF-Q400-TEST à NPF-Q400.
+- Modification index.html : APP_VERSION passé à v2026.48 et paramètres appv passés à v2026.48-perenne pour forcer la prise en compte des fichiers pérennes.
+- Modification manifest.json : suppression de l'identifiant avec `?test=1`, start_url passé à `v2026.48`, description repassée en version pérenne.
+- Modification sw.js : SW_VERSION passé à `sw-v2026-48-perenne`.
+- Modification script.js : préfixe de cache communes pérenne `npf-q400-communes-tile-cache-` conservé, sans préfixe test.
+- Fonctionnalités conservées : rappel MAJ 5 jours, fermeture du bandeau feu avec recentrage GPS zoom 10, centrage GPS au démarrage, calque Lignes HT, import ZIP inchangé.
+- Sécurité : aucune suppression IndexedDB, aucune suppression des cartes offline, aucune modification du moteur d'import ZIP.
