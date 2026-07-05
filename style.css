@@ -3770,7 +3770,7 @@ body {
 
 /* v11.90 — export GPX : essais de partage iOS avec MIME alternatifs */
 
-/* v11.91 — export KML en remplacement du GPX */
+/* v11.91 — export KML en remplacement du test GPX */
 
 /* v11.92 — KML minimal, partage fichier seul */
 
@@ -5356,22 +5356,30 @@ body {
     font-weight: 600;
 }
 
-.update-reminder-icon {
+.update-reminder-maj-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 24px;
-    margin: 0 3px;
+    gap: 3px;
+    min-width: 54px;
+    height: 28px;
+    margin: 0 4px;
+    padding: 0 7px;
     border-radius: 8px;
-    border: 1px solid #b9c8d8;
-    background: #ffffff;
+    border: 1px solid var(--primary-color);
+    background: rgba(255, 255, 255, 0.95);
     color: var(--primary-color);
-    font-size: 20px;
+    font-size: 12px;
     font-weight: 900;
     line-height: 1;
-    vertical-align: -5px;
+    vertical-align: -6px;
     box-shadow: 0 1px 4px rgba(0, 0, 0, 0.16);
+    box-sizing: border-box;
+}
+
+.update-reminder-maj-symbol {
+    font-size: 14px;
+    line-height: 1;
 }
 
 .update-reminder-actions {
@@ -5400,3 +5408,122 @@ body {
     color: var(--text-color);
 }
 
+
+
+/* ==========================================================================
+   v12.57 — marge haute des icônes carte iPad/PWA
+   ========================================================================== */
+:root {
+    --map-action-top-offset: 24px;
+}
+
+#main-action-buttons,
+#left-map-action-buttons {
+    top: calc(var(--safe-area-top) + var(--map-action-top-offset)) !important;
+}
+
+@media (max-width: 760px) {
+    #main-action-buttons,
+    #left-map-action-buttons {
+        top: calc(env(safe-area-inset-top, 0px) + 28px) !important;
+    }
+}
+
+@media (max-width: 430px) {
+    #main-action-buttons,
+    #left-map-action-buttons {
+        top: 36px !important;
+    }
+}
+
+
+/* v12.59 — Masse RLT issue de Volume × Densité */
+.rlt-mass-modal-content h3 {
+    font-size: 17px !important;
+    letter-spacing: .01em !important;
+}
+
+.rlt-mass-formula-row + .rlt-mass-formula-row {
+    margin-top: 10px !important;
+}
+
+.rlt-mass-formula-row-primary {
+    padding-bottom: 2px !important;
+}
+
+.rlt-mass-formula-row input[readonly],
+.rlt-mass-formula-row input.rlt-mass-result-input {
+    background: #eefdf3 !important;
+    border-color: #22c55e !important;
+    color: #064e3b !important;
+    cursor: default !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+}
+
+#bloc-fuel .rlt-mass-input-wrapper .display-input {
+    font-weight: 950 !important;
+}
+
+.flight-duration-summary {
+    display: inline-flex;
+    align-items: center;
+    min-height: 30px;
+    padding: 0 10px;
+    border-radius: 999px;
+    background: #eef6ff;
+    border: 1px solid #b9d8f0;
+    color: var(--primary-color);
+    font-size: 16px;
+    font-weight: 950;
+    white-space: nowrap;
+}
+
+#bloc-fuel.flight-locked .flight-duration-summary {
+    background: #eef6ff !important;
+    border-color: #b9d8f0 !important;
+    color: var(--primary-color) !important;
+}
+
+/* v12.60 — Masse RLT : comportement clavier iPad + résumé temps de vol */
+.rlt-mass-modal {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch !important;
+    align-items: center !important;
+}
+
+.rlt-mass-modal:focus-within {
+    align-items: flex-start !important;
+    padding-top: max(12px, calc(env(safe-area-inset-top, 0px) + 12px)) !important;
+    padding-bottom: max(42vh, calc(env(safe-area-inset-bottom, 0px) + 180px)) !important;
+}
+
+.rlt-mass-modal:focus-within .rlt-mass-modal-content {
+    margin-top: 4px !important;
+    margin-bottom: 32vh !important;
+}
+
+.flight-duration-summary {
+    font-size: 16px !important;
+    padding: 0 12px !important;
+}
+
+
+/* v12.61 — résumé temps de vol : séparateur / et total rouge */
+.flight-duration-summary {
+    gap: 7px !important;
+}
+
+.flight-duration-summary .flight-duration-separator {
+    color: var(--primary-color) !important;
+    font-weight: 950 !important;
+}
+
+.flight-duration-summary .flight-duration-total {
+    color: var(--secondary-color) !important;
+    font-weight: 950 !important;
+}
+
+#bloc-fuel.flight-locked .flight-duration-summary .flight-duration-total {
+    color: var(--secondary-color) !important;
+}
