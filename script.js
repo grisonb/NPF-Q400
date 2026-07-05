@@ -171,6 +171,7 @@ let communesLabelsLayer = null;
 let areCommunesVisible = false;
 let hasLoadedCommunes = false;
 let communesLabelData = [];
+let communesViewportLayerData = [];
 let communesPolygonData = [];
 let communesLayerLoadController = null;
 let communesLayerLoadPromise = null;
@@ -329,7 +330,7 @@ const withTimeout = (promise, timeoutMs, timeoutMessage) => new Promise((resolve
     );
 });
 
-const TILE_CACHE_PREFIX = 'npf-q400-communes-tile-cache-';
+const TILE_CACHE_PREFIX = 'test-communes-tile-cache-';
 
 
 function buildStoredTileKey(tileUrl, packName) {
@@ -407,26 +408,87 @@ function getCommuneFromDatabaseByNameAndDepartment(commune) {
     return sameName[0];
 }
 
-function buildManualFireCommuneFromPoint(lat, lon) {
+function buildManualFireCommuneFromPoint(lat, lon, fallbackName = 'Feu manuel') {
     /*
-     * v11.61 — feu manuel :
-     * on privilégie la base communes par centre/nom de commune plutôt que
-     * le polygone sous le pointeur. Cela évite les incohérences aux limites
-     * départementales, par exemple Marseillargues (34) proche du 30.
+     * v12.59 — nommage feu par polygone communal uniquement.
+     * On ne persiste plus une commune calculée par simple proximité, car cela
+     * peut nommer à tort un feu situé dans Marseille avec une commune limitrophe.
      */
-    const nearestFromDatabase = findClosestCommune(lat, lon, 27);
     const containedFromMap = findCommuneContainingPoint(lat, lon);
-    const referenceCommune = nearestFromDatabase || containedFromMap || null;
-    const databaseCommune = getCommuneFromDatabaseByNameAndDepartment(referenceCommune) || referenceCommune;
+    const databaseCommune = getCommuneFromDatabaseByNameAndDepartment(containedFromMap) || containedFromMap;
+
+    if (databaseCommune) {
+        return {
+            nom_standard: databaseCommune.nom_standard || databaseCommune.name || 'Feu manuel',
+            dep_code: databaseCommune.dep_code || null,
+            dep_nom: databaseCommune.dep_nom || null,
+            latitude_mairie: lat,
+            longitude_mairie: lon,
+            isManual: true,
+            communeSource: 'polygon'
+        };
+    }
 
     return {
-        nom_standard: databaseCommune?.nom_standard || 'Feu manuel',
-        dep_code: databaseCommune?.dep_code || null,
-        dep_nom: databaseCommune?.dep_nom || null,
+        nom_standard: fallbackName,
+        dep_code: null,
+        dep_nom: null,
         latitude_mairie: lat,
         longitude_mairie: lon,
-        isManual: true
+        isManual: true,
+        communeSource: 'coordinates'
     };
+}
+
+async function buildManualFireCommuneFromPointAsync(lat, lon, fallbackName = 'Feu manuel') {
+    if (!hasLoadedCommunes) {
+        try {
+            await ensureCommunesLayerDataLoaded();
+        } catch (error) {
+            console.warn('Identification commune par polygone indisponible:', error);
+        }
+    }
+
+    return buildManualFireCommuneFromPoint(lat, lon, fallbackName);
+}
+
+function repairManualFireCommuneLabelsFromPolygons() {
+    if (!hasLoadedCommunes) return;
+
+    let shouldRefreshCurrent = false;
+
+    try {
+        if (currentCommune && currentCommune.isManual) {
+            const repairedCurrent = normalizeHistoryCommune(currentCommune);
+            if (repairedCurrent) {
+                const before = JSON.stringify(currentCommune);
+                const after = JSON.stringify(repairedCurrent);
+                if (before !== after) {
+                    currentCommune = repairedCurrent;
+                    localStorage.setItem('currentCommune', JSON.stringify(repairedCurrent));
+                    shouldRefreshCurrent = true;
+                }
+            }
+        }
+    } catch (_) {}
+
+    try {
+        const rawHistory = JSON.parse(localStorage.getItem(FIRE_HISTORY_STORAGE_KEY) || '[]');
+        if (Array.isArray(rawHistory)) {
+            const repairedHistory = rawHistory
+                .map(normalizeHistoryCommune)
+                .filter(Boolean)
+                .slice(0, FIRE_HISTORY_MAX_ITEMS);
+            localStorage.setItem(FIRE_HISTORY_STORAGE_KEY, JSON.stringify(repairedHistory));
+        }
+    } catch (_) {}
+
+    displayFireHistory();
+    drawFireHistoryMarkers();
+
+    if (shouldRefreshCurrent && currentCommune) {
+        displayCommuneDetails(currentCommune, false);
+    }
 }
 
 
@@ -436,20 +498,19 @@ function normalizeHistoryCommune(commune) {
     const lon = Number(commune.longitude_mairie);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
-    let name = String(commune.nom_standard || commune.name || 'Feu').trim();
+    const polygonCommune = findCommuneContainingPoint(lat, lon);
+    const polygonDatabaseCommune = polygonCommune ? (getCommuneFromDatabaseByNameAndDepartment(polygonCommune) || polygonCommune) : null;
+
+    let name = String(polygonDatabaseCommune?.nom_standard || polygonDatabaseCommune?.name || commune.nom_standard || commune.name || 'Feu').trim();
     if (!name) return null;
 
     /*
-     * Historique feux : correction robuste.
-     * Certains feux déjà mémorisés n'avaient pas dep_code/dep_nom.
-     * On ré-enrichit donc l'entrée avec la commune la plus proche si possible.
+     * v12.58 — historique feux : priorité au polygone communal.
+     * La commune la plus proche n'est plus utilisée pour enrichir un feu,
+     * afin d'éviter les erreurs aux limites de Marseille / communes voisines.
      */
-    const closestCommune = (!commune.dep_code && typeof findClosestCommune === 'function')
-        ? findClosestCommune(lat, lon, 27)
-        : null;
-
-    let depCode = commune.dep_code || closestCommune?.dep_code || null;
-    let depNom = commune.dep_nom || closestCommune?.dep_nom || null;
+    let depCode = polygonDatabaseCommune?.dep_code || commune.dep_code || null;
+    let depNom = polygonDatabaseCommune?.dep_nom || commune.dep_nom || null;
 
     /*
      * Si le nom contient déjà un suffixe "(12)", on récupère ce code
@@ -1020,6 +1081,11 @@ async function initializeApp() {
         updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
     }, 0);
     setupGpsResumeHandlers();
+    setTimeout(() => {
+        ensureCommunesLayerDataLoaded()
+            .then(() => repairManualFireCommuneLabelsFromPolygons())
+            .catch((error) => console.warn('Préchargement polygones communes impossible:', error));
+    }, 500);
     primeGpsFromStoredPosition();
     if (localStorage.getItem('liveGpsActive') === 'true') {
         restartLiveGpsWatch({ silent: true });
@@ -1437,11 +1503,11 @@ function initMap() {
 
     map.on('click', handleGaarMapClick);
 
-    map.on('contextmenu', (e) => {
+    map.on('contextmenu', async (e) => {
         if (isDrawingMode) return;
         selectedPelicanOACI = null;
         L.DomEvent.preventDefault(e.originalEvent);
-        const manualCommune = buildManualFireCommuneFromPoint(e.latlng.lat, e.latlng.lng);
+        const manualCommune = await buildManualFireCommuneFromPointAsync(e.latlng.lat, e.latlng.lng, 'Feu manuel');
         currentCommune = manualCommune;
         localStorage.setItem('currentCommune', JSON.stringify(manualCommune));
         displayCommuneDetails(manualCommune, false);
@@ -1737,7 +1803,8 @@ function setupEventListeners() {
 
         if (map && map._communesZoomStyleBound !== true) {
             map._communesZoomStyleBound = true;
-            map.on('zoom move zoomend moveend', updateCommunesLayerAppearance);
+            // v12.62 — performance iPad : recalcul du calque Communes uniquement en fin de déplacement/zoom.
+            map.on('zoomend moveend', updateCommunesLayerAppearance);
         }
     }
 
@@ -1930,18 +1997,9 @@ function setupEventListeners() {
         if (!navigator.geolocation) { alert("La géolocalisation n'est pas supportée par votre navigateur."); return; }
         selectedPelicanOACI = null;
         navigator.geolocation.getCurrentPosition(
-            (pos) => {
+            async (pos) => {
                 const { latitude, longitude } = pos.coords;
-                const closestCommune = findClosestCommune(latitude, longitude, 27);
-                const pointName = closestCommune?.nom_standard || 'Feu GPS';
-                const gpsCommune = {
-                    nom_standard: pointName,
-                    dep_code: closestCommune?.dep_code || null,
-                    dep_nom: closestCommune?.dep_nom || null,
-                    latitude_mairie: latitude,
-                    longitude_mairie: longitude,
-                    isManual: true
-                };
+                const gpsCommune = await buildManualFireCommuneFromPointAsync(latitude, longitude, 'Feu GPS');
                 currentCommune = gpsCommune;
                 localStorage.setItem('currentCommune', JSON.stringify(gpsCommune));
                 displayCommuneDetails(gpsCommune, false);
@@ -2230,7 +2288,7 @@ function showUpdateReminderModal(timestamp = Date.now()) {
     modal.innerHTML = `
         <div class="update-reminder-modal-content" role="dialog" aria-modal="true" aria-labelledby="update-reminder-title">
             <h3 id="update-reminder-title">Mise à jour</h3>
-            <p>Pensez à cliquer sur <span class="update-reminder-icon" aria-label="icône de mise à jour">↻</span> de temps en temps pour être certain d’avoir la dernière version à jour.</p>
+            <p>Pensez à cliquer sur <span class="update-reminder-maj-button" aria-label="bouton MAJ"><span class="update-reminder-maj-symbol">🔄</span><span>MAJ</span></span> de temps en temps pour être certain d’avoir la dernière version à jour.<br><strong>Relancer l’application après mise à jour.</strong></p>
             <div class="update-reminder-actions">
                 <button id="update-reminder-now-button" class="update-reminder-primary" type="button">Vérifier maintenant</button>
                 <button id="update-reminder-later-button" class="update-reminder-secondary" type="button">Plus tard</button>
@@ -2534,7 +2592,7 @@ function refreshHighVoltageLinesButtonState() {
 }
 
 async function fetchHighVoltageLinesGeojson() {
-    const url = `${HIGH_VOLTAGE_LINES_GEOJSON_URL}?appv=${encodeURIComponent(window.APP_VERSION || 'v2026.48')}`;
+    const url = `${HIGH_VOLTAGE_LINES_GEOJSON_URL}?appv=${encodeURIComponent(window.APP_VERSION || 'v2026.49')}`;
     let response = null;
 
     try {
@@ -2550,7 +2608,7 @@ async function fetchHighVoltageLinesGeojson() {
 
         try {
             if ('caches' in window) {
-                const cache = await caches.open(`npf-q400-lignes-ht-${window.APP_VERSION || 'v2026.48'}`);
+                const cache = await caches.open(`npf-q400-lignes-ht-${window.APP_VERSION || 'v2026.49'}`);
                 await cache.put(HIGH_VOLTAGE_LINES_GEOJSON_URL, response.clone());
             }
         } catch (cacheError) {
@@ -3092,10 +3150,24 @@ async function deleteAirportPdf(oaci) {
     }
 }
 
+async function airportServerPdfExists(url) {
+    try {
+        const response = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        return !!(response && response.ok);
+    } catch (_) {
+        return false;
+    }
+}
+
 async function openAirportPdf(oaci) {
     const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (!safeOaci) return;
 
+    /*
+     * v12.58 — sécurité PDF pélicandrome/aérodrome :
+     * si aucun PDF offline ni serveur n'est trouvé, on n'envoie plus l'iPad
+     * vers une page PDF inexistante. La fenêtre pré-ouverte est fermée proprement.
+     */
     const openedWindow = window.open('', '_blank');
     const serverPdfUrl = `./pdf/${safeOaci}.pdf`;
 
@@ -3112,14 +3184,24 @@ async function openAirportPdf(oaci) {
             return;
         }
     } catch (error) {
-        console.warn('Ouverture PDF offline impossible, fallback serveur:', error);
+        console.warn('Ouverture PDF offline impossible:', error);
     }
 
-    if (openedWindow) {
-        openedWindow.location.href = serverPdfUrl;
-    } else {
-        window.location.href = serverPdfUrl;
+    const hasServerPdf = await airportServerPdfExists(serverPdfUrl);
+    if (hasServerPdf) {
+        if (openedWindow) {
+            openedWindow.location.href = serverPdfUrl;
+        } else {
+            window.location.href = serverPdfUrl;
+        }
+        return;
     }
+
+    try {
+        if (openedWindow && !openedWindow.closed) openedWindow.close();
+    } catch (_) {}
+
+    alert(`Aucun PDF associé à ${safeOaci}.`);
 }
 
 window.openAirportPdf = openAirportPdf;
@@ -3540,16 +3622,39 @@ function updateCommunesLayerAppearance() {
         communesLabelsLayer.addTo(map);
     }
 
-    if (communesLayerGroup) {
-        const style = getCommunesBoundaryStyle();
-        communesLayerGroup.eachLayer((layer) => {
-            if (layer && typeof layer.setStyle === 'function') {
-                layer.setStyle(style);
-            }
-        });
+    renderVisibleCommuneLayers();
+    renderVisibleCommuneLabels();
+}
+
+
+function renderVisibleCommuneLayers() {
+    if (!map || !communesLayerGroup || !areCommunesVisible || !hasLoadedCommunes) return;
+
+    communesLayerGroup.clearLayers();
+
+    const zoom = map.getZoom();
+    if (zoom < COMMUNES_DISPLAY_MIN_ZOOM) return;
+
+    const viewportBounds = map.getBounds().pad(0.08);
+    const style = getCommunesBoundaryStyle();
+    let visibleCount = 0;
+
+    for (const item of communesViewportLayerData) {
+        if (!item || !item.layer || !item.bounds) continue;
+        if (!viewportBounds.intersects(item.bounds)) continue;
+
+        if (typeof item.layer.setStyle === 'function') {
+            item.layer.setStyle(style);
+        }
+
+        communesLayerGroup.addLayer(item.layer);
+        visibleCount += 1;
     }
 
-    renderVisibleCommuneLabels();
+    const status = document.getElementById('offline-status');
+    if (status && areCommunesVisible) {
+        status.textContent = `Calque Communes actif : ${visibleCount} communes affichées à l'écran.`;
+    }
 }
 
 
@@ -3796,6 +3901,7 @@ async function loadCommunesLayerData() {
 
     communesPolygonData = buildCommunePolygonIndex(communesGeojson);
     communesLabelData = [];
+    communesViewportLayerData = [];
     communesLayerGroup.clearLayers();
     communesLabelsLayer.clearLayers();
 
@@ -3804,13 +3910,17 @@ async function loadCommunesLayerData() {
     });
 
     geoJsonLayer.eachLayer((layer) => {
-        communesLayerGroup.addLayer(layer);
-
         const properties = layer.feature?.properties || {};
         const communeName = getCommuneNameFromProperties(properties);
         if (!communeName || !layer.getBounds) return;
 
-        const center = layer.getBounds().getCenter();
+        const layerBounds = layer.getBounds();
+        communesViewportLayerData.push({
+            layer,
+            bounds: layerBounds
+        });
+
+        const center = layerBounds.getCenter();
         communesLabelData.push({
             name: communeName,
             latLng: center
@@ -3936,7 +4046,7 @@ function getStartupGpsCenterZoom() {
 
 function applyStartupGpsAutoCenter(lat, lng, { source = 'real', force = false } = {}) {
     /*
-     * v2026.48 — ouverture centrée GPS conservée.
+     * v12.54 — ouverture centrée GPS.
      * Objectif : ouvrir la carte sur la position GPS avec un zoom large,
      * sans suivre ensuite l'utilisateur en permanence.
      * - position stockée : recentrage provisoire rapide ;
@@ -3971,7 +4081,7 @@ function applyStoredGpsStartupCenter({ force = false } = {}) {
 
 function centerMapOnGpsOverviewAfterClear() {
     /*
-     * v2026.48 — fermeture du bandeau feu.
+     * v12.58 — fermeture du bandeau feu conservée.
      * Le bouton X ne doit plus renvoyer sur une vue France dézoomée.
      * On reprend la logique d'ouverture : position GPS connue, zoom large 10,
      * puis correction par GPS réel si disponible.
@@ -4172,36 +4282,19 @@ function updateNearestCommuneDisplay(lat, lon) {
 
     const enrichCommuneForDisplay = (commune) => {
         if (!commune) return null;
-
-        /*
-         * v11.63 — affichage bas droite stable :
-         * au démarrage, le GPS peut d'abord utiliser la base communes,
-         * puis le calque polygone peut repasser dessus avec une donnée incomplète.
-         * On utilise donc la base communes comme référence pour le département.
-         */
-        const nearestFromDatabase = findClosestCommune(lat, lon, 27);
-        const databaseMatch = getCommuneFromDatabaseByNameAndDepartment(commune);
-
-        const candidate = databaseMatch || commune;
-        const candidateHasFullDepartment = !!(candidate.dep_code && candidate.dep_nom);
-
-        if (!candidateHasFullDepartment && nearestFromDatabase) {
-            return {
-                ...candidate,
-                dep_code: candidate.dep_code || nearestFromDatabase.dep_code || null,
-                dep_nom: candidate.dep_nom || nearestFromDatabase.dep_nom || null,
-                nom_standard: candidate.nom_standard || nearestFromDatabase.nom_standard
-            };
-        }
-
-        return candidate;
+        return getCommuneFromDatabaseByNameAndDepartment(commune) || commune;
     };
 
     const buildLabel = (commune, prefix = 'Commune') => {
         const displayCommune = enrichCommuneForDisplay(commune);
         if (!displayCommune) return '';
         const depLabel = formatCommuneDepartment(displayCommune);
-        return `📍 ${prefix}: <b>${displayCommune.nom_standard}${depLabel ? ` (${depLabel})` : ''}</b>`;
+        return `📍 ${prefix}: <b>${displayCommune.nom_standard || displayCommune.name || 'non déterminée'}${depLabel ? ` (${depLabel})` : ''}</b>`;
+    };
+
+    const showUndetermined = () => {
+        nearestDisplay.style.display = 'block';
+        nearestDisplay.innerHTML = '📍 Commune: <b>non déterminée</b>';
     };
 
     const containedCommune = findCommuneContainingPoint(lat, lon);
@@ -4212,44 +4305,31 @@ function updateNearestCommuneDisplay(lat, lon) {
     }
 
     /*
-     * Si le fichier communes-50m n'est pas encore chargé, on l'utilise même
-     * si le calque Communes n'est pas affiché. En attendant la fin du chargement,
-     * on garde l'ancien calcul par centre-ville comme solution temporaire.
+     * v12.58 — affichage GPS par polygone obligatoire.
+     * On n'affiche plus temporairement la commune la plus proche pendant le
+     * chargement, car cela provoquait un flash Plan-de-Cuques avant Marseille.
      */
     if (!hasLoadedCommunes) {
         nearestDisplay.style.display = 'block';
-
-        const nearestCommuneDuringLoad = findClosestCommune(lat, lon);
-        if (nearestCommuneDuringLoad) {
-            nearestDisplay.innerHTML = buildLabel(nearestCommuneDuringLoad, 'Commune');
-        } else {
-            nearestDisplay.innerHTML = '📍 Commune: <b>chargement...</b>';
-        }
+        nearestDisplay.innerHTML = '📍 Commune: <b>chargement...</b>';
 
         ensureCommunesLayerDataLoaded()
             .then(() => {
                 const preciseCommune = findCommuneContainingPoint(lat, lon);
-                const communeToDisplay = preciseCommune || findClosestCommune(lat, lon);
-                if (!communeToDisplay) return;
                 const display = document.getElementById('nearest-commune-display');
                 if (!display) return;
                 display.style.display = 'block';
-                display.innerHTML = buildLabel(communeToDisplay, 'Commune');
+                display.innerHTML = preciseCommune ? buildLabel(preciseCommune, 'Commune') : '📍 Commune: <b>non déterminée</b>';
+                repairManualFireCommuneLabelsFromPolygons();
             })
             .catch((error) => {
                 console.warn('Chargement du calque communes pour identification impossible:', error);
+                showUndetermined();
             });
-    }
-
-    const nearestCommune = findClosestCommune(lat, lon);
-    if (!nearestCommune) {
-        nearestDisplay.style.display = 'none';
-        nearestDisplay.innerHTML = '';
         return;
     }
 
-    nearestDisplay.style.display = 'block';
-    nearestDisplay.innerHTML = buildLabel(nearestCommune, 'Plus proche');
+    showUndetermined();
 }
 
 function findClosestCommune(lat, lon, maxDistanceNm = null) {
@@ -4272,6 +4352,14 @@ function findClosestCommune(lat, lon, maxDistanceNm = null) {
     return closestCommune;
 }
 
+
+function shouldShowOwnGpsAltitude() {
+    try {
+        return chatConnected === true && localStorage.getItem('teamChatLocationSharing') === 'true';
+    } catch (_) {
+        return false;
+    }
+}
 
 function formatGpsAltitudeFtFromCoords(coords) {
     if (!coords) return '--- ft';
@@ -4500,14 +4588,17 @@ function ensureOwnGpsAltitudeMarkerStyle() {
     document.head.appendChild(style);
 }
 
-function buildOwnGpsIcon(altitudeLabel = '--- ft') {
+function buildOwnGpsIcon(altitudeLabel = '') {
     ensureOwnGpsAltitudeMarkerStyle();
-    const safeAltitude = escapeHtml(altitudeLabel || '--- ft');
+    const hasAltitudeLabel = !!String(altitudeLabel || '').trim();
+    const safeAltitude = escapeHtml(altitudeLabel || '');
+    const altitudeHtml = hasAltitudeLabel
+        ? `<div class="own-gps-plane-altitude">${safeAltitude}</div>`
+        : '';
 
     return L.divIcon({
-        className: 'own-gps-altitude-marker own-gps-plane-icon',
-        html: `<div class="own-gps-plane-altitude">${safeAltitude}</div>
-               <div class="own-gps-plane-body"><span class="own-gps-plane-shape">✈</span></div>`,
+        className: `own-gps-altitude-marker own-gps-plane-icon${hasAltitudeLabel ? ' has-own-gps-altitude' : ' no-own-gps-altitude'}`,
+        html: `${altitudeHtml}<div class="own-gps-plane-body"><span class="own-gps-plane-shape">✈</span></div>`,
         iconSize: [74, 58],
         iconAnchor: [37, 38]
     });
@@ -4647,7 +4738,7 @@ function updateOwnGpsVector(latitude, longitude, headingDeg, speedMps) {
 
 function updateUserPosition(pos) {
     const { latitude, longitude } = pos.coords;
-    const ownAltitudeLabel = formatGpsAltitudeFtFromCoords(pos.coords);
+    const ownAltitudeLabel = shouldShowOwnGpsAltitude() ? formatGpsAltitudeFtFromCoords(pos.coords) : '';
     const gpsTimestampMs = Number(pos.timestamp) || Date.now();
     const estimatedMotion = estimateMotionFromLastPosition(latitude, longitude, gpsTimestampMs);
     const rawHeading = Number(pos.coords.heading);
@@ -4661,13 +4752,17 @@ function updateUserPosition(pos) {
         source: pos && pos.npfIsStoredPosition ? 'stored' : 'real'
     });
 
+    const ownGpsPopupHtml = ownAltitudeLabel
+        ? `Votre position<br>${escapeHtml(ownAltitudeLabel)}`
+        : 'Votre position';
+
     if (!userMarker) {
         const userIcon = buildOwnGpsIcon(ownAltitudeLabel);
-        userMarker = L.marker([latitude, longitude], { icon: userIcon }).bindPopup(`Votre position<br>${escapeHtml(ownAltitudeLabel)}`).addTo(map);
+        userMarker = L.marker([latitude, longitude], { icon: userIcon }).bindPopup(ownGpsPopupHtml).addTo(map);
     } else {
         userMarker.setLatLng([latitude, longitude]);
         userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel));
-        userMarker.bindPopup(`Votre position<br>${escapeHtml(ownAltitudeLabel)}`);
+        userMarker.bindPopup(ownGpsPopupHtml);
     }
 
     applyOwnGpsPlaneHeading(motionHeading);
@@ -8341,6 +8436,23 @@ function initializeCalculator() {
         };
     }
 
+
+    function calculatorRowDataHasContent(rowData) {
+        if (!rowData) return false;
+        return !!(
+            rowData.time
+            || rowData.fuel
+            || rowData.oaci
+            || rowData.rltMass
+            || rowData.rltVolume
+            || rowData.rltDensity
+        );
+    }
+
+    function compactCalculatorTableData(tableData = []) {
+        return (Array.isArray(tableData) ? tableData : []).filter(calculatorRowDataHasContent);
+    }
+
     function normalizeFlightNumbers() {
         dailyFlights.forEach((flight, index) => {
             flight.number = index + 1;
@@ -8368,7 +8480,7 @@ function initializeCalculator() {
                 tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity });
             }
         });
-        state.calculator_table_data = tableData;
+        state.calculator_table_data = compactCalculatorTableData(tableData);
         return state;
     }
 
@@ -8401,6 +8513,45 @@ function initializeCalculator() {
         return dailyFlights
             .slice(0, activeIndex)
             .reduce((total, flight) => total + getFlightDurationFromState(flight.state), 0);
+    }
+
+
+    function formatDurationForFlightSummary(totalMinutes) {
+        const value = formatTime(totalMinutes) || '00:00';
+        return value.replace(':', 'h');
+    }
+
+    function updateFlightDurationSummary() {
+        const summary = document.getElementById('flight-duration-summary');
+        if (!summary) return;
+
+        const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+        if (!activeFlight) {
+            summary.textContent = '';
+            summary.style.display = 'none';
+            return;
+        }
+
+        let state = activeFlight.state || {};
+        try {
+            if (!isApplyingFlightState && document.querySelector('#bloc-fuel tbody')) {
+                state = readCalculatorStateFromDom();
+            }
+        } catch (_) {}
+
+        const flightDuration = getFlightDurationFromState(state);
+        const activeIndex = getActiveFlightIndex();
+        const flightNumber = activeIndex >= 0 ? activeIndex + 1 : 1;
+        const flightText = `Tps de vol n°${flightNumber} : ${formatDurationForFlightSummary(flightDuration)}`;
+
+        if (activeIndex > 0) {
+            const totalDuration = getCumulativeHdvBeforeActiveFlight() + flightDuration;
+            summary.innerHTML = `<span>${flightText}</span><span class="flight-duration-separator">/</span><span class="flight-duration-total">Total : ${formatDurationForFlightSummary(totalDuration)}</span>`;
+        } else {
+            summary.textContent = flightText;
+        }
+
+        summary.style.display = 'inline-flex';
     }
 
     function getGlobalLimitHdvMinutes() {
@@ -8540,6 +8691,7 @@ function initializeCalculator() {
         }
 
         updateActiveFlightLockState();
+        updateFlightDurationSummary();
     }
 
     function updateActiveFlightLockState() {
@@ -8553,9 +8705,11 @@ function initializeCalculator() {
         }
 
         if (lockStatus) {
-            lockStatus.textContent = isClosed ? 'Vol clôturé — verrouillé' : '';
-            lockStatus.style.display = isClosed ? 'inline-flex' : 'none';
+            lockStatus.textContent = '';
+            lockStatus.style.display = 'none';
         }
+
+        updateFlightDurationSummary();
 
         /*
          * v12.44 — verrouillage réel des vols clôturés :
@@ -8598,12 +8752,16 @@ function initializeCalculator() {
             initializeNumericInput(document.getElementById('suivi-conso-rotation-wrapper'), state['suivi-conso-rotation-wrapper']);
             initializeTimeInput(document.getElementById('suivi-duree-rotation-wrapper'), state['suivi-duree-rotation-wrapper']);
 
-            const tableData = state.calculator_table_data || [];
+            const tableData = compactCalculatorTableData(state.calculator_table_data || []);
+            const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
+            const isClosedFlight = !!activeFlight?.closed;
             tableData.forEach(rowData => addNewRow(tableBody, rowData, false));
 
-            const rowsToAdd = Math.max(6, tableBody.rows.length + 1) - tableBody.rows.length;
-            for (let i = 0; i < rowsToAdd; i++) {
-                addNewRow(tableBody, null, i === rowsToAdd - 1);
+            if (!isClosedFlight) {
+                const rowsToAdd = Math.max(6, tableBody.rows.length + 1) - tableBody.rows.length;
+                for (let i = 0; i < rowsToAdd; i++) {
+                    addNewRow(tableBody, null, i === rowsToAdd - 1);
+                }
             }
         } finally {
             isApplyingFlightState = false;
@@ -8615,6 +8773,7 @@ function initializeCalculator() {
         refreshSharedHeaderMirrorValues();
         updateActiveFlightLockState();
         masterRecalculate();
+        updateFlightDurationSummary();
     }
 
     function loadActiveFlightState() {
@@ -9129,13 +9288,16 @@ function initializeCalculator() {
     }
 
     function markRltCalculatedField(fieldName) {
-        const { volumeInput, densityInput, massInput } = getRltMassModalElements();
-        [volumeInput, densityInput, massInput].filter(Boolean).forEach(input => {
+        const elements = getRltMassModalElements();
+        [
+            elements.massToVolumeVolumeInput,
+            elements.massInput
+        ].filter(Boolean).forEach(input => {
             input.classList.remove('rlt-calculated-field');
         });
 
-        if (fieldName === 'volume') volumeInput?.classList.add('rlt-calculated-field');
-        if (fieldName === 'mass') massInput?.classList.add('rlt-calculated-field');
+        if (fieldName === 'volumeFromMass') elements.massToVolumeVolumeInput?.classList.add('rlt-calculated-field');
+        if (fieldName === 'massFromVolume') elements.massInput?.classList.add('rlt-calculated-field');
     }
 
     function formatDecimalValue(value, decimals = 2) {
@@ -9151,6 +9313,9 @@ function initializeCalculator() {
     function getRltMassModalElements() {
         return {
             modal: document.getElementById('rlt-mass-modal'),
+            massToVolumeMassInput: document.getElementById('rlt-mass-to-volume-mass-input'),
+            massToVolumeDensityInput: document.getElementById('rlt-mass-to-volume-density-input'),
+            massToVolumeVolumeInput: document.getElementById('rlt-mass-to-volume-volume-input'),
             volumeInput: document.getElementById('rlt-volume-input'),
             densityInput: document.getElementById('rlt-density-input'),
             massInput: document.getElementById('rlt-mass-input'),
@@ -9162,9 +9327,17 @@ function initializeCalculator() {
     }
 
     function closeRltMassModal() {
-        const { modal, volumeInput, densityInput, massInput } = getRltMassModalElements();
+        const elements = getRltMassModalElements();
+        const { modal } = elements;
         try {
-            [volumeInput, densityInput, massInput].forEach(input => input && input.blur && input.blur());
+            [
+                elements.massToVolumeMassInput,
+                elements.massToVolumeDensityInput,
+                elements.massToVolumeVolumeInput,
+                elements.volumeInput,
+                elements.densityInput,
+                elements.massInput
+            ].forEach(input => input && input.blur && input.blur());
         } catch (_) {}
         if (modal) {
             modal.style.setProperty('display', 'none', 'important');
@@ -9176,74 +9349,111 @@ function initializeCalculator() {
         markRltCalculatedField(null);
     }
 
+    function ensureRltDensityDefaults() {
+        const { massToVolumeDensityInput, densityInput } = getRltMassModalElements();
+        [massToVolumeDensityInput, densityInput].filter(Boolean).forEach(input => {
+            if (!input.value || input.value === '1') input.value = '1.';
+        });
+    }
+
     function syncRltMassModalFromInputs() {
-        const { volumeInput, densityInput, massInput } = getRltMassModalElements();
-        if (!volumeInput || !densityInput || !massInput) return;
+        const {
+            massToVolumeMassInput,
+            massToVolumeDensityInput,
+            massToVolumeVolumeInput,
+            volumeInput,
+            densityInput,
+            massInput
+        } = getRltMassModalElements();
 
-        if (!densityInput.value || densityInput.value === '1') {
-            densityInput.value = '1.';
-        }
+        ensureRltDensityDefaults();
+        markRltCalculatedField(null);
 
-        const volume = parseDecimalInput(volumeInput.value);
-        const density = parseRltDensityInput(densityInput.value);
-        const mass = parseDecimalInput(massInput.value);
+        const topMass = parseDecimalInput(massToVolumeMassInput?.value);
+        const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
+        const bottomVolume = parseDecimalInput(volumeInput?.value);
+        const bottomDensity = parseRltDensityInput(densityInput?.value);
+        const topComputedVolume = (topMass !== null && topDensity !== null) ? (topMass / topDensity) : null;
 
-        if (density === null) {
-            markRltCalculatedField(null);
-            return;
+        if (massToVolumeVolumeInput) {
+            if (topComputedVolume !== null) {
+                massToVolumeVolumeInput.value = formatDecimalValue(topComputedVolume, 0);
+                markRltCalculatedField('volumeFromMass');
+            } else {
+                massToVolumeVolumeInput.value = '';
+            }
         }
 
         /*
-         * v12.42 :
-         * - mode normal : Volume + Densité => Masse calculée sur fond vert pastel.
-         * - mode prévision : Masse + Densité => Volume calculé sur fond vert pastel.
+         * v12.59 — colonne Masse RLT : la valeur validée doit toujours être
+         * le résultat de la ligne Volume × Densité = Masse. Si l'utilisateur
+         * part de la ligne Masse ÷ Densité = Volume, le volume calculé sert
+         * simplement d'entrée implicite pour la ligne Volume × Densité.
          */
-        if (activeRltMassLastEdited === 'mass') {
-            activeRltMassCalculationMode = 'massToVolume';
-        } else if (activeRltMassLastEdited === 'volume') {
-            activeRltMassCalculationMode = 'volumeToMass';
+        if (massInput) {
+            const effectiveVolumeForMass = bottomVolume !== null ? bottomVolume : topComputedVolume;
+            const effectiveDensityForMass = bottomDensity !== null ? bottomDensity : topDensity;
+            if (effectiveVolumeForMass !== null && effectiveDensityForMass !== null) {
+                massInput.value = formatDecimalValue(effectiveVolumeForMass * effectiveDensityForMass, 0);
+                markRltCalculatedField('massFromVolume');
+            } else {
+                massInput.value = '';
+            }
         }
-
-        if (activeRltMassCalculationMode === 'massToVolume' && mass !== null) {
-            volumeInput.value = formatDecimalValue(mass / density, 0);
-            markRltCalculatedField('volume');
-            return;
-        }
-
-        if (volume !== null) {
-            massInput.value = formatDecimalValue(volume * density, 0);
-            activeRltMassCalculationMode = 'volumeToMass';
-            markRltCalculatedField('mass');
-            return;
-        }
-
-        if (mass !== null) {
-            volumeInput.value = formatDecimalValue(mass / density, 0);
-            activeRltMassCalculationMode = 'massToVolume';
-            markRltCalculatedField('volume');
-            return;
-        }
-
-        markRltCalculatedField(null);
     }
 
     function setupRltMassModalOnce() {
-        const { modal, volumeInput, densityInput, massInput, validateBtn, clearBtn, cancelBtn, closeBtn } = getRltMassModalElements();
+        const elements = getRltMassModalElements();
+        const {
+            modal,
+            massToVolumeMassInput,
+            massToVolumeDensityInput,
+            massToVolumeVolumeInput,
+            volumeInput,
+            densityInput,
+            massInput,
+            validateBtn,
+            clearBtn,
+            cancelBtn,
+            closeBtn
+        } = elements;
         if (!modal || modal.dataset.bound === '1') return;
         modal.dataset.bound = '1';
 
-        const bindInput = (input, field) => {
+        [massToVolumeVolumeInput, massInput].filter(Boolean).forEach(input => {
+            input.readOnly = true;
+            input.setAttribute('readonly', 'readonly');
+            input.setAttribute('aria-readonly', 'true');
+            input.addEventListener('focus', () => input.blur());
+        });
+
+        const bindInput = (input, field, mode) => {
             if (!input) return;
+            input.addEventListener('focus', () => {
+                /*
+                 * v12.60 — iPad : quand le clavier apparaît, la fenêtre
+                 * Masse RLT doit remonter comme lorsqu'une cellule déjà
+                 * renseignée est ouverte. On force un recentrage visuel
+                 * de la boîte au focus de chaque champ éditable.
+                 */
+                setTimeout(() => {
+                    try {
+                        const content = input.closest('.rlt-mass-modal-content');
+                        if (content && typeof content.scrollIntoView === 'function') {
+                            content.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+                        }
+                    } catch (_) {}
+                }, 160);
+            });
             input.addEventListener('input', () => {
                 if (field === 'density') {
                     input.value = normalizeRltDensityInput(input.value);
                     try { input.setSelectionRange(input.value.length, input.value.length); } catch (_) {}
-                } else if (field === 'volume') {
+                } else if (field === 'volume' || field === 'mass') {
                     input.value = String(input.value || '').replace(/[^0-9]/g, '');
-                } else {
-                    input.value = String(input.value || '').replace(',', '.').replace(/[^0-9.]/g, '');
                 }
                 activeRltMassLastEdited = field;
+                activeRltMassCalculationMode = mode;
                 syncRltMassModalFromInputs();
             });
             input.addEventListener('keydown', (event) => {
@@ -9258,9 +9468,10 @@ function initializeCalculator() {
             });
         };
 
-        bindInput(volumeInput, 'volume');
-        bindInput(densityInput, 'density');
-        bindInput(massInput, 'mass');
+        bindInput(massToVolumeMassInput, 'mass', 'massToVolume');
+        bindInput(massToVolumeDensityInput, 'density', 'massToVolume');
+        bindInput(volumeInput, 'volume', 'volumeToMass');
+        bindInput(densityInput, 'density', 'volumeToMass');
 
         if (validateBtn) {
             validateBtn.addEventListener('click', (event) => {
@@ -9273,21 +9484,34 @@ function initializeCalculator() {
 
                 syncRltMassModalFromInputs();
 
-                let volume = parseDecimalInput(volumeInput?.value);
-                const density = parseRltDensityInput(densityInput?.value);
-                let mass = parseDecimalInput(massInput?.value);
+                const topMass = parseDecimalInput(massToVolumeMassInput?.value);
+                const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
+                const topVolume = parseDecimalInput(massToVolumeVolumeInput?.value);
+                const bottomVolume = parseDecimalInput(volumeInput?.value);
+                const bottomDensity = parseRltDensityInput(densityInput?.value);
+                const bottomMass = parseDecimalInput(massInput?.value);
 
-                if (density !== null) {
-                    if (activeRltMassCalculationMode === 'massToVolume' && mass !== null) {
-                        volume = mass / density;
-                        if (volumeInput) volumeInput.value = formatDecimalValue(volume, 1);
-                    } else if (volume !== null) {
-                        mass = volume * density;
-                        if (massInput) massInput.value = formatDecimalValue(mass, 0);
-                    } else if (mass !== null) {
-                        volume = mass / density;
-                        if (volumeInput) volumeInput.value = formatDecimalValue(volume, 1);
-                    }
+                let volume = null;
+                let density = null;
+                let mass = null;
+
+                const topComputedVolume = (topMass !== null && topDensity !== null)
+                    ? (topVolume !== null ? topVolume : (topMass / topDensity))
+                    : null;
+                const volumeForMassResult = bottomVolume !== null ? bottomVolume : topComputedVolume;
+                const densityForMassResult = bottomDensity !== null ? bottomDensity : topDensity;
+
+                if (volumeForMassResult !== null && densityForMassResult !== null) {
+                    volume = volumeForMassResult;
+                    density = densityForMassResult;
+                    /*
+                     * v12.59 — important : la colonne Masse RLT affiche et
+                     * mémorise le résultat de Volume × Densité, jamais la
+                     * masse saisie directement dans la première ligne.
+                     */
+                    mass = bottomMass !== null && bottomVolume !== null && bottomDensity !== null
+                        ? bottomMass
+                        : (volumeForMassResult * densityForMassResult);
                 }
 
                 activeRltMassWrapper.dataset.volume = volume !== null ? formatDecimalValue(volume, 0) : '';
@@ -9305,6 +9529,9 @@ function initializeCalculator() {
 
         if (clearBtn) {
             clearBtn.addEventListener('click', () => {
+                if (massToVolumeMassInput) massToVolumeMassInput.value = '';
+                if (massToVolumeDensityInput) massToVolumeDensityInput.value = '1.';
+                if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = '';
                 if (volumeInput) volumeInput.value = '';
                 if (densityInput) densityInput.value = '1.';
                 if (massInput) massInput.value = '';
@@ -9314,27 +9541,60 @@ function initializeCalculator() {
             });
         }
 
-        if (cancelBtn) cancelBtn.addEventListener('click', closeRltMassModal);
-        if (closeBtn) closeBtn.addEventListener('click', closeRltMassModal);
+        const bindRltModalCloseButton = (button) => {
+            if (!button || button.dataset.rltCloseBound === '1') return;
+            button.dataset.rltCloseBound = '1';
+            const handler = (event) => {
+                if (event) {
+                    event.preventDefault();
+                    event.stopPropagation();
+                }
+                closeRltMassModal();
+            };
+            ['pointerdown', 'touchstart', 'mousedown'].forEach(type => {
+                button.addEventListener(type, handler, { capture: true });
+            });
+            button.addEventListener('click', handler, { capture: true });
+        };
+
+        bindRltModalCloseButton(cancelBtn);
+        bindRltModalCloseButton(closeBtn);
         modal.addEventListener('click', (event) => {
             if (event.target === modal) closeRltMassModal();
         });
     }
 
     function openRltMassModal(wrapper) {
-        const { modal, volumeInput, densityInput, massInput } = getRltMassModalElements();
+        const elements = getRltMassModalElements();
+        const {
+            modal,
+            massToVolumeMassInput,
+            massToVolumeDensityInput,
+            massToVolumeVolumeInput,
+            volumeInput,
+            densityInput,
+            massInput
+        } = elements;
         if (!modal || !wrapper) return;
 
         setupRltMassModalOnce();
         activeRltMassWrapper = wrapper;
         activeRltMassLastEdited = null;
-
-        if (volumeInput) volumeInput.value = wrapper.dataset.volume || '';
-        if (densityInput) densityInput.value = wrapper.dataset.density || '1.';
-        if (massInput) massInput.value = wrapper.dataset.mass || String(wrapper.querySelector('.display-input')?.value || '').replace(/[^0-9]/g, '');
-
         activeRltMassCalculationMode = null;
+
+        const storedVolume = wrapper.dataset.volume || '';
+        const storedDensity = wrapper.dataset.density || '1.';
+        const storedMass = wrapper.dataset.mass || String(wrapper.querySelector('.display-input')?.value || '').replace(/[^0-9]/g, '');
+
+        if (massToVolumeMassInput) massToVolumeMassInput.value = storedMass || '';
+        if (massToVolumeDensityInput) massToVolumeDensityInput.value = storedDensity || '1.';
+        if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = storedVolume || '';
+        if (volumeInput) volumeInput.value = storedVolume || '';
+        if (densityInput) densityInput.value = storedDensity || '1.';
+        if (massInput) massInput.value = storedMass || '';
+
         markRltCalculatedField(null);
+        syncRltMassModalFromInputs();
 
         modal.style.removeProperty('display');
         modal.style.display = 'flex';
@@ -9342,10 +9602,26 @@ function initializeCalculator() {
 
         setTimeout(() => {
             try {
-                if (volumeInput && !volumeInput.value) volumeInput.focus({ preventScroll: false });
-                else if (massInput) massInput.focus({ preventScroll: false });
+                /*
+                 * v12.60 — on privilégie la ligne opérationnelle
+                 * Volume × Densité = Masse. Sur iPad, focaliser ce champ
+                 * fait remonter la fenêtre avec le clavier, y compris quand
+                 * la cellule Masse RLT était vide.
+                 */
+                const preferredInput = volumeInput || massToVolumeMassInput;
+                if (preferredInput) {
+                    preferredInput.focus({ preventScroll: false });
+                    const content = preferredInput.closest('.rlt-mass-modal-content');
+                    setTimeout(() => {
+                        try {
+                            if (content && typeof content.scrollIntoView === 'function') {
+                                content.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+                            }
+                        } catch (_) {}
+                    }, 180);
+                }
             } catch (_) {}
-        }, 50);
+        }, 80);
     }
 
     function initializeRltMassInput(wrapper, data = {}) {
@@ -9540,9 +9816,10 @@ function initializeCalculator() {
             const activeFlight = dailyFlights.find(flight => flight.id === activeFlightId);
             if (!activeFlight) return;
             activeFlight.closed = !activeFlight.closed;
+            if (activeFlight.state) {
+                activeFlight.state.calculator_table_data = compactCalculatorTableData(activeFlight.state.calculator_table_data || []);
+            }
             persistFlights();
-            refreshFlightSelector();
-            updateActiveFlightLockState();
 
             if (activeFlight.closed) {
                 const allClosed = dailyFlights.every(flight => flight.closed);
@@ -9555,8 +9832,11 @@ function initializeCalculator() {
                     activeFlightId = nextFlight.id;
                     persistFlights();
                     loadActiveFlightState();
+                    return;
                 }
             }
+
+            loadActiveFlightState();
         });
     }
 
@@ -9595,6 +9875,7 @@ function initializeCalculator() {
         updatePreviTab();
         updateSuiviTab();
         updateDeroutementTab();
+        if (typeof updateFlightDurationSummary === 'function') updateFlightDurationSummary();
     };
 
     masterRecalculate();
