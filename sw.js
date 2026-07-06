@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-50-perenne';
+const SW_VERSION = 'sw-v2026-51-perenne';
 
 const DB_NAME = 'OfflineTilesDB_v12_21';
 const DB_VERSION = 3;
@@ -121,7 +121,7 @@ self.addEventListener('activate', event => {
         await self.clients.claim();
 
         /*
-         * v2026.50 — transition PWA plus propre conservée.
+         * v2026.51 — transition PWA plus propre conservée.
          * Après activation d'un nouveau service worker, on force une navigation
          * des fenêtres ouvertes vers la même URL avec un paramètre de rafraîchissement.
          * Objectif : éviter une page servie par l'ancien app-shell avec des scripts
