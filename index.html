@@ -7,11 +7,11 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.51-perenne">
-    <link rel="manifest" href="manifest.json?appv=v2026.51-perenne">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v2026.51-perenne">
-    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v2026.51-perenne">
-    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v2026.51-perenne">
+    <link rel="stylesheet" href="style.css?appv=v2026.52-perenne">
+    <link rel="manifest" href="manifest.json?appv=v2026.52-perenne">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v2026.52-perenne">
+    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v2026.52-perenne">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v2026.52-perenne">
     <meta name="theme-color" content="#0b2f6b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -56,7 +56,7 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.51';
+        const APP_VERSION = 'v2026.52';
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
         window.APP_VERSION = APP_VERSION;
@@ -64,7 +64,7 @@
         window.SW_DISABLED_FOR_PLATFORM = shouldDisableServiceWorker;
 
         /*
-         * v2026.51 — version pérenne issue de v12.70 Prévi + aides.
+         * v2026.52 — version pérenne issue de v12.95 TEST.
          * Quand un nouveau service worker prend le contrôle, on recharge une
          * seule fois la page pour éviter un mélange ancien index / nouveau cache
          * ou nouveau index / ancien script. Les tuiles offline IndexedDB ne sont
@@ -76,6 +76,8 @@
                     const reloadKey = `${SW_CONTROLLER_RELOAD_GUARD_KEY}:${APP_VERSION}`;
                     if (sessionStorage.getItem(reloadKey) === '1') return;
                     sessionStorage.setItem(reloadKey, '1');
+                    localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
+                    localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
                 } catch (_) {}
 
                 window.location.reload();
@@ -139,6 +141,10 @@
             refreshUrl.pathname = refreshUrl.pathname.replace(/[^/]*$/, 'index.html');
             refreshUrl.searchParams.set('appv', APP_VERSION);
             refreshUrl.searchParams.set('ts', Date.now().toString());
+            try {
+                localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
+                    localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+            } catch (_) {}
             window.location.replace(refreshUrl.toString());
         };
         if ('serviceWorker' in navigator) {
@@ -146,6 +152,13 @@
                 try {
                     const previousVersion = localStorage.getItem(APP_VERSION_STORAGE_KEY);
                     if (previousVersion !== APP_VERSION) {
+                        if (previousVersion) {
+                            localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
+                            localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                            // v12.92 — afficher immédiatement la consigne de relance au premier chargement de la nouvelle version,
+                            // sans attendre un lancement supplémentaire de la PWA iPad.
+                            setTimeout(showEarlyPostUpdateRestartNoticeModalIfNeeded, 0);
+                        }
                         localStorage.setItem(APP_VERSION_STORAGE_KEY, APP_VERSION);
                         sessionStorage.removeItem(SW_CONTROLLER_RELOAD_GUARD_KEY);
                     }
@@ -176,7 +189,44 @@
             });
         }
 
+
+        function showEarlyPostUpdateRestartNoticeModalIfNeeded() {
+            try {
+                const pending = localStorage.getItem('npfPostUpdateRestartNoticePending') === '1';
+                const noticeVersion = localStorage.getItem('npfPostUpdateRestartNoticeVersion') || '';
+                if (!pending && !noticeVersion) return;
+                // v12.92 — un marqueur pending doit toujours afficher l'alerte, même si la valeur
+                // enregistrée provient de l'ancienne version qui vient de demander la MAJ.
+                if (!pending && noticeVersion && noticeVersion !== APP_VERSION) return;
+                if (document.getElementById('post-update-restart-modal')) return;
+
+                const modal = document.createElement('div');
+                modal.id = 'post-update-restart-modal';
+                modal.className = 'update-reminder-modal post-update-restart-modal';
+                modal.innerHTML = `
+                    <div class="update-reminder-modal-content post-update-restart-modal-content" role="dialog" aria-modal="true" aria-labelledby="post-update-restart-title">
+                        <h3 id="post-update-restart-title">Mise à jour</h3>
+                        <p><strong>Une mise à jour vient d’être effectuée.</strong><br>Fermez et relancez l’application.</p>
+                    </div>
+                `;
+                document.body.appendChild(modal);
+
+                /*
+                 * v12.82 — fenêtre post-MAJ persistante : pas de bouton OK et
+                 * pas de fermeture au toucher. Le message reste affiché tant
+                 * que l'application n'est pas fermée/relancée. On efface le
+                 * marqueur dès l'affichage pour ne pas le revoir au lancement
+                 * suivant.
+                 */
+                try {
+                    localStorage.removeItem('npfPostUpdateRestartNoticeVersion');
+                    localStorage.removeItem('npfPostUpdateRestartNoticePending');
+                } catch (_) {}
+            } catch (_) {}
+        }
+
         document.addEventListener('DOMContentLoaded', () => {
+            showEarlyPostUpdateRestartNoticeModalIfNeeded();
             const mainVersionDisplay = document.getElementById('app-version-display');
             if (mainVersionDisplay) {
                 mainVersionDisplay.textContent = APP_VERSION;
@@ -196,7 +246,7 @@
     <div id="app-boot-screen" aria-live="polite">
         <div class="boot-card">
             <div>Chargement NPF-Q400…</div>
-            <div class="boot-version">reprise iPad</div>
+            <div class="boot-version">Patience, je réfléchis ...</div>
         </div>
     </div>
     <div id="map"></div>
@@ -299,7 +349,7 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.51-perenne"></script>
+    <script src="script.js?appv=v2026.52-perenne"></script>
     
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
@@ -338,8 +388,8 @@
             <div class="onglets-conteneur">
                 <div class="onglet-panneau active" id="previ-rotations">
                     <div class="header-section previ-shared-header-section">
-                        <div class="header-item"><label id="previ-bloc-depart-label">BLOC DÉPART</label><div id="previ-bloc-depart" class="input-wrapper time-input-wrapper" data-sync-target="bloc-depart"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
-                        <div class="header-item"><label>FUEL Départ</label><div id="previ-fuel-depart" class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg" data-sync-target="fuel-depart"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></div>
+                        <div class="header-item"><label id="previ-bloc-depart-label">HEURE TO</label><div id="previ-bloc-depart" class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
+                        <div class="header-item"><label>FUEL Départ</label><div id="previ-fuel-depart" class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg"><input type="text" class="display-input" inputmode="numeric" placeholder="[valeur]"><span class="clear-btn">&times;</span></div></div>
                         <div class="header-item base-oaci-header-item"><label id="previ-cs-base-label">Base</label><div class="input-wrapper base-oaci-input-wrapper"><input type="text" id="previ-base-oaci-input" class="display-input base-oaci-input" inputmode="text" maxlength="4" placeholder="OACI" autocomplete="off" autocapitalize="characters" spellcheck="false"><input type="text" id="previ-cs-lftw-display" class="display-input base-sunset-hidden" readonly tabindex="-1" aria-hidden="true"></div></div>
                         <div class="header-item"><label>TMD</label><div id="previ-tmd" class="input-wrapper time-input-wrapper" data-sync-target="tmd"><input type="text" class="display-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
                         <div class="header-item"><label>LIMITE HDV</label><div id="previ-limite-hdv" class="input-wrapper time-input-wrapper" data-sync-target="limite-hdv"><input type="text" class="display-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
@@ -363,15 +413,15 @@
                             <span id="previ-bingo-pelic" class="previ-hidden-bingo-value">-- kg</span>
                             <div class="rotations-group previ-details-group">
                                 <h3 class="analyse-col-title" style="visibility: hidden;">&nbsp;</h3>
+                                <div class="result-line"><span class="label">CS sur Feu :</span><span class="value" id="cs-sur-feu">--:--</span></div>
                                 <div class="result-line"><span class="label">Heure sur Feu :<span id="heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="heure-sur-feu">--:--</span></div>
-                                <div class="result-line"><span class="label">Durée transit :<span id="duree-transit-help" class="formula-help-icon">?</span></span><span class="value" id="duree-transit">--:--</span></div>
-                                <div class="result-line"><span class="label">Conso. transit :<span id="conso-aller-feu-help" class="formula-help-icon">?</span></span><span class="value" id="conso-aller-feu">-- kg</span></div>
+                                <div class="result-line"><span class="label">Durée Transit :<span id="duree-transit-help" class="formula-help-icon">?</span></span><span class="value" id="duree-transit">--:--</span></div>
+                                <div class="result-line"><span class="label">Conso Transit :<span id="conso-aller-feu-help" class="formula-help-icon">?</span></span><span class="value" id="conso-aller-feu">-- kg</span></div>
                                 <div class="result-line"><span class="label">Fuel sur Feu :<span id="fuel-sur-feu-help" class="formula-help-icon">?</span></span><div style="display: flex; align-items: center;"><div id="fuel-sur-feu-wrapper" class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric" readonly></div><button class="manual-btn" id="fuel-sur-feu-manual-btn">AUTO</button></div></div>
                                 <div class="result-line"><span class="label">Durée Rotation :<span id="duree-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="duree-rotation">--:--</span></div>
-                                <div class="result-line"><span class="label">Conso. Rotation :<span id="conso-par-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="conso-par-rotation">-- kg</span></div>
-                                <div class="result-line"><span class="label">CS sur feu :</span><span class="value" id="cs-sur-feu">--:--</span></div>
-                                <div class="result-line"><span class="label">TMD :</span><span class="value" id="tmd-display">--:--</span></div>
-                                <div class="result-line"><span class="label">HdV restant :</span><span class="value" id="hdv-restant-display">--:--</span></div>
+                                <div class="result-line"><span class="label">Conso Rotation :<span id="conso-par-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="conso-par-rotation">-- kg</span></div>
+                                <div class="result-line previ-hidden-detail" style="display:none;"><span class="label">TMD :</span><span class="value" id="tmd-display">--:--</span></div>
+                                <div class="result-line previ-hidden-detail" style="display:none;"><span class="label">HdV restant :</span><span class="value" id="hdv-restant-display">--:--</span></div>
                             </div>
                         </div>
                     </div>
@@ -418,11 +468,13 @@
                             <div class="bingo-group"><div class="result-line"><span class="label">BINGO PELIC</span><span class="value" id="suivi-bingo-pelic">-- kg</span></div></div><hr class="analyse-separator">
                             <div class="rotations-group">
                                  <h3 class="analyse-col-title" style="visibility: hidden;">&nbsp;</h3>
-                                <div class="result-line"><span class="label">Fuel Pélic. Actuel :</span><span class="value" id="suivi-fuel-actuel">-- kg</span></div>
-                                <div class="result-line"><span class="label">Heure sur Feu :<span id="suivi-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="suivi-heure-sur-feu">--:--</span></div>
                                 <div class="result-line"><span class="label">CS sur Feu :</span><span class="value" id="suivi-cs-sur-feu">--:--</span></div>
-                               <div class="result-line"><span class="label">Conso. Rotation :</span><div style="display: flex; align-items: center;"><div id="suivi-conso-rotation-wrapper" class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric" readonly><span class="clear-btn">&times;</span></div><button class="manual-btn" id="suivi-conso-rotation-manual-btn">AUTO</button></div></div>
+                                <div class="result-line"><span class="label">Heure sur Feu :<span id="suivi-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="suivi-heure-sur-feu">--:--</span></div>
+                                <div class="result-line"><span class="label">Durée Transit Pélic&lt;-&gt;Feu :</span><span class="value" id="suivi-duree-transit">--:--</span></div>
+                                <div class="result-line"><span class="label">Fuel sur Feu :</span><span class="value" id="suivi-fuel-sur-feu">-- kg</span></div>
                                 <div class="result-line"><span class="label">Durée Rotation :</span><div style="display: flex; align-items: center;"><div id="suivi-duree-rotation-wrapper" class="input-wrapper time-input-wrapper"><input type="text" class="display-input manual-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div><button class="manual-btn" id="suivi-duree-rotation-manual-btn">AUTO</button></div></div>
+                                <div class="result-line"><span class="label">Conso Rotation :</span><div style="display: flex; align-items: center;"><div id="suivi-conso-rotation-wrapper" class="input-wrapper numeric-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric" readonly><span class="clear-btn">&times;</span></div><button class="manual-btn" id="suivi-conso-rotation-manual-btn">AUTO</button></div></div>
+                                <div class="result-line suivi-hidden-detail" style="display:none;"><span class="label">Fuel Pélic. Actuel :</span><span class="value" id="suivi-fuel-actuel">-- kg</span></div>
                             </div>
                         </div>
                     </div>
@@ -443,6 +495,10 @@
                                     <div class="result-line" data-rotation-type="hdv"><span class="label">HDV RESTANTES :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                 </div>
                             </div>
+                            <div class="derout-gps-status-row derout-gps-status-row-outside">
+                                <button id="refresh-gps-btn">🛰️ Rafraîchir GPS</button>
+                                <span id="derout-gps-status" class="derout-gps-status">GPS non disponible</span>
+                            </div>
                         </div>
                         <div class="analyse-col">
                             <div class="bingo-group"><div class="result-line"><span class="label">BINGO PELIC</span><span class="value" id="derout-bingo-pelic">-- kg</span></div></div><hr class="analyse-separator">
@@ -451,11 +507,11 @@
                                 <div class="result-line"><span class="label">Fuel actuel :</span><div id="deroutement-fuel-wrapper" class="input-wrapper numeric-input-wrapper fuel-split-input-wrapper" data-unit="kg"><input type="text" class="display-input manual-input" inputmode="numeric"><span class="clear-btn">&times;</span></div></div>
                                 <div class="result-line"><span class="label">Heure actuelle :</span><div id="deroutement-heure-wrapper" class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
                                 <div class="result-line derout-empty-retardant-line"><span class="label">Vide retardant :</span><label class="derout-empty-retardant-toggle"><input type="checkbox" id="derout-empty-retardant-checkbox"><span>Retour Pélic avant feu</span></label></div>
-                                <div class="result-line"><span class="label">Heure sur Feu :<span id="derout-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="derout-heure-sur-feu">--:--</span></div>
                                 <div class="result-line"><span class="label">CS sur Feu :</span><span class="value" id="derout-cs-sur-feu">--:--</span></div>
-                                <div class="result-line"><span class="label"><span id="derout-fuel-mini-base-label">Fuel mini 1 largage / BASE (LFTW) :</span><span id="derout-fuel-mini-base-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-base">-- kg</span></div>
-                                <div class="result-line"><span class="label"><span id="derout-fuel-mini-pelic-label">Fuel mini 1 largage / Pélic :</span><span id="derout-fuel-mini-pelic-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-pelic">-- kg</span></div>
-                                <div class="derout-gps-status-row"><button id="refresh-gps-btn">🛰️ Actualiser position GPS</button><span id="derout-gps-status" class="derout-gps-status">GPS non actualisé</span></div>
+                                <div class="result-line"><span class="label">Heure sur Feu :<span id="derout-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="derout-heure-sur-feu">--:--</span></div>
+                                <div class="result-line"><span class="label"><span id="derout-fuel-mini-base-label">Fuel mini 1 Lrg / BASE (LFTW) :</span><span id="derout-fuel-mini-base-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-base">-- kg</span></div>
+                                <div class="result-line"><span class="label"><span id="derout-fuel-mini-pelic-label">Fuel mini 1 Lrg / Pélic :</span><span id="derout-fuel-mini-pelic-help" class="formula-help-icon">?</span></span><span class="value" id="derout-fuel-mini-pelic">-- kg</span></div>
+                                
                             </div>
                         </div>
                     </div>
@@ -469,8 +525,8 @@
           
 <div id="rlt-mass-modal" class="rlt-mass-modal" style="display: none;" aria-hidden="true">
         <div class="rlt-mass-modal-content">
-            <button id="rlt-mass-close-btn" class="rlt-mass-close-btn" type="button" title="Fermer">&times;</button>
             <h3>Volume/Masse retardant</h3>
+            <button id="rlt-first-full-btn" class="rlt-first-full-btn" type="button" hidden>Plein au départ</button>
             <div class="rlt-mass-formula-row rlt-mass-formula-row-primary" data-rlt-mode="massToVolume">
                 <label>Masse
                     <input id="rlt-mass-to-volume-mass-input" type="text" inputmode="decimal" autocomplete="off" placeholder="kg">
