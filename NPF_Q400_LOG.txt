@@ -630,3 +630,27 @@ v2026.51 — Version pérenne issue de v12.70 TEST
 - Service worker pérenne : sw-v2026-51-perenne.
 - Conservation intégrale des corrections v12.70 : +1 CS/TMD/HDV avec forfait 10 min, aides détaillées Prévi/Suivi/Déroute, suppression du +1 fuel en Suivi rotation.
 - Conservation des corrections précédentes : reprise iPad, simulation, route base active sans bouton, calque Communes limité à l'écran, Lignes HT, rappel MAJ, retardant, PDF et import ZIP inchangé.
+
+v2026.52 — Version pérenne issue de v12.95 TEST
+- Base : v12.95 TEST gps_auto_derout.
+- Passage en version pérenne : APP_VERSION = v2026.52.
+- Suppression des mentions applicatives TEST : titre HTML, titre PWA, name/short_name et manifest.
+- Manifest pérenne : id ./index.html, start_url ./index.html?appv=v2026.52, description version pérenne.
+- Service worker pérenne : sw-v2026-52-perenne.
+- Conservation des corrections v12.71 à v12.95 validées ou intégrées en TEST :
+  - retardant / Masse RLT : calculs indépendants Masse ÷ Densité et Volume × Densité, correction densité 1,1, mode Plein au départ activable/désactivable, cases Fuel Pélic. et OACI utilisables en Plein au départ ;
+  - Suivi rotations : logique de premier transit affinée, prise en compte du départ depuis la première ligne Plein au départ si applicable, puis pélicandrome sélectionné pour les rotations suivantes ;
+  - Prévi Nbr Rotations : BLOC DÉPART renommé HEURE TO, HEURE TO et FUEL DÉPART indépendants de BLOC/FUEL, BASE/TMD/LIMITE HDV communs ;
+  - DÉROUT. / GAAR : mode vide retardant avec forfait 10 min au pélic + 10 min sur feu, GPS automatique avec bouton Rafraîchir GPS en secours, statut GPS actualisé/ancien/non disponible ;
+  - carte iPad : correction de la hauteur de carte / bandeau bas validée en v12.90 ;
+  - UI : message de reprise « Patience, je réfléchis ... », onglets plus visibles, réorganisation des informations Prévi/Suivi/Déroute, déplacement du bouton GPS sous NBR ROTATIONS POSSIBLES ;
+  - suppression d’un feu depuis la carte sans recentrage ni modification du zoom ;
+  - recherche commune : correction validée sur la saisie Talo/Talaud 07 ;
+  - icône pélicandrome prioritaire au clic quand superposée à l’icône avion/GPS.
+- Non modifié volontairement : import ZIP/offline, IndexedDB, moteur tuiles validé, calque Lignes HT, données pélicandromes et logique de carte validée hors corrections listées.
+
+Contrôles :
+- script.js : syntaxe OK ;
+- sw.js : syntaxe OK ;
+- manifest.json : JSON OK ;
+- archive ZIP complète : OK.
