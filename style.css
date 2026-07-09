@@ -5828,3 +5828,452 @@ body.npf-resuming #npf-resume-overlay {
 #map {
     background-color: #eef2f5;
 }
+
+
+/* v12.73 — iPad : boutons retardant et fenêtre post-MAJ */
+.rlt-mass-actions button,
+.rlt-mass-close-btn {
+    touch-action: manipulation !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    position: relative !important;
+    z-index: 5 !important;
+}
+
+.post-update-restart-modal-content p {
+    font-size: 18px !important;
+    line-height: 1.35 !important;
+}
+
+.post-update-restart-actions {
+    grid-template-columns: 1fr !important;
+}
+
+/* v12.74 — Retardant : Plein au départ et fenêtre sans X */
+#rlt-mass-close-btn {
+    display: none !important;
+}
+.rlt-first-full-btn {
+    display: none;
+    align-items: center;
+    justify-content: center;
+    width: fit-content;
+    min-width: 132px;
+    margin: -4px auto 10px;
+    min-height: 34px;
+    padding: 6px 18px;
+    border: 2px solid #0b63a5;
+    border-radius: 999px;
+    background: #eef7ff;
+    color: #005a9c;
+    font-size: 15px;
+    font-weight: 950;
+    cursor: pointer;
+}
+.rlt-first-full-btn.active {
+    background: #005a9c;
+    color: #ffffff;
+    box-shadow: 0 0 0 3px rgba(0, 90, 156, .18);
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .fuel-split-input-wrapper {
+    display: none !important;
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .airport-oaci-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .duree-rotation-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .fuel-rotation-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-restant-cell {
+    color: transparent !important;
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .airport-oaci-cell::before,
+#bloc-fuel tr.bloc-fuel-first-full-row .duree-rotation-cell::before,
+#bloc-fuel tr.bloc-fuel-first-full-row .fuel-rotation-cell::before,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-cell::before,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-restant-cell::before {
+    content: '' !important;
+}
+
+
+/* v12.78 — bouton Plein au départ centré et zone stable */
+#rlt-first-full-btn.rlt-first-full-btn {
+    align-self: center !important;
+    justify-self: center !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+
+/* v12.80 — bouton Plein au départ : centrage renforcé */
+#rlt-first-full-btn.rlt-first-full-btn {
+    display: flex;
+    margin-left: auto !important;
+    margin-right: auto !important;
+}
+
+
+/* v12.80 — bouton Plein au départ : centrage et état sélectionné renforcés */
+#rlt-first-full-btn.rlt-first-full-btn {
+    display: flex;
+    margin: 0 auto 10px auto !important;
+    align-self: center !important;
+    justify-content: center !important;
+    text-align: center !important;
+}
+#rlt-first-full-btn.rlt-first-full-btn[hidden] {
+    display: none !important;
+}
+#rlt-first-full-btn.rlt-first-full-btn.active {
+    background: #005a9c !important;
+    color: #ffffff !important;
+}
+
+
+/* v12.82 — post-MAJ persistant sans bouton OK */
+.post-update-restart-modal .update-reminder-actions,
+.post-update-restart-modal .post-update-restart-actions {
+    display: none !important;
+}
+.post-update-restart-modal {
+    pointer-events: auto !important;
+}
+
+/* v12.82 — Plein au départ : bouton réellement centré et état stable */
+#rlt-first-full-btn.rlt-first-full-btn {
+    width: max-content !important;
+    margin: 0 auto 12px auto !important;
+    align-self: center !important;
+    justify-self: center !important;
+}
+#rlt-first-full-btn.rlt-first-full-btn.active {
+    background: #005a9c !important;
+    color: #ffffff !important;
+    border-color: #003f74 !important;
+}
+
+
+/* v12.84 — Plein au départ : Fuel et OACI restent utilisables/visibles. */
+#bloc-fuel tr.bloc-fuel-first-full-row .fuel-split-input-wrapper {
+    display: flex !important;
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .airport-oaci-cell {
+    color: inherit !important;
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .airport-oaci-cell::before {
+    content: none !important;
+}
+#bloc-fuel tr.bloc-fuel-first-full-row .duree-rotation-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .fuel-rotation-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-cell,
+#bloc-fuel tr.bloc-fuel-first-full-row .tps-vol-restant-cell {
+    color: transparent !important;
+}
+
+/* v12.88 — Plein au départ : limiter les doubles événements tactiles iPad. */
+#rlt-first-full-btn.rlt-first-full-btn {
+    touch-action: manipulation !important;
+    -webkit-tap-highlight-color: transparent !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+/* v12.89 — iPad carte plein écran, message Patience renforcé, onglets plus visibles */
+html,
+body {
+    background: #eef2f5 !important;
+}
+
+#map,
+.leaflet-container {
+    background: #eef2f5 !important;
+}
+
+#map {
+    position: fixed !important;
+    inset: 0 !important;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    height: 100vh !important;
+    min-height: 100vh !important;
+    overflow: hidden !important;
+}
+
+@supports (height: 100dvh) {
+    html,
+    body,
+    #map {
+        height: 100dvh !important;
+        min-height: 100dvh !important;
+    }
+}
+
+@supports (-webkit-touch-callout: none) {
+    html,
+    body,
+    #map {
+        height: -webkit-fill-available !important;
+        min-height: -webkit-fill-available !important;
+    }
+}
+
+#npf-resume-overlay {
+    background: rgba(11, 47, 107, 0.48) !important;
+}
+
+#npf-resume-overlay .npf-resume-card {
+    padding: 26px 34px !important;
+    border-radius: 22px !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    border: 3px solid #005a9c !important;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.35) !important;
+    font-size: clamp(28px, 4.2vw, 44px) !important;
+    line-height: 1.12 !important;
+    font-weight: 950 !important;
+    color: #0b2f6b !important;
+    text-transform: uppercase !important;
+    letter-spacing: .04em !important;
+}
+
+.onglets-navigation {
+    border-bottom: 2px solid #b8c7d8 !important;
+}
+
+.onglet-bouton {
+    min-height: 66px !important;
+    font-size: 18px !important;
+    font-weight: 850 !important;
+    color: #0b2f6b !important;
+    background: #eaf2fb !important;
+    border-right: 1px solid #c8d6e6 !important;
+    border-bottom-width: 5px !important;
+    letter-spacing: .01em !important;
+}
+
+.onglet-bouton.active {
+    color: #ffffff !important;
+    background: #005a9c !important;
+    border-bottom-color: #e3001b !important;
+    box-shadow: inset 0 -4px 0 #e3001b !important;
+}
+
+.onglet-bouton:active {
+    transform: translateY(1px);
+}
+
+
+
+/* v12.90 — iPad/PWA : suppression du grand bandeau bas de carte.
+   Cause corrigée : ne plus laisser -webkit-fill-available réduire #map.
+   La carte doit occuper toute la fenêtre réelle ; la bande résiduelle reste bleu carte. */
+:root {
+    --npf-app-vh: 100vh;
+}
+
+html,
+body {
+    width: 100vw !important;
+    height: var(--npf-app-vh) !important;
+    min-height: var(--npf-app-vh) !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: hidden !important;
+    background: #dff3fb !important;
+}
+
+#map,
+.leaflet-container {
+    background: #dff3fb !important;
+}
+
+#map {
+    position: fixed !important;
+    top: 0 !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    min-width: 100vw !important;
+    height: var(--npf-app-vh) !important;
+    min-height: var(--npf-app-vh) !important;
+    max-height: none !important;
+    overflow: hidden !important;
+}
+
+@supports (height: 100lvh) {
+    :root { --npf-app-vh: 100lvh; }
+}
+
+@supports (-webkit-touch-callout: none) {
+    html,
+    body,
+    #map {
+        height: var(--npf-app-vh) !important;
+        min-height: var(--npf-app-vh) !important;
+    }
+}
+
+
+/* v12.93 — Déroutement : remonter le contenu de droite et garder le message patience actif. */
+#deroutement .analyse-col:nth-child(2) .rotations-group .analyse-col-title {
+    display: none !important;
+}
+
+#deroutement .analyse-col:nth-child(2) .rotations-group {
+    padding-top: 14px !important;
+}
+
+#deroutement .analyse-col:nth-child(2) .rotations-group .result-line:first-of-type {
+    margin-top: 0 !important;
+}
+
+/* v12.94 — suppression feu sans recentrage, onglets arrondis, Déroutement GPS visible */
+.onglets-navigation {
+    gap: 6px !important;
+    padding: 8px 10px 0 10px !important;
+    background: linear-gradient(180deg, #f7fbff 0%, #e7f2ff 100%) !important;
+    border-bottom: 0 !important;
+}
+
+.onglet-bouton {
+    min-height: 58px !important;
+    margin: 0 2px !important;
+    border: 1px solid #b9d5ef !important;
+    border-bottom: 4px solid transparent !important;
+    border-radius: 18px 18px 10px 10px !important;
+    background: linear-gradient(180deg, #ffffff 0%, #e7f2ff 100%) !important;
+    color: #0b3f78 !important;
+    box-shadow: 0 4px 12px rgba(0, 90, 156, .12) !important;
+    font-size: 18px !important;
+    font-weight: 950 !important;
+    letter-spacing: .015em !important;
+}
+
+.onglet-bouton.active {
+    color: #ffffff !important;
+    background: linear-gradient(180deg, #0077bd 0%, #004f91 100%) !important;
+    border-color: #0066ad !important;
+    border-bottom-color: #e3001b !important;
+    box-shadow: 0 6px 16px rgba(0, 90, 156, .28), inset 0 -5px 0 #e3001b !important;
+}
+
+.onglet-bouton:not(.active):active {
+    transform: translateY(1px) scale(.99) !important;
+}
+
+#app-boot-screen .boot-version {
+    font-size: 16px !important;
+    font-weight: 950 !important;
+    opacity: .95 !important;
+    color: #005a9c !important;
+}
+
+#npf-resume-overlay .npf-resume-card::before {
+    content: '⏳ ';
+}
+
+#deroutement .analyse-col:nth-child(2) .rotations-group {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+}
+
+#deroutement .derout-gps-status-row {
+    margin-left: -28px !important;
+    width: calc(100% + 28px) !important;
+    justify-content: flex-start !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+
+#deroutement #refresh-gps-btn {
+    margin-left: 0 !important;
+    padding-left: 14px !important;
+    padding-right: 14px !important;
+    max-width: 100% !important;
+    white-space: normal !important;
+}
+
+#deroutement .derout-gps-status {
+    max-width: 100% !important;
+    white-space: normal !important;
+}
+
+@media (max-width: 760px) {
+    .onglets-navigation {
+        gap: 4px !important;
+        padding-left: 6px !important;
+        padding-right: 6px !important;
+    }
+
+    .onglet-bouton {
+        min-height: 54px !important;
+        border-radius: 15px 15px 8px 8px !important;
+        font-size: 15px !important;
+    }
+
+    #deroutement .derout-gps-status-row {
+        margin-left: -16px !important;
+        width: calc(100% + 16px) !important;
+    }
+
+    #deroutement .derout-gps-status-row #refresh-gps-btn,
+    #deroutement .derout-gps-status {
+        width: auto !important;
+        max-width: 100% !important;
+    }
+}
+
+
+
+/* v2026.52 — Pérenne : DÉROUT. / GAAR GPS auto et UI validée */
+#deroutement .derout-gps-status-row-outside {
+    margin: 14px 0 0 0 !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: flex-start !important;
+    justify-content: flex-start !important;
+    gap: 10px !important;
+    padding: 0 4px !important;
+    box-sizing: border-box !important;
+}
+
+#deroutement .derout-gps-status-row-outside #refresh-gps-btn {
+    margin: 0 !important;
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 280px !important;
+    padding: 12px 18px !important;
+    font-size: 22px !important;
+    white-space: nowrap !important;
+    box-sizing: border-box !important;
+}
+
+#deroutement .derout-gps-status-row-outside .derout-gps-status {
+    width: auto !important;
+    max-width: 100% !important;
+    justify-content: flex-start !important;
+    white-space: normal !important;
+    box-sizing: border-box !important;
+}
+
+.derout-gps-status-old {
+    color: #664d03;
+    background: #fff8dd;
+    border-color: #ffec99;
+}
+
+@media (max-width: 760px) {
+    #deroutement .derout-gps-status-row-outside {
+        align-items: stretch !important;
+    }
+    #deroutement .derout-gps-status-row-outside #refresh-gps-btn {
+        min-width: 0 !important;
+        width: 100% !important;
+        font-size: 18px !important;
+        white-space: normal !important;
+    }
+    #deroutement .derout-gps-status-row-outside .derout-gps-status {
+        width: 100% !important;
+        justify-content: center !important;
+    }
+}
