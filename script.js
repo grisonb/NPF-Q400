@@ -32,6 +32,77 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 
+
+
+// =========================================================================
+// v2026.52 — version pérenne issue de v12.95 TEST
+// Corrige le grand bandeau bas : Safari peut donner une hauteur CSS trop courte
+// avec -webkit-fill-available. On force une variable de hauteur réelle et on
+// redemande à Leaflet de recalculer sa taille.
+// =========================================================================
+(function setupNpfMapViewportHeightFix() {
+    const applyViewportHeight = () => {
+        try {
+            const docEl = document.documentElement;
+            const vv = window.visualViewport;
+            const candidates = [
+                window.innerHeight || 0,
+                docEl ? docEl.clientHeight || 0 : 0,
+                vv ? Math.round(vv.height + Math.max(0, vv.offsetTop || 0)) : 0,
+                window.screen ? Math.round(Math.max(window.screen.height || 0, window.screen.availHeight || 0)) : 0
+            ].filter(Boolean);
+
+            const height = Math.max(...candidates);
+            if (!height || !Number.isFinite(height)) return;
+
+            docEl.style.setProperty('--npf-app-vh', `${height}px`);
+            if (document.body) document.body.style.minHeight = `${height}px`;
+
+            const mapEl = document.getElementById('map');
+            if (mapEl) {
+                mapEl.style.height = `${height}px`;
+                mapEl.style.minHeight = `${height}px`;
+                mapEl.style.bottom = '0px';
+                mapEl.style.backgroundColor = '#dff3fb';
+            }
+
+            setTimeout(() => {
+                try {
+                    if (typeof map !== 'undefined' && map && typeof map.invalidateSize === 'function') {
+                        map.invalidateSize(true);
+                    }
+                    if (typeof baseTileLayer !== 'undefined' && baseTileLayer && typeof baseTileLayer.redraw === 'function') {
+                        baseTileLayer.redraw();
+                    }
+                } catch (_) {}
+            }, 80);
+        } catch (_) {}
+    };
+
+    const scheduleApply = () => {
+        applyViewportHeight();
+        setTimeout(applyViewportHeight, 250);
+        setTimeout(applyViewportHeight, 900);
+    };
+
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', scheduleApply, { once: true });
+    } else {
+        scheduleApply();
+    }
+
+    window.addEventListener('load', scheduleApply, { passive: true });
+    window.addEventListener('resize', scheduleApply, { passive: true });
+    window.addEventListener('orientationchange', () => setTimeout(scheduleApply, 350), { passive: true });
+    window.addEventListener('pageshow', scheduleApply, { passive: true });
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) scheduleApply(); }, { passive: true });
+
+    if (window.visualViewport) {
+        window.visualViewport.addEventListener('resize', scheduleApply, { passive: true });
+        window.visualViewport.addEventListener('scroll', scheduleApply, { passive: true });
+    }
+})();
+
 // =========================================================================
 // REPRISE iPAD / PWA APRÈS LONGUE PÉRIODE EN ARRIÈRE-PLAN
 // =========================================================================
@@ -148,7 +219,7 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('pageshow', refreshMapAfterWake);
 })();
 
-// v12.70 — Prévi rotation : +1 TMD/CS/HDV et aides détaillées.
+// v12.71 — Prévi rotation : +1 TMD/CS/HDV et aides détaillées.
 (function setupNpfIpadResumeHardening() {
     const LONG_BACKGROUND_MS = 2 * 60 * 1000;
     const RESUME_DELAYS_MS = [0, 80, 180, 350, 700, 1200, 2200, 3600];
@@ -169,7 +240,7 @@ document.addEventListener('DOMContentLoaded', () => {
         overlay = document.createElement('div');
         overlay.id = 'npf-resume-overlay';
         overlay.setAttribute('aria-live', 'polite');
-        overlay.innerHTML = '<div class="npf-resume-card">Reprise carte…</div>';
+        overlay.innerHTML = '<div class="npf-resume-card">Patience, je réfléchis ...</div>';
         document.body.appendChild(overlay);
         return overlay;
     };
@@ -1270,7 +1341,8 @@ async function initializeApp() {
     } catch (uiError) {
         console.error('Erreur setupEventListeners:', uiError);
     }
-    setTimeout(showUpdateReminderIfDue, 1500);
+    setTimeout(showPostUpdateRestartNoticeIfNeeded, 900);
+    setTimeout(showUpdateReminderIfDue, 1700);
     setTimeout(() => {
         updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
     }, 0);
@@ -1560,6 +1632,20 @@ function scoreCommuneSearchCandidate(candidate, searchWords) {
                 currentScore = 0;
             } else if (communeSoundex === wordSoundex) {
                 currentScore = 1;
+            } else if (candidate.dep_code === '07' && (word === 'talo' || word === 'talaud') && communePart === 'toulaud') {
+                /*
+                 * v12.80 — recherche commune Ardèche : l'utilisateur saisit
+                 * souvent "Talo 07" ou "Talaud 07" pour Toulaud (07323).
+                 * Ce cas doit primer sur les autres communes du département.
+                 */
+                currentScore = -1;
+            } else if (word.length >= 4 && communePart.startsWith(word.slice(0, 3))) {
+                /*
+                 * v12.78/v12.80 — recherche filtrée par département :
+                 * accepter les préfixes courts approximatifs, sans forcer
+                 * une commune précise hors du cas Toulaud ci-dessus.
+                 */
+                currentScore = 3.8 + Math.min(2, Math.abs(communePart.length - word.length) / 10);
             } else {
                 const dist = levenshteinDistance(word, communePart);
                 if (dist <= Math.floor(word.length / 3) + 1) {
@@ -1875,7 +1961,8 @@ function setupBaseTileLayer() {
     applyMapNoBackgroundStyle();
 }
 
-function clearCurrentSelection() {
+function clearCurrentSelection(options = {}) {
+    const preserveMapView = !!options.preserveMapView;
     selectedPelicanOACI = null;
     const searchInput = document.getElementById('search-input');
     const clearSearchBtn = document.getElementById('clear-search');
@@ -1895,7 +1982,9 @@ function clearCurrentSelection() {
     masterRecalculate();
     updateCommuneDisplay(null);
     document.getElementById('bingo-map-display').style.display = 'none';
-    centerMapOnGpsOverviewAfterClear();
+    if (!preserveMapView) {
+        centerMapOnGpsOverviewAfterClear();
+    }
 }
 
 
@@ -2505,8 +2594,49 @@ async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = 
     }
 }
 
+
+function showPostUpdateRestartNoticeIfNeeded() {
+    try {
+        const pending = localStorage.getItem('npfPostUpdateRestartNoticePending') === '1';
+        const noticeVersion = localStorage.getItem('npfPostUpdateRestartNoticeVersion') || '';
+        const currentVersion = (typeof window.APP_VERSION !== 'undefined' && window.APP_VERSION) ? window.APP_VERSION : '';
+        if (!pending && !noticeVersion) return;
+        // v12.92 — si pending=1, afficher même si le marqueur de version vient de l'ancienne version.
+        if (!pending && currentVersion && noticeVersion && noticeVersion !== currentVersion) return;
+        showPostUpdateRestartNoticeModal();
+    } catch (_) {}
+}
+
+function showPostUpdateRestartNoticeModal() {
+    if (document.getElementById('post-update-restart-modal')) return;
+
+    const modal = document.createElement('div');
+    modal.id = 'post-update-restart-modal';
+    modal.className = 'update-reminder-modal post-update-restart-modal';
+    modal.innerHTML = `
+        <div class="update-reminder-modal-content post-update-restart-modal-content" role="dialog" aria-modal="true" aria-labelledby="post-update-restart-title">
+            <h3 id="post-update-restart-title">Mise à jour</h3>
+            <p><strong>Une mise à jour vient d’être effectuée.</strong><br>Fermez et relancez l’application.</p>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    /*
+     * v12.82 — fenêtre post-MAJ persistante : pas de bouton OK, pas de
+     * fermeture par clic extérieur. Elle reste affichée jusqu'à fermeture / 
+     * relance de l'app. On efface le marqueur dès l'affichage pour ne pas
+     * la revoir au lancement suivant.
+     */
+    try {
+        localStorage.removeItem('npfPostUpdateRestartNoticeVersion');
+        localStorage.removeItem('npfPostUpdateRestartNoticePending');
+    } catch (_) {}
+}
+
 function showUpdateReminderIfDue() {
     try {
+        if (document.getElementById('post-update-restart-modal')) return;
         const lastShown = Number(localStorage.getItem(UPDATE_REMINDER_STORAGE_KEY) || '0');
         const now = Date.now();
         if (lastShown && (now - lastShown) < UPDATE_REMINDER_INTERVAL_MS) return;
@@ -2974,7 +3104,7 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
             deleteButton.title = 'Supprimer ce feu de la carte et de l’historique';
             deleteButton.addEventListener('click', () => {
                 deleteFireHistoryItemByCommune(commune);
-                clearCurrentSelection();
+                clearCurrentSelection({ preserveMapView: true });
                 try { map.closePopup(); } catch (_) {}
             });
 
@@ -3102,6 +3232,29 @@ function normalizeOaciCodeInput(value) {
     return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
 }
 
+
+function normalizeBaseOaciLockedLfInput(value) {
+    const raw = String(value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!raw) return 'LF';
+    if (raw.startsWith('LF')) return `LF${raw.slice(2, 4)}`;
+    if (raw.length <= 2) return `LF${raw.slice(0, 2)}`;
+    return `LF${raw.slice(-2)}`;
+}
+
+function selectBaseOaciSuffix(input) {
+    if (!input) return;
+    if (!input.value || !String(input.value).toUpperCase().startsWith('LF')) {
+        input.value = normalizeBaseOaciLockedLfInput(input.value || selectedBaseOACI || 'LF');
+    }
+    try {
+        requestAnimationFrame(() => {
+            input.focus?.();
+            input.setSelectionRange?.(2, Math.min(4, String(input.value || '').length));
+        });
+        setTimeout(() => input.setSelectionRange?.(2, Math.min(4, String(input.value || '').length)), 80);
+    } catch (_) {}
+}
+
 function updateBaseOaciInputs() {
     const inputs = [
         document.getElementById('base-oaci-input'),
@@ -3120,7 +3273,7 @@ function updateBaseOaciInputs() {
 function applyBaseOaciFromInput(input, { silent = false } = {}) {
     if (!input) return false;
 
-    const requestedOaci = normalizeOaciCodeInput(input.value);
+    const requestedOaci = normalizeBaseOaciLockedLfInput(input.value);
     input.value = requestedOaci;
 
     if (!requestedOaci || requestedOaci.length !== 4) {
@@ -3160,8 +3313,12 @@ function setupBaseOaciInputs() {
         input.dataset.baseOaciBound = '1';
 
         input.addEventListener('input', () => {
-            input.value = normalizeOaciCodeInput(input.value);
+            const previousLength = input.value.length;
+            input.value = normalizeBaseOaciLockedLfInput(input.value);
             input.classList.remove('base-oaci-invalid');
+            if (input.value.length <= 2 || previousLength <= 2) {
+                try { input.setSelectionRange(2, 2); } catch (_) {}
+            }
         });
 
         input.addEventListener('change', () => {
@@ -3169,12 +3326,16 @@ function setupBaseOaciInputs() {
         });
 
         input.addEventListener('blur', () => {
-            if (normalizeOaciCodeInput(input.value) !== selectedBaseOACI) {
+            if (normalizeBaseOaciLockedLfInput(input.value) !== selectedBaseOACI) {
                 applyBaseOaciFromInput(input);
             } else {
                 updateBaseOaciInputs();
             }
         });
+
+        input.addEventListener('focus', () => selectBaseOaciSuffix(input));
+        input.addEventListener('click', () => selectBaseOaciSuffix(input));
+        input.addEventListener('pointerup', () => selectBaseOaciSuffix(input));
 
         input.addEventListener('keydown', event => {
             if (event.key === 'Enter') {
@@ -3207,13 +3368,13 @@ function updateBaseLabels() {
         el.textContent = 'BINGO BASE';
     });
     const deroutFuelMiniBaseLabel = document.getElementById('derout-fuel-mini-base-label');
-    if (deroutFuelMiniBaseLabel) deroutFuelMiniBaseLabel.textContent = `Fuel mini 1 largage / BASE (${selectedBaseOACI}) :`;
+    if (deroutFuelMiniBaseLabel) deroutFuelMiniBaseLabel.textContent = `Fuel mini 1 Lrg / BASE (${selectedBaseOACI}) :`;
 
     const deroutFuelMiniPelicLabel = document.getElementById('derout-fuel-mini-pelic-label');
     if (deroutFuelMiniPelicLabel) {
         const selectedPelic = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
         const pelicCode = selectedPelic ? selectedPelic.oaci : 'PÉLIC';
-        deroutFuelMiniPelicLabel.textContent = `Fuel mini 1 largage / Pélic (${pelicCode}) :`;
+        deroutFuelMiniPelicLabel.textContent = `Fuel mini 1 Lrg / Pélic (${pelicCode}) :`;
     }
 }
 function refreshUI() { drawPermanentAirportMarkers(); if (currentCommune) displayCommuneDetails(currentCommune, false); }
@@ -3478,7 +3639,7 @@ function drawPermanentAirportMarkers() {
             const waterButtonClass = isWater ? "water-btn water-btn-retardant" : "water-btn";
             const disableButtonText = isDisabled ? "Activer" : "Désactiver";
             const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
-            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] }) });
+            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] }), zIndexOffset: 2500, keyboard: false });
             marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div></div>`);
             marker.addTo(permanentAirportLayer);
             return;
@@ -3529,7 +3690,7 @@ function drawPermanentAirportMarkers() {
         let iconClass = "custom-marker-icon airport-marker-base ", iconHTML = "✈️";
         isDisabled ? (iconClass += "airport-marker-disabled", iconHTML = "<b>+</b>") : isWater ? (iconClass += "airport-marker-water", iconHTML = "💧") : iconClass += "airport-marker-active";
         const icon = L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] });
-        const marker = L.marker([airport.lat, airport.lon], { icon: icon });
+        const marker = L.marker([airport.lat, airport.lon], { icon: icon, zIndexOffset: 2500, keyboard: false });
         const disableButtonText = isDisabled ? "Activer" : "Désactiver";
         const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
         const waterButtonText = isWater ? "RETARDANT" : "EAU";
@@ -4999,12 +5160,15 @@ function updateUserPosition(pos) {
 
     if (!userMarker) {
         const userIcon = buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition });
-        userMarker = L.marker([latitude, longitude], { icon: userIcon }).bindPopup(ownGpsPopupHtml).addTo(map);
+        userMarker = L.marker([latitude, longitude], { icon: userIcon, zIndexOffset: 500, keyboard: false }).bindPopup(ownGpsPopupHtml).addTo(map);
     } else {
         userMarker.setLatLng([latitude, longitude]);
         userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition }));
         userMarker.bindPopup(ownGpsPopupHtml);
     }
+
+    /* v12.85 — priorité tactile : les icônes pélicandrome restent au-dessus de l'avion si les deux sont superposées. */
+    try { if (userMarker && typeof userMarker.setZIndexOffset === 'function') userMarker.setZIndexOffset(500); } catch (_) {}
 
     applyOwnGpsPlaneHeading(motionHeading);
 
@@ -5012,6 +5176,10 @@ function updateUserPosition(pos) {
 
     if (typeof window.refreshCalculatorAirportContext === 'function') {
         window.refreshCalculatorAirportContext();
+    }
+
+    if (typeof updateDeroutementGpsStatus === 'function') {
+        updateDeroutementGpsStatus(isSimulationPosition ? 'GPS simulation' : 'GPS actualisé');
     }
 
     // Synchronise les calculs (dont GPS->Feu) dès qu'une position GPS est reçue.
@@ -6659,7 +6827,7 @@ const formatTime = (totalMinutes) => { if (totalMinutes === null || isNaN(totalM
 const parseNumeric = (numericString) => { if (!numericString) return null; const value = parseInt(numericString.replace(/[^0-9]/g, ''), 10); return isNaN(value) ? null : value; };
 
 function updateAndSortRotations(container, current, params) {
-    const FIRST_DROP_FORFAIT_MIN = 10;
+    const FIRST_DROP_FORFAIT_MIN = Number.isFinite(params.firstDropForfaitMin) ? params.firstDropForfaitMin : 10;
     const lines = Array.from(container.querySelectorAll('.result-line'));
     const resultsData = [];
     let minTimeLimit = Infinity;
@@ -6669,7 +6837,7 @@ function updateAndSortRotations(container, current, params) {
     const isSuiviRotation = containerId === 'suivi-rotation-results-container';
     const isPreviRotation = containerId === 'previ-rotation-results-container';
     const isDeroutRotation = containerId === 'derout-rotation-results-container';
-    const fuelImmediateDropAllowed = !isSuiviRotation;
+    const fuelImmediateDropAllowed = (typeof params.allowFuelImmediateDrop === 'boolean') ? params.allowFuelImmediateDrop : !isSuiviRotation;
 
     const returnBaseTime = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu || 0));
     const effectivePelicDistance = Math.max(CALCULATOR_DATA.distPelicFeu || 0, 10);
@@ -6711,12 +6879,15 @@ function updateAndSortRotations(container, current, params) {
     ].join('\n');
 
     const currentContextDetails = () => [
-        `Heure sur feu = ${timeOrNA(current.time)}`,
+        params.currentTimeLabel ? `${params.currentTimeLabel} = ${timeOrNA(current.time)}` : `Heure sur feu = ${timeOrNA(current.time)}`,
         `Fuel sur feu = ${kgOrNA(current.fuel)}`,
-        `Transit vers feu = ${minOrNA(params.transitTime)}`,
+        params.transitSourceLabel ? `Terrain départ premier transit = ${params.transitSourceLabel}` : null,
+        params.preTransitForfaitMin ? `Forfait départ/roulage/décollage = ${params.preTransitForfaitMin} min` : null,
+        `Transit vers feu = ${minOrNA(params.rawTransitTime ?? params.transitTime)}`,
+        params.effectiveTransitDistance !== undefined ? `Distance transit retenue = ${numberOrNA(params.effectiveTransitDistance)} Nm` : null,
         `Forfait validation premier largage = ${FIRST_DROP_FORFAIT_MIN} min`,
         `Retour feu → base = ${minOrNA(returnBaseTime)}`
-    ].join('\n');
+    ].filter(Boolean).join('\n');
 
     // --- Première passe : calculer toutes les valeurs et trouver les limites ---
     lines.forEach(line => {
@@ -6742,12 +6913,12 @@ function updateAndSortRotations(container, current, params) {
                 rotationFormulaDetails(),
                 ``,
                 `Validation du +1 :`,
-                isSuiviRotation
-                    ? `Dans Suivi rotation, le +1 fuel est neutralisé : l'avion est considéré au pélicandrome/vide, donc il ne peut pas larguer immédiatement.`
-                    : `+1 possible si Fuel sur feu ≥ 250 kg + BINGO Base.`,
-                isSuiviRotation
-                    ? `+1 = 0`
-                    : `Test : ${kgOrNA(current.fuel)} ≥ 250 + ${kgOrNA(params.bingoBase)} = ${kgOrNA(250 + params.bingoBase)} → ${hasFuelForFirstDropBase ? 'OUI' : 'NON'}`,
+                fuelImmediateDropAllowed
+                    ? `+1 possible si Fuel sur feu ≥ 250 kg + BINGO Base.`
+                    : `+1 fuel neutralisé : l'avion n'est pas considéré en situation de largage immédiat.`,
+                fuelImmediateDropAllowed
+                    ? `Test : ${kgOrNA(current.fuel)} ≥ 250 + ${kgOrNA(params.bingoBase)} = ${kgOrNA(250 + params.bingoBase)} → ${hasFuelForFirstDropBase ? 'OUI' : 'NON'}`
+                    : `+1 = 0`,
                 ``,
                 `Formule finale :`,
                 `Nbr rotations = ((Fuel sur feu - BINGO Base) / Conso rotation) + ${plusOne}`,
@@ -6767,12 +6938,12 @@ function updateAndSortRotations(container, current, params) {
                 rotationFormulaDetails(),
                 ``,
                 `Validation du +1 :`,
-                isSuiviRotation
-                    ? `Dans Suivi rotation, le +1 fuel est neutralisé : l'avion est considéré au pélicandrome/vide, donc il ne peut pas larguer immédiatement.`
-                    : `+1 possible si Fuel sur feu ≥ 250 kg + BINGO Pélic.`,
-                isSuiviRotation
-                    ? `+1 = 0`
-                    : `Test : ${kgOrNA(current.fuel)} ≥ 250 + ${kgOrNA(params.bingoPelic)} = ${kgOrNA(250 + params.bingoPelic)} → ${hasFuelForFirstDropPelic ? 'OUI' : 'NON'}`,
+                fuelImmediateDropAllowed
+                    ? `+1 possible si Fuel sur feu ≥ 250 kg + BINGO Pélic.`
+                    : `+1 fuel neutralisé : l'avion n'est pas considéré en situation de largage immédiat.`,
+                fuelImmediateDropAllowed
+                    ? `Test : ${kgOrNA(current.fuel)} ≥ 250 + ${kgOrNA(params.bingoPelic)} = ${kgOrNA(250 + params.bingoPelic)} → ${hasFuelForFirstDropPelic ? 'OUI' : 'NON'}`
+                    : `+1 = 0`,
                 ``,
                 `Formule finale :`,
                 `Nbr rotations = ((Fuel sur feu - BINGO Pélic) / Conso rotation) + ${plusOne}`,
@@ -6946,6 +7117,29 @@ function recalculateBlocFuel() {
         const fuelCell = row.querySelector('.fuel-rotation-cell');
         const tpsVolCell = row.querySelector('.tps-vol-cell');
         const tpsRestantCell = row.querySelector('.tps-vol-restant-cell');
+        const rltWrapper = row.querySelector('.rlt-mass-input-wrapper');
+        const isFirstFullRlt = rltWrapper?.dataset.rltFirstFull === '1' || rltWrapper?.dataset.rltMode === 'firstFull';
+        row.classList.toggle('bloc-fuel-first-full-row', !!isFirstFullRlt);
+        if (!isFirstFullRlt) {
+            row.classList.remove('bloc-fuel-first-full-row');
+        }
+        if (isFirstFullRlt) {
+            /*
+             * v12.84 — Plein au départ : la ligne reste une ligne de départ
+             * exploitable. On ne verrouille/masque plus Fuel ni OACI : ces
+             * deux valeurs servent notamment au premier transit Suivi rotations.
+             * Seules les colonnes de rotations calculées restent vides pour
+             * cette ligne.
+             */
+            if (dureeCell) dureeCell.textContent = '';
+            if (fuelCell) fuelCell.textContent = '';
+            if (tpsVolCell) tpsVolCell.textContent = '';
+            if (tpsRestantCell) tpsRestantCell.textContent = '';
+            try { updateRowAirportOaci(row); } catch (_) {}
+            if (blocArrivee !== null) previousBlocArrivee = blocArrivee;
+            if (fuelPelic !== null) previousFuelPelic = fuelPelic;
+            return;
+        }
 
         let dureeRotation = null;
         if (blocArrivee !== null && previousBlocArrivee !== null) {
@@ -7012,23 +7206,23 @@ function updatePreviTab() {
     const bingoPelicDisplay = document.getElementById('previ-bingo-pelic');
     if (bingoPelic === 700 || !selectedPelicanOACI) { bingoPelicDisplay.innerHTML = '-- kg'; } else { bingoPelicDisplay.innerHTML = `${selectedPelicanOACI} / ${CALCULATOR_DATA.distPelicFeu} Nm /&nbsp;<b>${bingoPelic} kg</b>`; }
 
-    const blocDepart = parseTime(document.getElementById('bloc-depart').querySelector('.display-input').value);
-    const fuelDepart = parseNumeric(document.getElementById('fuel-depart').querySelector('.display-input').value);
-    const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-    const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
+    const heureTO = parseTime(document.getElementById('previ-bloc-depart').querySelector('.display-input').value);
+    const fuelDepart = parseNumeric(document.getElementById('previ-fuel-depart').querySelector('.display-input').value);
+    const limiteHDV = parseTime(document.getElementById('previ-limite-hdv').querySelector('.display-input').value);
+    const tmdTime = parseTime(document.getElementById('previ-tmd').querySelector('.display-input').value);
     const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
 
     const transitTime = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
     const rotationTime = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
     const consoRotation = calculateConsoRotation(CALCULATOR_DATA.distPelicFeu);
     const consoAller = calculateFuelToGo(CALCULATOR_DATA.distBaseFeu);
-    const heureSurFeu = blocDepart !== null ? blocDepart + transitTime : null;
+    const heureSurFeu = heureTO !== null ? heureTO + transitTime : null;
 
     document.getElementById('duree-transit').textContent = formatTime(transitTime) || '--:--';
     setHelp('duree-transit-help', `DURÉE TRANSIT BASE → FEU\n\nFormule : Distance Base → Feu × (60 / Vitesse)\n\nRègle vitesse :\n- Distance ≤ 70 Nm : 210 kt\n- Distance > 70 Nm : 240 kt\n\nDistance Base → Feu : ${CALCULATOR_DATA.distBaseFeu} Nm\nVitesse retenue : ${CALCULATOR_DATA.distBaseFeu <= 70 ? 210 : 240} kt\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} × (60 / ${CALCULATOR_DATA.distBaseFeu <= 70 ? 210 : 240}) = ${formatTime(transitTime)} (${transitTime} min)`);
 
     document.getElementById('heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
-    setHelp('heure-sur-feu-help', `HEURE SUR FEU\n\nFormule : BLOC Départ + Durée transit Base → Feu\n\nBLOC Départ : ${formatTime(blocDepart) || 'N/A'}\nDurée transit : ${formatTime(transitTime)} (${transitTime} min)\n\nCalcul : ${formatTime(blocDepart) || 'N/A'} + ${formatTime(transitTime)} = ${formatTime(heureSurFeu) || 'N/A'}\n\nCette heure sert ensuite à vérifier le +1 Coucher Soleil et TMD avec le forfait de 10 min avant largage.`);
+    setHelp('heure-sur-feu-help', `HEURE SUR FEU\n\nFormule : HEURE TO + Durée transit Base → Feu\n\nHEURE TO : ${formatTime(heureTO) || 'N/A'}\nDurée transit : ${formatTime(transitTime)} (${transitTime} min)\n\nCalcul : ${formatTime(heureTO) || 'N/A'} + ${formatTime(transitTime)} = ${formatTime(heureSurFeu) || 'N/A'}\n\nCette heure sert ensuite à vérifier le +1 Coucher Soleil et TMD avec le forfait de 10 min avant largage.`);
 
     document.getElementById('conso-aller-feu').textContent = `${consoAller} kg`;
     setHelp('conso-aller-feu-help', `CONSO TRANSIT BASE → FEU\n\nFormule : Distance Base → Feu × Conso au Nm\n\nRègle consommation :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nDistance Base → Feu : ${CALCULATOR_DATA.distBaseFeu} Nm\nConso retenue : ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} kg/Nm\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} × ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} = ${consoAller} kg`);
@@ -7062,6 +7256,8 @@ function updateSuiviTab() {
         document.getElementById('suivi-bingo-pelic').innerHTML = '-- kg';
         document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
         document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
+        const suiviDureeTransitNoCommune = document.getElementById('suivi-duree-transit'); if (suiviDureeTransitNoCommune) suiviDureeTransitNoCommune.textContent = '--:--';
+        const suiviFuelSurFeuNoCommune = document.getElementById('suivi-fuel-sur-feu'); if (suiviFuelSurFeuNoCommune) suiviFuelSurFeuNoCommune.textContent = '-- kg';
         document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
         const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
         if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
@@ -7085,37 +7281,175 @@ function updateSuiviTab() {
         suiviDureeInput.value = previDuree.includes('--') ? '' : previDuree;
     }
 
-    const allRows = document.querySelectorAll('#bloc-fuel tbody tr');
-    let lastFilledRow = null;
-    allRows.forEach(row => { if (parseTime(row.querySelector('.time-input-wrapper .display-input').value) !== null || parseNumeric(row.querySelector('.numeric-input-wrapper .display-input').value) !== null) { lastFilledRow = row; } });
+    const allRows = Array.from(document.querySelectorAll('#bloc-fuel tbody tr'));
+    const firstRow = allRows[0] || null;
+    const firstRowRltWrapper = firstRow?.querySelector('.rlt-mass-input-wrapper') || null;
+    const isFirstRowFullDeparture = !!firstRowRltWrapper && (
+        firstRowRltWrapper.dataset.rltFirstFull === '1'
+        || firstRowRltWrapper.dataset.rltMode === 'firstFull'
+    );
 
-    if (!lastFilledRow) {
+    const getRowTime = row => parseTime(row?.querySelector('.time-input-wrapper .display-input')?.value || '');
+    const getRowFuel = row => parseNumeric(row?.querySelector('.numeric-input-wrapper .display-input')?.value || '');
+    const getRowOaci = row => {
+        const datasetOaci = String(row?.dataset?.airportOaci || '').trim().toUpperCase();
+        if (datasetOaci) return datasetOaci;
+        const cellText = String(row?.querySelector('.airport-oaci-cell')?.textContent || '').replace('--', '').trim().toUpperCase();
+        return cellText || '';
+    };
+    const getDistanceFromOaciToFire = oaci => {
+        if (!currentCommune || !oaci) return null;
+        const airport = getAirportByOaci(oaci);
+        if (!airport) return null;
+        const { latitude_mairie: feuLat, longitude_mairie: feuLon } = currentCommune;
+        return Math.round(calculateDistanceInNm(airport.lat, airport.lon, feuLat, feuLon));
+    };
+
+    let lastFilledRow = null;
+    allRows.forEach(row => {
+        if (getRowTime(row) !== null || getRowFuel(row) !== null) {
+            lastFilledRow = row;
+        }
+    });
+
+    const blocDepartTime = parseTime(document.getElementById('bloc-depart')?.querySelector('.display-input')?.value || '');
+    const fuelDepart = parseNumeric(document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '');
+    const limiteHdvDepart = (typeof getEffectiveLimitHdvForActiveFlight === 'function')
+        ? getEffectiveLimitHdvForActiveFlight()
+        : parseTime(document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '');
+
+    let currentFuel = null;
+    let currentTime = null;
+    let currentHdv = null;
+    let transitDistanceVersFeu = null;
+    let transitEffectiveDistanceVersFeu = null;
+    let transitConsoDistanceVersFeu = null;
+    let preTransitForfaitMin = 0;
+    let transitSourceLabel = '';
+    let transitSourceDetail = '';
+
+    const isKnownPelicOaci = (oaci) => {
+        const normalized = String(oaci || '').trim().toUpperCase();
+        if (!normalized) return false;
+        if (normalized === selectedPelicanOACI) return true;
+        return [...pelicanAirports, ...otherAirports].some(ap => {
+            if (ap.oaci !== normalized) return false;
+            return pelicanAirports.includes(ap) || customPelicanAirports.has(ap.oaci);
+        });
+    };
+
+    const setTransitDistancePolicy = ({ measuredDistance, usePelicMinimum = false }) => {
+        if (!Number.isFinite(measuredDistance)) {
+            transitDistanceVersFeu = null;
+            transitEffectiveDistanceVersFeu = null;
+            transitConsoDistanceVersFeu = null;
+            return;
+        }
+        transitDistanceVersFeu = measuredDistance;
+        transitEffectiveDistanceVersFeu = usePelicMinimum ? Math.max(measuredDistance, 10) : measuredDistance;
+        transitConsoDistanceVersFeu = measuredDistance;
+    };
+
+    if (lastFilledRow) {
+        currentFuel = getRowFuel(lastFilledRow);
+        currentTime = getRowTime(lastFilledRow);
+        preTransitForfaitMin = 10;
+
+        if (lastFilledRow === firstRow && isFirstRowFullDeparture) {
+            const firstRowOaci = getRowOaci(firstRow);
+            const firstRowDistance = getDistanceFromOaciToFire(firstRowOaci);
+            setTransitDistancePolicy({ measuredDistance: firstRowDistance, usePelicMinimum: isKnownPelicOaci(firstRowOaci) });
+            currentHdv = limiteHdvDepart;
+            transitSourceLabel = firstRowOaci ? `1re ligne Plein au départ (${firstRowOaci})` : '1re ligne Plein au départ — OACI non renseigné';
+            transitSourceDetail = `Terrain départ retenu : 1re ligne BLOC/FUEL en mode Plein au départ`;
+        } else {
+            currentHdv = parseTime(lastFilledRow.querySelector('.tps-vol-restant-cell')?.textContent || '');
+            const hasSelectedPelicForSuivi = !!selectedPelicanOACI && Number.isFinite(CALCULATOR_DATA.distPelicFeu);
+            setTransitDistancePolicy({ measuredDistance: hasSelectedPelicForSuivi ? CALCULATOR_DATA.distPelicFeu : null, usePelicMinimum: true });
+            transitSourceLabel = selectedPelicanOACI ? `Pélic sélectionné (${selectedPelicanOACI})` : 'Pélic sélectionné non renseigné';
+            transitSourceDetail = `Terrain départ retenu : pélicandrome sélectionné après le premier transit`;
+        }
+    } else {
+        currentFuel = fuelDepart;
+        currentTime = blocDepartTime;
+        currentHdv = limiteHdvDepart;
+        preTransitForfaitMin = 0;
+        setTransitDistancePolicy({ measuredDistance: Number.isFinite(CALCULATOR_DATA.distBaseFeu) ? CALCULATOR_DATA.distBaseFeu : null, usePelicMinimum: false });
+        transitSourceLabel = selectedBaseOACI ? `BLOC DÉPART / base (${selectedBaseOACI})` : 'BLOC DÉPART / base non renseignée';
+        transitSourceDetail = `Terrain départ retenu : ligne BLOC DÉPART / FUEL DÉPART / BASE`;
+    }
+
+    const consoRotation = parseNumeric(suiviConsoInput.value);
+    const rotationTime = parseTime(suiviDureeInput.value);
+    const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
+    const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
+    const transitTimeVersFeu = Number.isFinite(transitEffectiveDistanceVersFeu) ? Math.round(calculateTransitTime(transitEffectiveDistanceVersFeu)) : null;
+    const consoTransitVersFeu = Number.isFinite(transitConsoDistanceVersFeu) ? calculateFuelToGo(transitConsoDistanceVersFeu) : null;
+    const tempsAvantFeu = (transitTimeVersFeu !== null) ? preTransitForfaitMin + transitTimeVersFeu : null;
+    const heureSurFeu = (currentTime !== null && tempsAvantFeu !== null) ? currentTime + tempsAvantFeu : null;
+    const fuelSurFeu = (currentFuel !== null && consoTransitVersFeu !== null) ? currentFuel - consoTransitVersFeu : currentFuel;
+
+    if (currentFuel === null && currentTime === null) {
         document.getElementById('suivi-fuel-actuel').textContent = '-- kg';
         document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
         document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
+        const suiviDureeTransitEl = document.getElementById('suivi-duree-transit'); if (suiviDureeTransitEl) suiviDureeTransitEl.textContent = '--:--';
+        const suiviFuelSurFeuEl = document.getElementById('suivi-fuel-sur-feu'); if (suiviFuelSurFeuEl) suiviFuelSurFeuEl.textContent = '-- kg';
         const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
         if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
         document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
     } else {
-        const currentFuel = parseNumeric(lastFilledRow.querySelector('.numeric-input-wrapper .display-input').value);
-        const currentTime = parseTime(lastFilledRow.querySelector('.time-input-wrapper .display-input').value);
-        const currentHdv = parseTime(lastFilledRow.querySelector('.tps-vol-restant-cell').textContent);
-        document.getElementById('suivi-fuel-actuel').textContent = currentFuel ? `${currentFuel} kg` : '--';
-
-        const consoRotation = parseNumeric(suiviConsoInput.value);
-        const rotationTime = parseTime(suiviDureeInput.value);
-
-        const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
-        const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
-        const transitTimeVersFeu = Math.round(calculateTransitTime(CALCULATOR_DATA.distBaseFeu));
-        const heureSurFeu = currentTime !== null ? currentTime + transitTimeVersFeu : null;
+        document.getElementById('suivi-fuel-actuel').textContent = currentFuel !== null ? `${currentFuel} kg` : '--';
         document.getElementById('suivi-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
         document.getElementById('suivi-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
+        const suiviDureeTransitEl = document.getElementById('suivi-duree-transit'); if (suiviDureeTransitEl) suiviDureeTransitEl.textContent = transitTimeVersFeu !== null ? (formatTime(transitTimeVersFeu) || '--:--') : '--:--';
+        const suiviFuelSurFeuEl = document.getElementById('suivi-fuel-sur-feu'); if (suiviFuelSurFeuEl) suiviFuelSurFeuEl.textContent = fuelSurFeu !== null ? `${fuelSurFeu} kg` : '-- kg';
         const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
         if (suiviHeureHelpIcon) {
-            suiviHeureHelpIcon.onclick = () => alert(`HEURE SUR FEU — SUIVI ROTATION\n\nFormule : Heure dernière arrivée pélic/base + Durée transit vers feu\n\nHeure dernière arrivée : ${formatTime(currentTime) || 'N/A'}\nDistance Base → Feu utilisée : ${CALCULATOR_DATA.distBaseFeu} Nm\nRègle vitesse : ≤70 Nm = 210 kt, >70 Nm = 240 kt\nDurée transit : ${formatTime(transitTimeVersFeu) || 'N/A'} (${transitTimeVersFeu} min)\n\nCalcul : ${formatTime(currentTime) || 'N/A'} + ${formatTime(transitTimeVersFeu) || 'N/A'} = ${formatTime(heureSurFeu) || 'N/A'}\n\nCette heure sert aux limites CS/TMD. Le +1 fuel est neutralisé dans cet onglet car l'avion est considéré au pélicandrome/vide.`);
+            suiviHeureHelpIcon.onclick = () => alert(`HEURE SUR FEU — SUIVI ROTATION
+
+Règle v12.88 :
+- depuis BLOC DÉPART / FUEL DÉPART / BASE : premier transit depuis la base ;
+- depuis une ligne BLOC/FUEL en mode Plein au départ : premier transit depuis l'OACI de cette ligne ;
+- depuis une arrivée pélicandrome : 10 min de mise en œuvre/roulage/décollage, puis transit vers le feu ;
+- le largage est ensuite validé avec 10 min supplémentaires avant largage.
+
+${transitSourceDetail}
+Source utilisée : ${transitSourceLabel}
+Heure départ retenue : ${formatTime(currentTime) || 'N/A'}
+Forfait avant transit : ${preTransitForfaitMin} min
+Distance source → Feu mesurée : ${Number.isFinite(transitDistanceVersFeu) ? transitDistanceVersFeu : 'N/A'} Nm
+Distance transit retenue : ${Number.isFinite(transitEffectiveDistanceVersFeu) ? transitEffectiveDistanceVersFeu : 'N/A'} Nm
+Règle vitesse : ≤70 Nm = 210 kt, >70 Nm = 240 kt
+Durée transit : ${transitTimeVersFeu !== null ? `${formatTime(transitTimeVersFeu)} (${transitTimeVersFeu} min)` : 'N/A'}
+Conso transit : ${consoTransitVersFeu !== null ? `${consoTransitVersFeu} kg` : 'N/A'}
+Fuel sur feu retenu : ${fuelSurFeu !== null ? `${fuelSurFeu} kg` : 'N/A'}
+
+Calcul heure sur feu : ${formatTime(currentTime) || 'N/A'} + ${preTransitForfaitMin} min + ${transitTimeVersFeu !== null ? formatTime(transitTimeVersFeu) : 'N/A'} = ${formatTime(heureSurFeu) || 'N/A'}
+
+Validation du largage : Heure sur feu + 10 min avant CS/TMD/HDV.`);
         }
-        updateAndSortRotations(document.getElementById('suivi-rotation-results-container'), { fuel: currentFuel, time: heureSurFeu }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV: currentHdv, transitTime: transitTimeVersFeu });
+        updateAndSortRotations(
+            document.getElementById('suivi-rotation-results-container'),
+            { fuel: fuelSurFeu, time: heureSurFeu },
+            {
+                bingoBase,
+                bingoPelic,
+                consoRotation,
+                rotationTime,
+                csFeuTime,
+                tmdTime,
+                limiteHDV: currentHdv,
+                transitTime: tempsAvantFeu,
+                rawTransitTime: transitTimeVersFeu,
+                preTransitForfaitMin,
+                effectiveTransitDistance: transitEffectiveDistanceVersFeu,
+                transitSourceLabel,
+                currentTimeLabel: 'Heure sur feu',
+                allowFuelImmediateDrop: true,
+                firstDropForfaitMin: 10
+            }
+        );
     }
 }
 
@@ -7133,7 +7467,7 @@ function updateDeroutementTab() {
     if (deroutFuelMiniPelicLabel) {
         const selectedPelic = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
         const pelicCode = selectedPelic ? selectedPelic.oaci : 'PÉLIC';
-        deroutFuelMiniPelicLabel.textContent = `Fuel mini 1 largage / Pélic (${pelicCode}) :`;
+        deroutFuelMiniPelicLabel.textContent = `Fuel mini 1 Lrg / Pélic (${pelicCode}) :`;
     }
 
     if (!currentCommune) {
@@ -7158,12 +7492,19 @@ function updateDeroutementTab() {
     const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
     const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
     const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
-    const hasGpsPosition = !!(userMarker && userMarker.getLatLng());
-    const userLatLng = hasGpsPosition ? userMarker.getLatLng() : null;
+    const markerLatLng = (userMarker && typeof userMarker.getLatLng === 'function') ? userMarker.getLatLng() : null;
+    const lastGpsLat = lastPosition ? Number(lastPosition.lat ?? lastPosition.latitude) : NaN;
+    const lastGpsLng = lastPosition ? Number(lastPosition.lng ?? lastPosition.longitude) : NaN;
+    const userLatLng = (markerLatLng && Number.isFinite(markerLatLng.lat) && Number.isFinite(markerLatLng.lng))
+        ? markerLatLng
+        : (Number.isFinite(lastGpsLat) && Number.isFinite(lastGpsLng) ? { lat: lastGpsLat, lng: lastGpsLng } : null);
+    const hasGpsPosition = !!userLatLng;
     const selectedPelicForDeroutement = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
     const isEmptyRetardant = document.getElementById('derout-empty-retardant-checkbox')?.checked === true;
 
-    const distGpsFeu = hasGpsPosition ? CALCULATOR_DATA.distGpsFeu : null;
+    const distGpsFeu = (hasGpsPosition && currentCommune)
+        ? Math.round(calculateDistanceInNm(userLatLng.lat, userLatLng.lng, currentCommune.latitude_mairie, currentCommune.longitude_mairie))
+        : null;
     const distGpsPelic = (hasGpsPosition && selectedPelicForDeroutement)
         ? Math.round(calculateDistanceInNm(userLatLng.lat, userLatLng.lng, selectedPelicForDeroutement.lat, selectedPelicForDeroutement.lon))
         : null;
@@ -7176,7 +7517,7 @@ function updateDeroutementTab() {
     const transitTimeFromGps = firstLegDistance !== null
         ? (
             isEmptyRetardant
-                ? Math.round(calculateTransitTime(distGpsPelic)) + 20 + Math.round(calculateTransitTime(distFirstPelicFeu))
+                ? Math.round(calculateTransitTime(distGpsPelic)) + 10 + Math.round(calculateTransitTime(distFirstPelicFeu))
                 : Math.round(calculateTransitTime(distGpsFeu))
         )
         : null;
@@ -7202,16 +7543,16 @@ function updateDeroutementTab() {
         ? `GPS → Pélic (${selectedPelicForDeroutement ? selectedPelicForDeroutement.oaci : 'PÉLIC'}) → Feu`
         : 'GPS → Feu';
     const deroutFirstLegDetail = isEmptyRetardant
-        ? `Distance GPS → Pélic : ${distGpsPelic ?? 'N/A'} Nm\nDistance Pélic → Feu : ${distFirstPelicFeu ?? 'N/A'} Nm\nForfait remplissage Pélic : 20 min`
+        ? `Distance GPS → Pélic : ${distGpsPelic ?? 'N/A'} Nm\nDistance Pélic → Feu : ${distFirstPelicFeu ?? 'N/A'} Nm\nForfait sol Pélic : 10 min`
         : `Distance GPS → Feu : ${distGpsFeu ?? 'N/A'} Nm`;
 
     setHelp('derout-fuel-mini-base-help', consoTransitFromGps !== null
-        ? `FUEL MINI 1 LARGAGE / BASE\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Base\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Base :\n700 kg + conso Feu → Base = ${bingoBase} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase} = ${fuelMiniBase} kg`
+        ? `FUEL MINI 1 LRG / BASE\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Base\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Base :\n700 kg + conso Feu → Base = ${bingoBase} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase} = ${fuelMiniBase} kg`
         : (isEmptyRetardant && !selectedPelicForDeroutement)
             ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
             : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
     setHelp('derout-fuel-mini-pelic-help', consoTransitFromGps !== null
-        ? `FUEL MINI 1 LARGAGE / PÉLIC\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Pélic\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Pélic :\n700 kg + conso Feu → Pélic = ${bingoPelic} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic} = ${fuelMiniPelic} kg`
+        ? `FUEL MINI 1 LRG / PÉLIC\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Pélic\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Pélic :\n700 kg + conso Feu → Pélic = ${bingoPelic} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic} = ${fuelMiniPelic} kg`
         : (isEmptyRetardant && !selectedPelicForDeroutement)
             ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
             : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
@@ -8714,6 +9055,7 @@ function initializeCalculator() {
     let activeRltMassWrapper = null;
     let activeRltMassLastEdited = null;
     let activeRltMassCalculationMode = null;
+    let activeRltFirstFull = false;
 
     function getSharedHeaderMainId(wrapper) {
         if (!wrapper) return '';
@@ -8763,7 +9105,12 @@ function initializeCalculator() {
     }
 
     function refreshSharedHeaderMirrorValues() {
-        ['bloc-depart', 'fuel-depart', 'tmd', 'limite-hdv'].forEach((mainId) => {
+        /*
+         * v12.88 — Prévi indépendant : HEURE TO et FUEL Départ de
+         * l'onglet Prévi ne sont plus synchronisés avec BLOC DÉPART / FUEL
+         * DÉPART de BLOC/FUEL. Seuls TMD et LIMITE HDV restent communs.
+         */
+        ['tmd', 'limite-hdv'].forEach((mainId) => {
             copyWrapperValue(document.getElementById(mainId), getSharedHeaderMirrorWrapper(mainId));
         });
 
@@ -8771,9 +9118,8 @@ function initializeCalculator() {
         const previCs = document.getElementById('previ-cs-lftw-display');
         if (mainCs && previCs) previCs.value = mainCs.value;
 
-        const mainBlocLabel = document.getElementById('bloc-depart-label');
         const previBlocLabel = document.getElementById('previ-bloc-depart-label');
-        if (mainBlocLabel && previBlocLabel) previBlocLabel.textContent = mainBlocLabel.textContent;
+        if (previBlocLabel) previBlocLabel.textContent = 'HEURE TO';
 
         const mainCsLabel = document.getElementById('cs-base-label');
         const previCsLabel = document.getElementById('previ-cs-base-label');
@@ -8803,17 +9149,24 @@ function initializeCalculator() {
         const status = document.getElementById('derout-gps-status');
         if (!status) return;
 
-        if (!lastPosition || !lastPosition.timestamp) {
-            status.textContent = extraText || 'GPS non actualisé';
+        const hasMarkerGps = !!(userMarker && typeof userMarker.getLatLng === 'function' && userMarker.getLatLng());
+        const hasLastGps = !!(lastPosition && Number.isFinite(Number(lastPosition.lat ?? lastPosition.latitude)) && Number.isFinite(Number(lastPosition.lng ?? lastPosition.longitude)));
+
+        if (!hasMarkerGps && !hasLastGps) {
+            status.textContent = extraText || 'GPS non disponible';
             status.className = 'derout-gps-status derout-gps-status-missing';
             return;
         }
 
-        const updatedAt = new Date(Number(lastPosition.timestamp));
+        const timestamp = lastPosition && lastPosition.timestamp ? Number(lastPosition.timestamp) : Date.now();
+        const updatedAt = new Date(timestamp);
         const hhmm = updatedAt.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
         const ageLabel = getCurrentGpsAgeLabel();
-        status.textContent = `${extraText || 'GPS actualisé'} à ${hhmm}${ageLabel ? ` — ${ageLabel}` : ''}`;
-        status.className = 'derout-gps-status derout-gps-status-ok';
+        const ageMs = Number.isFinite(timestamp) ? Date.now() - timestamp : 0;
+        const isOld = Number.isFinite(ageMs) && ageMs > 15 * 60000;
+        const label = extraText || (isOld ? 'GPS ancien' : 'GPS actualisé');
+        status.textContent = `${label} à ${hhmm}${ageLabel ? ` — ${ageLabel}` : ''}`;
+        status.className = `derout-gps-status ${isOld ? 'derout-gps-status-old' : 'derout-gps-status-ok'}`;
     }
 
     if (deroutEmptyRetardantCheckbox) {
@@ -8826,7 +9179,7 @@ function initializeCalculator() {
 
     updateDeroutementGpsStatus();
 
-    refreshGpsBtn.addEventListener('click', () => {
+    if (refreshGpsBtn) refreshGpsBtn.addEventListener('click', () => {
         if (!navigator.geolocation) {
             alert("La géolocalisation n'est pas supportée par votre navigateur.");
             return;
@@ -8835,11 +9188,11 @@ function initializeCalculator() {
         navigator.geolocation.getCurrentPosition(
             (pos) => {
                 updateUserPosition(pos);
-                updateDeroutementGpsStatus('GPS actualisé manuellement');
+                updateDeroutementGpsStatus('GPS actualisé');
                 masterRecalculate();
             },
             () => {
-                updateDeroutementGpsStatus('GPS non actualisé');
+                updateDeroutementGpsStatus('GPS non disponible');
                 alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
             },
             { enableHighAccuracy: true, timeout: 10000, maximumAge: 0 }
@@ -8927,7 +9280,7 @@ function initializeCalculator() {
         const text = oaci ? `BLOC DÉPART ${oaci}` : 'BLOC DÉPART';
 
         if (label) label.textContent = text;
-        if (previLabel) previLabel.textContent = text;
+        if (previLabel) previLabel.textContent = 'HEURE TO';
     }
 
     function updateRowAirportOaci(row, { forceDetect = false } = {}) {
@@ -9025,6 +9378,8 @@ function initializeCalculator() {
             state: {
                 'bloc-depart': '',
                 'fuel-depart': '3400 kg',
+                'previ-bloc-depart': '',
+                'previ-fuel-depart': '3400 kg',
                 'tmd': '21:30',
                 'limite-hdv': '08:00',
                 calculator_table_data: []
@@ -9042,6 +9397,16 @@ function initializeCalculator() {
             || rowData.rltMass
             || rowData.rltVolume
             || rowData.rltDensity
+            || rowData.rltTopMass
+            || rowData.rltTopDensity
+            || rowData.rltTopVolume
+            || rowData.rltBottomVolume
+            || rowData.rltBottomDensity
+            || rowData.rltBottomMass
+            || rowData.rltMode
+            || rowData.rltFirstFull
+            || rowData.rltFirstFullPending
+            || rowData.rltFirstFullWanted
         );
     }
 
@@ -9071,9 +9436,19 @@ function initializeCalculator() {
             const rltMass = rltWrapper?.querySelector('.display-input')?.value || '';
             const rltVolume = rltWrapper?.dataset.volume || '';
             const rltDensity = rltWrapper?.dataset.density || '';
+            const rltTopMass = rltWrapper?.dataset.topMass || '';
+            const rltTopDensity = rltWrapper?.dataset.topDensity || '';
+            const rltTopVolume = rltWrapper?.dataset.topVolume || '';
+            const rltBottomVolume = rltWrapper?.dataset.bottomVolume || '';
+            const rltBottomDensity = rltWrapper?.dataset.bottomDensity || '';
+            const rltBottomMass = rltWrapper?.dataset.bottomMass || '';
+            const rltMode = rltWrapper?.dataset.rltMode || '';
+            const rltFirstFull = rltWrapper?.dataset.rltFirstFull || '';
+            const rltFirstFullPending = rltWrapper?.dataset.rltFirstFullPending || '';
+            const rltFirstFullWanted = rltWrapper?.dataset.rltFirstFullWanted || '';
             const oaci = row.dataset.airportOaci || row.querySelector('.airport-oaci-cell')?.textContent?.replace('--', '').trim() || '';
-            if (time || fuel || oaci || rltMass || rltVolume || rltDensity) {
-                tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity });
+            if (time || fuel || oaci || rltMass || rltVolume || rltDensity || rltTopMass || rltTopDensity || rltTopVolume || rltBottomVolume || rltBottomDensity || rltBottomMass || rltMode || rltFirstFull || rltFirstFullPending || rltFirstFullWanted) {
+                tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity, rltTopMass, rltTopDensity, rltTopVolume, rltBottomVolume, rltBottomDensity, rltBottomMass, rltMode, rltFirstFull, rltFirstFullPending, rltFirstFullWanted });
             }
         });
         state.calculator_table_data = compactCalculatorTableData(tableData);
@@ -9241,6 +9616,8 @@ function initializeCalculator() {
             dailyFlights[0].state = {
                 'bloc-depart': legacyState['bloc-depart'] || '',
                 'fuel-depart': legacyState['fuel-depart'] || '3400 kg',
+                'previ-bloc-depart': legacyState['previ-bloc-depart'] || legacyState['bloc-depart'] || '',
+                'previ-fuel-depart': legacyState['previ-fuel-depart'] || legacyState['fuel-depart'] || '3400 kg',
                 'tmd': legacyState['tmd'] || '21:30',
                 'limite-hdv': legacyState['limite-hdv'] || '08:00',
                 'deroutement-heure-wrapper': legacyState['deroutement-heure-wrapper'] || '',
@@ -9336,8 +9713,8 @@ function initializeCalculator() {
             initializeTimeInput(document.getElementById('tmd'), state['tmd'] || '21:30');
             initializeTimeInput(document.getElementById('limite-hdv'), state['limite-hdv'] || '08:00');
 
-            initializeTimeInput(document.getElementById('previ-bloc-depart'), state['bloc-depart']);
-            initializeNumericInput(document.getElementById('previ-fuel-depart'), state['fuel-depart'] || '3400 kg');
+            initializeTimeInput(document.getElementById('previ-bloc-depart'), state['previ-bloc-depart'] || state['bloc-depart'] || '');
+            initializeNumericInput(document.getElementById('previ-fuel-depart'), state['previ-fuel-depart'] || state['fuel-depart'] || '3400 kg');
             initializeTimeInput(document.getElementById('previ-tmd'), state['tmd'] || '21:30');
             initializeTimeInput(document.getElementById('previ-limite-hdv'), state['limite-hdv'] || '08:00');
 
@@ -9669,6 +10046,25 @@ function initializeCalculator() {
         if (!modal || modal.dataset.bound === '1') return;
         modal.dataset.bound = '1';
 
+        const modalContent = modal.querySelector('.rlt-mass-modal-content');
+        if (modalContent && modalContent.dataset.rltStopBound !== '1') {
+            modalContent.dataset.rltStopBound = '1';
+            ['pointerdown', 'touchstart', 'mousedown', 'click'].forEach(type => {
+                modalContent.addEventListener(type, (event) => {
+                    /*
+                     * v12.80 — boutons Retardant : ne pas bloquer les événements
+                     * des boutons internes. Le stopPropagation global de la fenêtre
+                     * interceptait parfois Plein au départ avant le handler du bouton
+                     * sur iPad, ce qui donnait seulement un état visuel fugitif.
+                     */
+                    if (event.target?.closest?.('#rlt-first-full-btn, #rlt-mass-validate-btn, #rlt-mass-clear-btn, #rlt-mass-cancel-btn')) {
+                        return;
+                    }
+                    event.stopPropagation();
+                }, { capture: true });
+            });
+        }
+
         if (window.visualViewport && modal.dataset.keyboardOffsetBound !== '1') {
             modal.dataset.keyboardOffsetBound = '1';
             window.visualViewport.addEventListener('resize', applyFuelSplitKeyboardOffset);
@@ -9876,10 +10272,26 @@ function initializeCalculator() {
     }
 
     function parseRltDensityInput(value) {
-        const normalized = String(value || '').trim().replace(',', '.');
-        if (normalized === '1.' || normalized === '1') return null;
-        const density = parseDecimalInput(normalized);
-        if (density === null || density <= 0) return null;
+        const rawString = String(value || '').trim().replace(',', '.');
+        const normalized = rawString.replace(/[^0-9.]/g, '');
+        if (normalized === '1.' || normalized === '1' || normalized === '') return null;
+
+        let density = Number(normalized);
+
+        /*
+         * v12.75 — sécurité densité retardant.
+         * La densité attendue est autour de 1,06 à 1,10. Sur iPad, selon
+         * le clavier et les anciennes valeurs, une saisie visuelle "1.1" peut
+         * parfois être relue comme 0.11. Dans ce cas opérationnel impossible,
+         * on reconstruit la densité à partir des chiffres saisis.
+         */
+        const digits = normalized.replace(/\D/g, '');
+        if (Number.isFinite(density) && density > 0 && density < 0.5 && digits.startsWith('1') && digits.length >= 2) {
+            const decimals = digits.slice(1, 4);
+            density = Number(`1.${decimals}`);
+        }
+
+        if (!Number.isFinite(density) || density <= 0) return null;
         return density;
     }
 
@@ -9898,6 +10310,12 @@ function initializeCalculator() {
 
     function formatDecimalValue(value, decimals = 2) {
         if (!Number.isFinite(value)) return '';
+        /*
+         * v12.77 — correction Masse RLT :
+         * ne jamais supprimer les zéros significatifs sur les valeurs entières.
+         * L'ancien nettoyage transformait par exemple 8500 en 85.
+         */
+        if (decimals === 0) return String(Math.round(value));
         return value.toFixed(decimals).replace(/\.?0+$/, '').replace('.', ',');
     }
 
@@ -9918,7 +10336,8 @@ function initializeCalculator() {
             validateBtn: document.getElementById('rlt-mass-validate-btn'),
             clearBtn: document.getElementById('rlt-mass-clear-btn'),
             cancelBtn: document.getElementById('rlt-mass-cancel-btn'),
-            closeBtn: document.getElementById('rlt-mass-close-btn')
+            closeBtn: document.getElementById('rlt-mass-close-btn'),
+            firstFullBtn: document.getElementById('rlt-first-full-btn')
         };
     }
 
@@ -9942,6 +10361,7 @@ function initializeCalculator() {
         activeRltMassWrapper = null;
         activeRltMassLastEdited = null;
         activeRltMassCalculationMode = null;
+        activeRltFirstFull = false;
         markRltCalculatedField(null);
     }
 
@@ -9952,7 +10372,76 @@ function initializeCalculator() {
         });
     }
 
-    function syncRltMassModalFromInputs() {
+    function isFirstBlocFuelRltRow(wrapper) {
+        const row = wrapper?.closest?.('#bloc-fuel tbody tr');
+        if (!row || !row.parentElement) return false;
+        const rows = Array.from(row.parentElement.querySelectorAll('tr'));
+        return rows.indexOf(row) === 0;
+    }
+
+    function setRltFirstFullActive(active, persistPending = true) {
+        const canUseFirstFull = isFirstBlocFuelRltRow(activeRltMassWrapper);
+        activeRltFirstFull = !!active && canUseFirstFull;
+
+        /*
+         * v12.85 — Plein au départ : interrupteur volontaire protégé.
+         * Le bouton peut être activé/désactivé volontairement. Sur iPad, la même action
+         * peut produire touchstart + pointerdown + click ; chaque événement doit
+         * conduire au même état actif, jamais à une désactivation involontaire.
+         */
+        if (persistPending && activeRltMassWrapper) {
+            if (activeRltFirstFull) {
+                activeRltMassWrapper.dataset.rltFirstFullPending = '1';
+                activeRltMassWrapper.dataset.rltFirstFullWanted = '1';
+            } else {
+                activeRltMassWrapper.dataset.rltFirstFullPending = '';
+                activeRltMassWrapper.dataset.rltFirstFullWanted = '';
+                activeRltMassWrapper.dataset.rltFirstFull = '';
+                if (activeRltMassWrapper.dataset.rltMode === 'firstFull') {
+                    activeRltMassWrapper.dataset.rltMode = '';
+                }
+            }
+
+            const pendingRow = activeRltMassWrapper.closest('tr');
+            if (pendingRow) {
+                pendingRow.classList.toggle('bloc-fuel-first-full-row-pending', activeRltFirstFull);
+                if (!activeRltFirstFull) {
+                    pendingRow.classList.remove('bloc-fuel-first-full-row');
+                }
+            }
+            try { saveCalculatorState(); } catch (_) {}
+        }
+
+        const { firstFullBtn } = getRltMassModalElements();
+        if (firstFullBtn) {
+            firstFullBtn.classList.toggle('active', activeRltFirstFull);
+            firstFullBtn.setAttribute('aria-pressed', activeRltFirstFull ? 'true' : 'false');
+        }
+    }
+
+    function toggleRltFirstFullActive() {
+        const canUseFirstFull = isFirstBlocFuelRltRow(activeRltMassWrapper);
+        const nextActive = canUseFirstFull ? !(activeRltFirstFull === true) : false;
+
+        setRltFirstFullActive(nextActive, true);
+        syncRltMassModalFromInputs();
+
+        if (nextActive) {
+            applyRltFirstFullIfPossible();
+        } else {
+            const row = activeRltMassWrapper?.closest?.('tr');
+            if (row) {
+                row.classList.remove('bloc-fuel-first-full-row');
+                row.classList.remove('bloc-fuel-first-full-row-pending');
+            }
+            try { masterRecalculate(); } catch (_) {}
+            try { saveCalculatorState(); } catch (_) {}
+        }
+    }
+
+    function applyRltFirstFullIfPossible() {
+        if (!activeRltMassWrapper || !isFirstBlocFuelRltRow(activeRltMassWrapper) || !activeRltFirstFull) return false;
+
         const {
             massToVolumeMassInput,
             massToVolumeDensityInput,
@@ -9960,6 +10449,77 @@ function initializeCalculator() {
             volumeInput,
             densityInput,
             massInput
+        } = getRltMassModalElements();
+
+        const topMass = parseDecimalInput(massToVolumeMassInput?.value);
+        const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
+        const bottomVolume = parseDecimalInput(volumeInput?.value);
+        const bottomDensity = parseRltDensityInput(densityInput?.value);
+        const existingBottomMass = parseDecimalInput(massInput?.value);
+
+        const topComputedVolume = (topMass !== null && topDensity !== null) ? (topMass / topDensity) : null;
+        const bottomComplete = bottomVolume !== null && bottomDensity !== null;
+        const bottomComputedMass = bottomComplete
+            ? (existingBottomMass !== null ? existingBottomMass : (bottomVolume * bottomDensity))
+            : null;
+
+        /*
+         * v12.83 — Plein au départ : ne plus dépendre uniquement de la
+         * ligne 1 « Masse ÷ Densité ». Si l'utilisateur travaille avec la
+         * ligne 2 « Volume × Densité = Masse » (ex. 8500 × 1,1), le bouton
+         * doit aussi appliquer le mode Plein au départ avec cette masse.
+         */
+        const selectedMass = bottomComputedMass !== null ? bottomComputedMass : topMass;
+        const selectedVolume = bottomComputedMass !== null ? bottomVolume : topComputedVolume;
+        const selectedDensity = bottomComputedMass !== null ? bottomDensity : topDensity;
+        if (selectedMass === null) return false;
+
+        if (massToVolumeVolumeInput && topComputedVolume !== null) {
+            massToVolumeVolumeInput.value = formatDecimalValue(topComputedVolume, 0);
+        }
+        if (massInput && bottomComputedMass !== null) {
+            massInput.value = formatDecimalValue(bottomComputedMass, 0);
+        }
+
+        activeRltMassWrapper.dataset.topMass = topMass !== null ? String(Math.round(topMass)) : '';
+        activeRltMassWrapper.dataset.topDensity = topDensity !== null ? formatDecimalValue(topDensity, 3) : '';
+        activeRltMassWrapper.dataset.topVolume = topComputedVolume !== null ? formatDecimalValue(topComputedVolume, 0) : '';
+        activeRltMassWrapper.dataset.bottomVolume = bottomVolume !== null ? formatDecimalValue(bottomVolume, 0) : '';
+        activeRltMassWrapper.dataset.bottomDensity = bottomDensity !== null ? formatDecimalValue(bottomDensity, 3) : '';
+        activeRltMassWrapper.dataset.bottomMass = bottomComputedMass !== null ? String(Math.round(bottomComputedMass)) : '';
+        activeRltMassWrapper.dataset.volume = selectedVolume !== null ? formatDecimalValue(selectedVolume, 0) : '';
+        activeRltMassWrapper.dataset.density = selectedDensity !== null ? formatDecimalValue(selectedDensity, 3) : '';
+        activeRltMassWrapper.dataset.mass = String(Math.round(selectedMass));
+        activeRltMassWrapper.dataset.rltMode = 'firstFull';
+        activeRltMassWrapper.dataset.rltFirstFull = '1';
+        activeRltMassWrapper.dataset.rltFirstFullPending = '1';
+        activeRltMassWrapper.dataset.rltFirstFullWanted = '1';
+
+        const displayInput = activeRltMassWrapper.querySelector('.display-input');
+        if (displayInput) displayInput.value = formatKgValue(selectedMass);
+
+        const row = activeRltMassWrapper.closest('tr');
+        if (row) {
+            row.classList.add('bloc-fuel-first-full-row');
+            row.classList.add('bloc-fuel-first-full-row-pending');
+            /* v12.84 — ne plus vider Fuel ni OACI en mode Plein au départ. */
+            try { updateRowAirportOaci(row); } catch (_) {}
+        }
+
+        try { masterRecalculate(); } catch (_) {}
+        try { saveCalculatorState(); } catch (_) {}
+        return true;
+    }
+
+    function syncRltMassModalFromInputs() {
+        const {
+            massToVolumeMassInput,
+            massToVolumeDensityInput,
+            massToVolumeVolumeInput,
+            volumeInput,
+            densityInput,
+            massInput,
+            firstFullBtn
         } = getRltMassModalElements();
 
         ensureRltDensityDefaults();
@@ -9981,20 +10541,32 @@ function initializeCalculator() {
         }
 
         /*
-         * v12.59 — colonne Masse RLT : la valeur validée doit toujours être
-         * le résultat de la ligne Volume × Densité = Masse. Si l'utilisateur
-         * part de la ligne Masse ÷ Densité = Volume, le volume calculé sert
-         * simplement d'entrée implicite pour la ligne Volume × Densité.
+         * v12.71 — les deux lignes sont indépendantes.
+         * Ligne 1 : Masse ÷ Densité = Volume. Elle calcule uniquement son volume.
+         * Ligne 2 : Volume × Densité = Masse. Elle calcule uniquement sa masse.
+         * La ligne 1 ne remplit plus la ligne 2 et inversement.
          */
         if (massInput) {
-            const effectiveVolumeForMass = bottomVolume !== null ? bottomVolume : topComputedVolume;
-            const effectiveDensityForMass = bottomDensity !== null ? bottomDensity : topDensity;
-            if (effectiveVolumeForMass !== null && effectiveDensityForMass !== null) {
-                massInput.value = formatDecimalValue(effectiveVolumeForMass * effectiveDensityForMass, 0);
+            if (bottomVolume !== null && bottomDensity !== null) {
+                massInput.value = formatDecimalValue(bottomVolume * bottomDensity, 0);
                 markRltCalculatedField('massFromVolume');
             } else {
                 massInput.value = '';
             }
+        }
+
+        if (firstFullBtn) {
+            /*
+             * v12.75 — le bouton Plein au départ dépend de la ligne du tableau
+             * BLOC/FUEL ouverte, pas de la première ligne de calcul de la
+             * fenêtre. Il n'est disponible que sur la première ligne du tableau.
+             */
+            const canUseFirstFull = isFirstBlocFuelRltRow(activeRltMassWrapper);
+            firstFullBtn.hidden = !canUseFirstFull;
+            firstFullBtn.style.display = canUseFirstFull ? 'flex' : 'none';
+            if (!canUseFirstFull) activeRltFirstFull = false;
+            firstFullBtn.classList.toggle('active', !!activeRltFirstFull && canUseFirstFull);
+            firstFullBtn.setAttribute('aria-pressed', (!!activeRltFirstFull && canUseFirstFull) ? 'true' : 'false');
         }
     }
 
@@ -10011,10 +10583,30 @@ function initializeCalculator() {
             validateBtn,
             clearBtn,
             cancelBtn,
-            closeBtn
+            closeBtn,
+            firstFullBtn
         } = elements;
         if (!modal || modal.dataset.bound === '1') return;
         modal.dataset.bound = '1';
+
+        const modalContent = modal.querySelector('.rlt-mass-modal-content');
+        if (modalContent && modalContent.dataset.rltStopBound !== '1') {
+            modalContent.dataset.rltStopBound = '1';
+            ['pointerdown', 'touchstart', 'mousedown', 'click'].forEach(type => {
+                modalContent.addEventListener(type, (event) => {
+                    /*
+                     * v12.80 — boutons Retardant : ne pas bloquer les événements
+                     * des boutons internes. Le stopPropagation global de la fenêtre
+                     * interceptait parfois Plein au départ avant le handler du bouton
+                     * sur iPad, ce qui donnait seulement un état visuel fugitif.
+                     */
+                    if (event.target?.closest?.('#rlt-first-full-btn, #rlt-mass-validate-btn, #rlt-mass-clear-btn, #rlt-mass-cancel-btn')) {
+                        return;
+                    }
+                    event.stopPropagation();
+                }, { capture: true });
+            });
+        }
 
         [massToVolumeVolumeInput, massInput].filter(Boolean).forEach(input => {
             input.readOnly = true;
@@ -10069,73 +10661,267 @@ function initializeCalculator() {
         bindInput(volumeInput, 'volume', 'volumeToMass');
         bindInput(densityInput, 'density', 'volumeToMass');
 
-        if (validateBtn) {
-            validateBtn.addEventListener('click', (event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                if (!activeRltMassWrapper) {
-                    closeRltMassModal();
-                    return;
-                }
-
-                syncRltMassModalFromInputs();
-
-                const topMass = parseDecimalInput(massToVolumeMassInput?.value);
-                const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
-                const topVolume = parseDecimalInput(massToVolumeVolumeInput?.value);
-                const bottomVolume = parseDecimalInput(volumeInput?.value);
-                const bottomDensity = parseRltDensityInput(densityInput?.value);
-                const bottomMass = parseDecimalInput(massInput?.value);
-
-                let volume = null;
-                let density = null;
-                let mass = null;
-
-                const topComputedVolume = (topMass !== null && topDensity !== null)
-                    ? (topVolume !== null ? topVolume : (topMass / topDensity))
-                    : null;
-                const volumeForMassResult = bottomVolume !== null ? bottomVolume : topComputedVolume;
-                const densityForMassResult = bottomDensity !== null ? bottomDensity : topDensity;
-
-                if (volumeForMassResult !== null && densityForMassResult !== null) {
-                    volume = volumeForMassResult;
-                    density = densityForMassResult;
-                    /*
-                     * v12.59 — important : la colonne Masse RLT affiche et
-                     * mémorise le résultat de Volume × Densité, jamais la
-                     * masse saisie directement dans la première ligne.
-                     */
-                    mass = bottomMass !== null && bottomVolume !== null && bottomDensity !== null
-                        ? bottomMass
-                        : (volumeForMassResult * densityForMassResult);
-                }
-
-                activeRltMassWrapper.dataset.volume = volume !== null ? formatDecimalValue(volume, 0) : '';
-                activeRltMassWrapper.dataset.density = density !== null ? formatDecimalValue(density, 3) : '';
-                activeRltMassWrapper.dataset.mass = mass !== null ? String(Math.round(mass)) : '';
-
-                const displayInput = activeRltMassWrapper.querySelector('.display-input');
-                if (displayInput) displayInput.value = mass !== null ? formatKgValue(mass) : '';
-
-                masterRecalculate();
-                saveCalculatorState();
-                closeRltMassModal();
-            }, { capture: true });
-        }
-
-        if (clearBtn) {
-            clearBtn.addEventListener('click', () => {
-                if (massToVolumeMassInput) massToVolumeMassInput.value = '';
-                if (massToVolumeDensityInput) massToVolumeDensityInput.value = '1.';
-                if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = '';
-                if (volumeInput) volumeInput.value = '';
-                if (densityInput) densityInput.value = '1.';
-                if (massInput) massInput.value = '';
-                activeRltMassLastEdited = null;
-                activeRltMassCalculationMode = null;
-                markRltCalculatedField(null);
+        if (firstFullBtn && firstFullBtn.dataset.rltFirstFullBound !== '1') {
+            firstFullBtn.dataset.rltFirstFullBound = '1';
+            ['touchstart', 'pointerdown', 'mousedown', 'click'].forEach(type => {
+                firstFullBtn.addEventListener(type, handleRltFirstFullButtonEvent, { capture: true, passive: false });
             });
         }
+
+        const stopRltButtonEvent = (event) => {
+            if (!event) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (typeof event.stopImmediatePropagation === 'function') {
+                event.stopImmediatePropagation();
+            }
+        };
+
+        const runRltButtonActionOnce = (action, actionKey = 'rlt') => {
+            const now = Date.now();
+            const lastRun = Number(modal?.dataset.rltLastButtonActionAt || '0');
+            const lastKey = modal?.dataset.rltLastButtonActionKey || '';
+            const dedupeDelayMs = 320;
+            if (lastKey === actionKey && now - lastRun < dedupeDelayMs) return;
+            if (modal) {
+                modal.dataset.rltLastButtonActionAt = String(now);
+                modal.dataset.rltLastButtonActionKey = actionKey;
+            }
+            action();
+        };
+
+        function handleRltFirstFullButtonEvent(event) {
+            /*
+             * v12.88 — Plein au départ : gestion tactile déterministe.
+             * Le bouton est volontairement traité sur le premier événement tactile
+             * réel, puis les événements souris/click synthétiques du même appui sont
+             * ignorés. Un second appui tactile reste possible pour désélectionner.
+             */
+            const now = Date.now();
+            const type = event?.type || '';
+            const pointerType = String(event?.pointerType || '').toLowerCase();
+            const isTouchLike = type === 'touchstart' || (type === 'pointerdown' && pointerType === 'touch');
+            const isMouseSyntheticCandidate = type === 'mousedown' || type === 'click' || (type === 'pointerdown' && pointerType === 'mouse');
+
+            stopRltButtonEvent(event);
+
+            if (isTouchLike) {
+                const lastTouchAt = Number(modal?.dataset.rltFirstFullLastTouchAt || '0');
+                if (now - lastTouchAt < 250) return;
+                if (modal) {
+                    modal.dataset.rltFirstFullLastTouchAt = String(now);
+                    modal.dataset.rltFirstFullIgnoreMouseUntil = String(now + 5000);
+                }
+                runRltButtonActionOnce(() => {
+                    toggleRltFirstFullActive();
+                }, 'rlt-firstfull-touch');
+                return;
+            }
+
+            if (isMouseSyntheticCandidate) {
+                const ignoreMouseUntil = Number(modal?.dataset.rltFirstFullIgnoreMouseUntil || '0');
+                if (now < ignoreMouseUntil) return;
+                if (type !== 'click') return;
+                runRltButtonActionOnce(() => {
+                    toggleRltFirstFullActive();
+                }, 'rlt-firstfull-click');
+            }
+        }
+
+        const validateRltModalFields = () => {
+            if (!activeRltMassWrapper) {
+                closeRltMassModal();
+                return;
+            }
+
+            syncRltMassModalFromInputs();
+
+            const topMass = parseDecimalInput(massToVolumeMassInput?.value);
+            const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
+            const topVolume = parseDecimalInput(massToVolumeVolumeInput?.value);
+            const bottomVolume = parseDecimalInput(volumeInput?.value);
+            const bottomDensity = parseRltDensityInput(densityInput?.value);
+            const bottomMass = parseDecimalInput(massInput?.value);
+
+            const topComplete = topMass !== null && topDensity !== null;
+            const bottomComplete = bottomVolume !== null && bottomDensity !== null;
+
+            const topComputedVolume = topComplete
+                ? (topVolume !== null ? topVolume : (topMass / topDensity))
+                : null;
+            const bottomComputedMass = bottomComplete
+                ? (bottomMass !== null ? bottomMass : (bottomVolume * bottomDensity))
+                : null;
+
+            let volume = null;
+            let density = null;
+            let mass = null;
+            let selectedMode = '';
+
+            /*
+             * v12.83 — Plein au départ : l'appui sur le bouton doit primer sur
+             * le choix de ligne de calcul. Avant, si la ligne 2 était remplie
+             * (Volume × Densité = Masse), le bloc `bottomComplete` passait avant
+             * `firstFull` et réécrivait l'état en `volumeToMass`, ce qui
+             * désactivait le bouton à la réouverture. Désormais, dès que le
+             * bouton est actif et qu'une masse existe, le mode validé reste
+             * `firstFull`.
+             */
+            const firstFullMass = bottomComputedMass !== null ? bottomComputedMass : topMass;
+            const firstFullVolume = bottomComputedMass !== null ? bottomVolume : topComputedVolume;
+            const firstFullDensity = bottomComputedMass !== null ? bottomDensity : topDensity;
+            const isFirstFull = !!activeRltFirstFull && isFirstBlocFuelRltRow(activeRltMassWrapper) && firstFullMass !== null;
+
+            if (isFirstFull) {
+                volume = firstFullVolume;
+                density = firstFullDensity;
+                mass = firstFullMass;
+                selectedMode = 'firstFull';
+            } else if (bottomComplete) {
+                volume = bottomVolume;
+                density = bottomDensity;
+                mass = bottomComputedMass;
+                selectedMode = 'volumeToMass';
+            } else if (topComplete) {
+                volume = topComputedVolume;
+                density = topDensity;
+                mass = topMass;
+                selectedMode = 'massToVolume';
+            }
+
+            activeRltMassWrapper.dataset.topMass = topMass !== null ? String(Math.round(topMass)) : '';
+            activeRltMassWrapper.dataset.topDensity = topDensity !== null ? formatDecimalValue(topDensity, 3) : '';
+            activeRltMassWrapper.dataset.topVolume = topComputedVolume !== null ? formatDecimalValue(topComputedVolume, 0) : '';
+            activeRltMassWrapper.dataset.bottomVolume = bottomVolume !== null ? formatDecimalValue(bottomVolume, 0) : '';
+            activeRltMassWrapper.dataset.bottomDensity = bottomDensity !== null ? formatDecimalValue(bottomDensity, 3) : '';
+            activeRltMassWrapper.dataset.bottomMass = bottomMass !== null ? String(Math.round(bottomMass)) : '';
+            activeRltMassWrapper.dataset.rltMode = selectedMode;
+            activeRltMassWrapper.dataset.rltFirstFull = selectedMode === 'firstFull' ? '1' : '';
+            activeRltMassWrapper.dataset.rltFirstFullPending = selectedMode === 'firstFull' ? '1' : '';
+            activeRltMassWrapper.dataset.rltFirstFullWanted = selectedMode === 'firstFull' ? '1' : '';
+
+            const activeRltRow = activeRltMassWrapper.closest('tr');
+            if (activeRltRow) {
+                activeRltRow.classList.toggle('bloc-fuel-first-full-row', selectedMode === 'firstFull');
+                activeRltRow.classList.toggle('bloc-fuel-first-full-row-pending', selectedMode === 'firstFull');
+                if (selectedMode === 'firstFull') {
+                    /* v12.84 — Plein au départ ne vide plus Fuel ni OACI. */
+                    try { updateRowAirportOaci(activeRltRow); } catch (_) {}
+                }
+            }
+
+            activeRltMassWrapper.dataset.volume = volume !== null ? formatDecimalValue(volume, 0) : '';
+            activeRltMassWrapper.dataset.density = density !== null ? formatDecimalValue(density, 3) : '';
+            activeRltMassWrapper.dataset.mass = mass !== null ? String(Math.round(mass)) : '';
+
+            const displayInput = activeRltMassWrapper.querySelector('.display-input');
+            if (displayInput) displayInput.value = mass !== null ? formatKgValue(mass) : '';
+
+            masterRecalculate();
+            saveCalculatorState();
+            closeRltMassModal();
+        };
+
+        const clearRltModalFields = () => {
+            if (massToVolumeMassInput) massToVolumeMassInput.value = '';
+            if (massToVolumeDensityInput) massToVolumeDensityInput.value = '1.';
+            if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = '';
+            if (volumeInput) volumeInput.value = '';
+            if (densityInput) densityInput.value = '1.';
+            if (massInput) massInput.value = '';
+            activeRltMassLastEdited = null;
+            activeRltMassCalculationMode = null;
+            activeRltFirstFull = false;
+            markRltCalculatedField(null);
+            ensureRltDensityDefaults();
+
+            /*
+             * v12.72 — Effacer ne ferme ni le clavier ni la fenêtre.
+             * On refocalise un champ éditable après le nettoyage pour empêcher
+             * Safari/iPad de transformer le premier appui en simple fermeture clavier.
+             */
+            try {
+                const current = document.activeElement && modal?.contains(document.activeElement)
+                    && document.activeElement.tagName === 'INPUT'
+                    && !document.activeElement.readOnly
+                    ? document.activeElement
+                    : null;
+                const refocusInput = current || volumeInput || massToVolumeMassInput;
+                requestAnimationFrame(() => refocusInput?.focus?.({ preventScroll: false }));
+                setTimeout(() => refocusInput?.focus?.({ preventScroll: false }), 80);
+                setTimeout(() => refocusInput?.focus?.({ preventScroll: false }), 220);
+            } catch (_) {}
+        };
+
+        const bindRltActionButton = (button, action) => {
+            if (!button || button.dataset.rltActionBound === '1') return;
+            button.dataset.rltActionBound = '1';
+            const handler = (event) => {
+                stopRltButtonEvent(event);
+                runRltButtonActionOnce(action, button.id || 'rlt-action');
+            };
+            ['pointerdown', 'touchstart', 'mousedown', 'click'].forEach(type => {
+                button.addEventListener(type, handler, { capture: true, passive: false });
+            });
+        };
+
+
+        const getRltActionPoint = (event) => {
+            const source = event?.touches?.[0] || event?.changedTouches?.[0] || event;
+            if (!source || typeof source.clientX !== 'number' || typeof source.clientY !== 'number') return null;
+            return { x: source.clientX, y: source.clientY };
+        };
+
+        const buttonContainsPoint = (button, point) => {
+            if (!button || !point) return false;
+            const rect = button.getBoundingClientRect();
+            const margin = 12;
+            return point.x >= rect.left - margin
+                && point.x <= rect.right + margin
+                && point.y >= rect.top - margin
+                && point.y <= rect.bottom + margin;
+        };
+
+        const bindRltGlobalButtonCapture = () => {
+            if (!modal || modal.dataset.rltGlobalButtonCaptureBound === '1') return;
+            modal.dataset.rltGlobalButtonCaptureBound = '1';
+
+            const captureHandler = (event) => {
+                try {
+                    if (modal.getAttribute('aria-hidden') === 'true' || modal.style.display === 'none') return;
+                    const point = getRltActionPoint(event);
+                    if (!point) return;
+
+                    if (buttonContainsPoint(validateBtn, point)) {
+                        stopRltButtonEvent(event);
+                        runRltButtonActionOnce(validateRltModalFields, 'rlt-validate-global');
+                        return;
+                    }
+                    if (buttonContainsPoint(clearBtn, point)) {
+                        stopRltButtonEvent(event);
+                        runRltButtonActionOnce(clearRltModalFields, 'rlt-clear-global');
+                        return;
+                    }
+                    if (buttonContainsPoint(firstFullBtn, point)) {
+                        handleRltFirstFullButtonEvent(event);
+                        return;
+                    }
+                    if (buttonContainsPoint(cancelBtn, point) || buttonContainsPoint(closeBtn, point)) {
+                        stopRltButtonEvent(event);
+                        runRltButtonActionOnce(closeRltMassModal, 'rlt-close-global');
+                    }
+                } catch (_) {}
+            };
+
+            ['touchstart', 'pointerdown', 'mousedown'].forEach(type => {
+                document.addEventListener(type, captureHandler, { capture: true, passive: false });
+            });
+        };
+
+        bindRltGlobalButtonCapture();
+
+        bindRltActionButton(validateBtn, validateRltModalFields);
+        bindRltActionButton(clearBtn, clearRltModalFields);
 
         const bindRltModalCloseButton = (button) => {
             if (!button || button.dataset.rltCloseBound === '1') return;
@@ -10177,17 +10963,33 @@ function initializeCalculator() {
         activeRltMassWrapper = wrapper;
         activeRltMassLastEdited = null;
         activeRltMassCalculationMode = null;
+        activeRltFirstFull = isFirstBlocFuelRltRow(wrapper) && (wrapper.dataset.rltFirstFullPending === '1' || wrapper.dataset.rltFirstFullWanted === '1' || wrapper.dataset.rltFirstFull === '1' || wrapper.dataset.rltMode === 'firstFull');
 
         const storedVolume = wrapper.dataset.volume || '';
         const storedDensity = wrapper.dataset.density || '1.';
         const storedMass = wrapper.dataset.mass || String(wrapper.querySelector('.display-input')?.value || '').replace(/[^0-9]/g, '');
+        const storedTopMass = wrapper.dataset.topMass || '';
+        const storedTopDensity = wrapper.dataset.topDensity || '';
+        const storedTopVolume = wrapper.dataset.topVolume || '';
+        const storedBottomVolume = wrapper.dataset.bottomVolume || '';
+        const storedBottomDensity = wrapper.dataset.bottomDensity || '';
+        const storedBottomMass = wrapper.dataset.bottomMass || '';
+        const storedMode = wrapper.dataset.rltMode || '';
+        const storedFirstFull = wrapper.dataset.rltFirstFull || '';
 
-        if (massToVolumeMassInput) massToVolumeMassInput.value = storedMass || '';
-        if (massToVolumeDensityInput) massToVolumeDensityInput.value = storedDensity || '1.';
-        if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = storedVolume || '';
-        if (volumeInput) volumeInput.value = storedVolume || '';
-        if (densityInput) densityInput.value = storedDensity || '1.';
-        if (massInput) massInput.value = storedMass || '';
+        /*
+         * v12.71 — restauration indépendante des deux lignes.
+         * Compatibilité ancienne donnée : s'il n'existe pas encore de détail
+         * ligne 1/ligne 2, on restaure l'ancienne valeur comme ligne 2.
+         */
+        const hasDetailedRltData = !!(storedTopMass || storedTopDensity || storedTopVolume || storedBottomVolume || storedBottomDensity || storedBottomMass || storedMode);
+
+        if (massToVolumeMassInput) massToVolumeMassInput.value = hasDetailedRltData ? storedTopMass : '';
+        if (massToVolumeDensityInput) massToVolumeDensityInput.value = hasDetailedRltData ? (storedTopDensity || '1.') : '1.';
+        if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = hasDetailedRltData ? storedTopVolume : '';
+        if (volumeInput) volumeInput.value = hasDetailedRltData ? storedBottomVolume : storedVolume;
+        if (densityInput) densityInput.value = hasDetailedRltData ? (storedBottomDensity || '1.') : (storedDensity || '1.');
+        if (massInput) massInput.value = hasDetailedRltData ? storedBottomMass : storedMass;
 
         markRltCalculatedField(null);
         syncRltMassModalFromInputs();
@@ -10228,6 +11030,21 @@ function initializeCalculator() {
         wrapper.dataset.volume = data?.rltVolume || '';
         wrapper.dataset.density = data?.rltDensity || '';
         wrapper.dataset.mass = data?.rltMass ? String(data.rltMass).replace(/[^0-9]/g, '') : '';
+        wrapper.dataset.topMass = data?.rltTopMass || '';
+        wrapper.dataset.topDensity = data?.rltTopDensity || '';
+        wrapper.dataset.topVolume = data?.rltTopVolume || '';
+        wrapper.dataset.bottomVolume = data?.rltBottomVolume || '';
+        wrapper.dataset.bottomDensity = data?.rltBottomDensity || '';
+        wrapper.dataset.bottomMass = data?.rltBottomMass || '';
+        wrapper.dataset.rltMode = data?.rltMode || '';
+        wrapper.dataset.rltFirstFull = data?.rltFirstFull || '';
+        wrapper.dataset.rltFirstFullPending = data?.rltFirstFullPending || data?.rltFirstFull || '';
+        wrapper.dataset.rltFirstFullWanted = data?.rltFirstFullWanted || data?.rltFirstFullPending || data?.rltFirstFull || '';
+        const rowForFirstFull = wrapper.closest('tr');
+        if (rowForFirstFull) {
+            rowForFirstFull.classList.toggle('bloc-fuel-first-full-row', wrapper.dataset.rltFirstFull === '1' || wrapper.dataset.rltMode === 'firstFull');
+            rowForFirstFull.classList.toggle('bloc-fuel-first-full-row-pending', wrapper.dataset.rltFirstFullPending === '1' || wrapper.dataset.rltFirstFullWanted === '1');
+        }
         if (displayInput) displayInput.value = data?.rltMass || '';
 
         setupRltMassModalOnce();
@@ -10251,6 +11068,21 @@ function initializeCalculator() {
                 wrapper.dataset.volume = '';
                 wrapper.dataset.density = '';
                 wrapper.dataset.mass = '';
+                wrapper.dataset.topMass = '';
+                wrapper.dataset.topDensity = '';
+                wrapper.dataset.topVolume = '';
+                wrapper.dataset.bottomVolume = '';
+                wrapper.dataset.bottomDensity = '';
+                wrapper.dataset.bottomMass = '';
+                wrapper.dataset.rltMode = '';
+                wrapper.dataset.rltFirstFull = '';
+                wrapper.dataset.rltFirstFullPending = '';
+                wrapper.dataset.rltFirstFullWanted = '';
+                const rowForClear = wrapper.closest('tr');
+                if (rowForClear) {
+                    rowForClear.classList.remove('bloc-fuel-first-full-row');
+                    rowForClear.classList.remove('bloc-fuel-first-full-row-pending');
+                }
                 if (displayInput) displayInput.value = '';
                 masterRecalculate();
                 saveCalculatorState();
@@ -10398,6 +11230,8 @@ function initializeCalculator() {
                 newFlight.state['tmd'] = activeFlight.state?.['tmd'] || document.getElementById('tmd')?.querySelector('.display-input')?.value || '21:30';
                 newFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '08:00';
                 newFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '3400 kg';
+                newFlight.state['previ-bloc-depart'] = activeFlight.state?.['previ-bloc-depart'] || document.getElementById('previ-bloc-depart')?.querySelector('.display-input')?.value || '';
+                newFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || document.getElementById('previ-fuel-depart')?.querySelector('.display-input')?.value || '3400 kg';
             }
             dailyFlights.push(newFlight);
             activeFlightId = newFlight.id;
@@ -10424,6 +11258,8 @@ function initializeCalculator() {
                     nextFlight.state['tmd'] = activeFlight.state?.['tmd'] || '21:30';
                     nextFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || '08:00';
                     nextFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || '3400 kg';
+                    nextFlight.state['previ-bloc-depart'] = activeFlight.state?.['previ-bloc-depart'] || '';
+                    nextFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || '3400 kg';
                     dailyFlights.push(nextFlight);
                     activeFlightId = nextFlight.id;
                     persistFlights();
