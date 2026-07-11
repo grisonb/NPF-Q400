@@ -464,6 +464,39 @@ const HIGH_VOLTAGE_LINES_GEOJSON_URL = 'lignes_ht_rte_simplifiees.geojson';
 let showHighVoltageLinesLayer = localStorage.getItem(HIGH_VOLTAGE_LINES_LAYER_KEY) === 'true';
 let hasLoadedHighVoltageLines = false;
 let isHighVoltageLinesLoading = false;
+const TRAFFIC_LAYER_KEY = 'showTrafficLayer';
+const TRAFFIC_PROVIDER_LABEL = 'adsb.fi v3 / adsb.lol / airplanes.live';
+const TRAFFIC_API_PROVIDERS = [
+    { label: 'adsb.fi v3', baseUrl: 'https://opendata.adsb.fi/api/v3', urlFormat: 'latlon' },
+    { label: 'adsb.lol v2', baseUrl: 'https://api.adsb.lol/v2', urlFormat: 'latlon' },
+    { label: 'airplanes.live v2', baseUrl: 'https://api.airplanes.live/v2', urlFormat: 'point' }
+];
+const TRAFFIC_RADIUS_NM = 50;
+const TRAFFIC_REFRESH_INTERVAL_MS = 5000;
+const TRAFFIC_MAX_AIRCRAFT = 80;
+const TRAFFIC_MAX_SEEN_SECONDS = 90;
+const TRAFFIC_DISABLED_FOR_NOW = true;
+let trafficLayer = null;
+let showTrafficLayer = false;
+try { localStorage.setItem(TRAFFIC_LAYER_KEY, 'false'); } catch (_) {}
+let isTrafficLoading = false;
+let trafficRefreshTimer = null;
+let lastTrafficRefreshAt = 0;
+let lastTrafficError = '';
+let lastTrafficDisplayedCount = 0;
+const TRAFFIC_SETTINGS_STORAGE_KEY = 'trafficLayerSettingsV1';
+const DEFAULT_TRAFFIC_SETTINGS = Object.freeze({
+    radiusNm: TRAFFIC_RADIUS_NM,
+    maxAircraft: TRAFFIC_MAX_AIRCRAFT,
+    minAltitudeFt: 0,
+    maxAltitudeFt: null,
+    showAltitudeLabel: false,
+    relativeAltitudeEnabled: false,
+    relativeAltitudeBandFt: 1500,
+    trafficAroundOwnPosition: true,
+    trafficAroundFire: true
+});
+let trafficSettings = loadTrafficSettings();
 const FIRE_HISTORY_STORAGE_KEY = 'fireHistoryV1';
 const FIRE_HISTORY_MAX_ITEMS = 20;
 const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('force_display') === '1';
@@ -649,8 +682,31 @@ async function refreshOfflineTilesRendering() {
 
 function formatCommuneDepartment(commune) {
     if (!commune || typeof commune !== 'object') return '';
-    const depCode = commune.dep_code ? String(commune.dep_code).trim() : '';
-    return depCode || '';
+
+    const directCandidates = [
+        commune.dep_code,
+        commune.dep,
+        commune.depCode,
+        commune.department_code,
+        commune.departmentCode,
+        commune.code_departement,
+        commune.codeDepartement,
+        commune.departement_code,
+        commune.departementCode
+    ];
+
+    for (const candidate of directCandidates) {
+        const value = candidate === undefined || candidate === null ? '' : String(candidate).trim().toUpperCase();
+        if (value) return value;
+    }
+
+    const postalCode = commune.code_postal || commune.postal_code || commune.postcode;
+    if (postalCode !== undefined && postalCode !== null) {
+        const value = String(postalCode).trim();
+        if (/^\d{5}$/.test(value)) return value.slice(0, 2);
+    }
+
+    return '';
 }
 
 function getCommuneFromDatabaseByNameAndDepartment(commune) {
@@ -976,6 +1032,7 @@ function drawFireHistoryMarkers() {
             deleteButton.textContent = 'Supprimer';
             deleteButton.className = 'fire-history-map-delete-btn';
             deleteButton.addEventListener('click', () => {
+                if (!confirm('Supprimer ce feu de la carte et de l’historique ?')) return;
                 deleteFireHistoryItemByCommune(item);
                 try { map.closePopup(); } catch (_) {}
             });
@@ -1349,10 +1406,26 @@ async function initializeApp() {
     setupGpsResumeHandlers();
     setTimeout(() => {
         ensureCommunesLayerDataLoaded()
-            .then(() => repairManualFireCommuneLabelsFromPolygons())
-            .catch((error) => console.warn('Préchargement polygones communes impossible:', error));
+            .then(() => {
+                repairManualFireCommuneLabelsFromPolygons();
+                if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') {
+                    refreshNearestCommuneDisplayFromKnownGps();
+                }
+            })
+            .catch((error) => {
+                console.warn('Préchargement polygones communes impossible:', error);
+                if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') {
+                    refreshNearestCommuneDisplayFromKnownGps();
+                }
+            });
     }, 500);
     primeGpsFromStoredPosition();
+    setTimeout(() => {
+        if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') refreshNearestCommuneDisplayFromKnownGps();
+    }, 900);
+    setTimeout(() => {
+        if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') refreshNearestCommuneDisplayFromKnownGps();
+    }, 2600);
     if (localStorage.getItem('liveGpsActive') === 'true') {
         restartLiveGpsWatch({ silent: true });
     } else {
@@ -1749,6 +1822,11 @@ function initMap() {
         const htPane = map.getPane('highVoltageLinesPane');
         if (htPane) htPane.style.zIndex = '385';
     }
+    if (map.createPane && !map.getPane('trafficPane')) {
+        map.createPane('trafficPane');
+        const trafficPane = map.getPane('trafficPane');
+        if (trafficPane) trafficPane.style.zIndex = '690';
+    }
     highVoltageLinesRenderer = L.canvas ? L.canvas({ padding: 0.35 }) : null;
 
     setupBaseTileLayer();
@@ -1762,6 +1840,7 @@ function initMap() {
     departmentsLayerGroup = L.layerGroup();
     departmentsLabelsLayer = L.layerGroup();
     highVoltageLinesLayer = L.layerGroup();
+    trafficLayer = L.layerGroup();
     communesLayerGroup = L.layerGroup();
     communesLabelsLayer = L.layerGroup();
     drawPermanentAirportMarkers();
@@ -1774,6 +1853,10 @@ function initMap() {
 
     if (showHighVoltageLinesLayer) {
         setTimeout(() => { toggleHighVoltageLinesLayer(true); }, 350);
+    }
+
+    if (showTrafficLayer) {
+        setTimeout(() => { toggleTrafficLayer(true); }, 600);
     }
 
     areCommunesVisible = localStorage.getItem(SHOW_COMMUNES_LAYER_KEY) === 'true';
@@ -2034,6 +2117,7 @@ function setupEventListeners() {
     const communesLayerButton = document.getElementById('communes-layer-button');
     const waterPointsButton = document.getElementById('water-points-button');
     const highVoltageLinesButton = document.getElementById('high-voltage-lines-button');
+    const trafficLayerButton = document.getElementById('traffic-layer-button');
     const offlineMapsButton = document.getElementById('offline-maps-button');
     const offlineMapModal = document.getElementById('offline-map-modal');
     const closeOfflineMapButton = document.getElementById('close-offline-map-btn');
@@ -2112,6 +2196,11 @@ function setupEventListeners() {
         highVoltageLinesButton.addEventListener('click', () => {
             toggleHighVoltageLinesLayer();
         });
+    }
+
+    if (trafficLayerButton) {
+        refreshTrafficButtonState();
+        installTrafficButtonInteractions(trafficLayerButton);
     }
 
     let searchInputDebounceTimer = null;
@@ -3043,6 +3132,812 @@ async function toggleHighVoltageLinesLayer(forceState = null) {
 }
 
 
+
+
+// =========================================================================
+// v13.01 TEST — réglages calque trafic ADS-B
+// =========================================================================
+function sanitizeTrafficSettings(candidate = {}) {
+    const fallback = DEFAULT_TRAFFIC_SETTINGS;
+    const parseIntOr = (value, defaultValue) => {
+        const num = Number(value);
+        return Number.isFinite(num) ? Math.round(num) : defaultValue;
+    };
+
+    const asBool = (value, defaultValue = false) => {
+        if (value === undefined || value === null || value === '') return !!defaultValue;
+        return value === true || value === 'true' || value === '1' || value === 'on' || value === 1;
+    };
+
+    const radiusNm = Math.max(5, Math.min(250, parseIntOr(candidate.radiusNm, fallback.radiusNm)));
+    const maxAircraft = Math.max(1, Math.min(150, parseIntOr(candidate.maxAircraft, fallback.maxAircraft)));
+    const minAltitudeFt = Math.max(0, Math.min(60000, parseIntOr(candidate.minAltitudeFt, fallback.minAltitudeFt)));
+
+    let maxAltitudeFt = candidate.maxAltitudeFt;
+    if (maxAltitudeFt === '' || maxAltitudeFt === null || maxAltitudeFt === undefined) {
+        maxAltitudeFt = null;
+    } else {
+        maxAltitudeFt = Math.max(0, Math.min(60000, parseIntOr(maxAltitudeFt, fallback.maxAltitudeFt ?? 60000)));
+    }
+
+    if (maxAltitudeFt !== null && maxAltitudeFt < minAltitudeFt) {
+        maxAltitudeFt = minAltitudeFt;
+    }
+
+    const showAltitudeLabel = asBool(candidate.showAltitudeLabel, fallback.showAltitudeLabel);
+    const relativeAltitudeEnabled = asBool(candidate.relativeAltitudeEnabled, fallback.relativeAltitudeEnabled);
+    const relativeAltitudeBandFt = Math.max(100, Math.min(10000, parseIntOr(candidate.relativeAltitudeBandFt, fallback.relativeAltitudeBandFt)));
+    let trafficAroundOwnPosition = asBool(candidate.trafficAroundOwnPosition, fallback.trafficAroundOwnPosition);
+    let trafficAroundFire = asBool(candidate.trafficAroundFire, fallback.trafficAroundFire);
+
+    if (!trafficAroundOwnPosition && !trafficAroundFire) {
+        trafficAroundOwnPosition = true;
+    }
+
+    return {
+        radiusNm,
+        maxAircraft,
+        minAltitudeFt,
+        maxAltitudeFt,
+        showAltitudeLabel,
+        relativeAltitudeEnabled,
+        relativeAltitudeBandFt,
+        trafficAroundOwnPosition,
+        trafficAroundFire
+    };
+}
+
+function loadTrafficSettings() {
+    try {
+        const raw = localStorage.getItem(TRAFFIC_SETTINGS_STORAGE_KEY);
+        if (!raw) return sanitizeTrafficSettings(DEFAULT_TRAFFIC_SETTINGS);
+        return sanitizeTrafficSettings(JSON.parse(raw));
+    } catch (_) {
+        return sanitizeTrafficSettings(DEFAULT_TRAFFIC_SETTINGS);
+    }
+}
+
+function saveTrafficSettings(settings) {
+    trafficSettings = sanitizeTrafficSettings(settings);
+    try {
+        localStorage.setItem(TRAFFIC_SETTINGS_STORAGE_KEY, JSON.stringify(trafficSettings));
+    } catch (_) {}
+    return trafficSettings;
+}
+
+function getTrafficSettingsSummary() {
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const altitudeMaxLabel = settings.maxAltitudeFt === null ? 'sans maxi' : `${settings.maxAltitudeFt} ft`;
+    const altitudeLabel = settings.showAltitudeLabel ? 'étiquette alt ON' : 'étiquette alt OFF';
+    const relativeLabel = settings.relativeAltitudeEnabled ? `±${settings.relativeAltitudeBandFt} ft autour GPS` : 'altitude absolue';
+    const referenceLabels = [];
+    if (settings.trafficAroundOwnPosition) referenceLabels.push('GPS');
+    if (settings.trafficAroundFire) referenceLabels.push('feu');
+    return `Rayon ${settings.radiusNm} Nm · Max ${settings.maxAircraft} avions · Alt ${settings.minAltitudeFt} ft à ${altitudeMaxLabel} · ${relativeLabel} · ${altitudeLabel} · autour ${referenceLabels.join(' + ')}`;
+}
+
+function ensureTrafficSettingsModal() {
+    let modal = document.getElementById('traffic-settings-modal');
+    if (modal) return modal;
+
+    modal = document.createElement('div');
+    modal.id = 'traffic-settings-modal';
+    modal.className = 'traffic-settings-modal';
+    modal.setAttribute('aria-hidden', 'true');
+    modal.innerHTML = `
+        <div class="traffic-settings-card" role="dialog" aria-modal="true" aria-labelledby="traffic-settings-title">
+            <div class="traffic-settings-header">
+                <div>
+                    <div id="traffic-settings-title" class="traffic-settings-title">Filtres ADS-B</div>
+                    <div class="traffic-settings-subtitle">Réglages du calque trafic indicatif</div>
+                </div>
+                <button type="button" id="traffic-settings-close" class="traffic-settings-close" aria-label="Fermer">×</button>
+            </div>
+
+            <div class="traffic-settings-grid">
+                <label class="traffic-settings-field">
+                    <span>Rayon d'affichage</span>
+                    <div class="traffic-settings-input-row">
+                        <input id="traffic-radius-input" type="number" inputmode="numeric" min="5" max="250" step="1">
+                        <em>Nm</em>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field">
+                    <span>Nombre maximal d'avions</span>
+                    <div class="traffic-settings-input-row">
+                        <input id="traffic-max-aircraft-input" type="number" inputmode="numeric" min="1" max="150" step="1">
+                        <em>avions</em>
+                    </div>
+                </label>
+
+                <label id="traffic-min-altitude-field" class="traffic-settings-field traffic-absolute-altitude-field">
+                    <span>Altitude mini</span>
+                    <div class="traffic-settings-input-row">
+                        <input id="traffic-min-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100">
+                        <em>ft</em>
+                    </div>
+                </label>
+
+                <label id="traffic-max-altitude-field" class="traffic-settings-field traffic-absolute-altitude-field">
+                    <span>Altitude maxi</span>
+                    <div class="traffic-settings-input-row">
+                        <input id="traffic-max-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100" placeholder="vide">
+                        <em>ft</em>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field traffic-settings-relative-line">
+                    <div class="traffic-settings-check-row traffic-settings-inline-band-row">
+                        <input id="traffic-relative-altitude-input" type="checkbox">
+                        <em>Tranche autour de mon altitude</em>
+                        <span class="traffic-relative-plusminus">±</span>
+                        <input id="traffic-relative-band-input" type="number" inputmode="numeric" min="100" max="10000" step="100">
+                        <strong>ft</strong>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field">
+                    <div class="traffic-settings-check-row">
+                        <input id="traffic-around-own-input" type="checkbox">
+                        <em>Trafic autour de ma position</em>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field">
+                    <div class="traffic-settings-check-row">
+                        <input id="traffic-around-fire-input" type="checkbox">
+                        <em>Trafic autour du feu</em>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field">
+                    <div class="traffic-settings-check-row">
+                        <input id="traffic-altitude-label-input" type="checkbox">
+                        <em>Etiquette Alt. Trafics</em>
+                    </div>
+                </label>
+            </div>
+
+            <div class="traffic-settings-note">Altitude maxi vide = pas de limite haute. La tranche autour de mon altitude utilise l'altitude GPS disponible. Rafraîchissement ADS-B toutes les 5 secondes. Ces filtres ne changent pas la nature indicative/non certifiée de l'ADS-B.</div>
+
+            <div class="traffic-settings-actions">
+                <button type="button" id="traffic-settings-reset" class="traffic-settings-secondary">Défaut</button>
+                <button type="button" id="traffic-settings-cancel" class="traffic-settings-secondary">Annuler</button>
+                <button type="button" id="traffic-settings-apply" class="traffic-settings-primary">Appliquer</button>
+            </div>
+        </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    const closeModal = () => {
+        modal.classList.remove('open');
+        modal.setAttribute('aria-hidden', 'true');
+    };
+
+    const updateAltitudeModeUi = () => {
+        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
+        const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
+        const minAltitudeField = modal.querySelector('#traffic-min-altitude-field');
+        const maxAltitudeField = modal.querySelector('#traffic-max-altitude-field');
+        const disabled = !!relativeAltitudeInput?.checked;
+
+        [minAltitudeInput, maxAltitudeInput].forEach(input => {
+            if (input) input.disabled = disabled;
+        });
+        [minAltitudeField, maxAltitudeField].forEach(field => {
+            if (field) field.classList.toggle('traffic-settings-field-disabled', disabled);
+        });
+    };
+
+    const fillDefaults = () => {
+        const defaults = sanitizeTrafficSettings(DEFAULT_TRAFFIC_SETTINGS);
+        modal.querySelector('#traffic-radius-input').value = String(defaults.radiusNm);
+        modal.querySelector('#traffic-max-aircraft-input').value = String(defaults.maxAircraft);
+        modal.querySelector('#traffic-min-altitude-input').value = String(defaults.minAltitudeFt);
+        modal.querySelector('#traffic-max-altitude-input').value = '';
+        modal.querySelector('#traffic-around-own-input').checked = !!defaults.trafficAroundOwnPosition;
+        modal.querySelector('#traffic-around-fire-input').checked = !!defaults.trafficAroundFire;
+        modal.querySelector('#traffic-relative-altitude-input').checked = !!defaults.relativeAltitudeEnabled;
+        modal.querySelector('#traffic-relative-band-input').value = String(defaults.relativeAltitudeBandFt);
+        modal.querySelector('#traffic-altitude-label-input').checked = !!defaults.showAltitudeLabel;
+        updateAltitudeModeUi();
+    };
+
+    modal.querySelector('#traffic-relative-altitude-input').addEventListener('change', updateAltitudeModeUi);
+
+    modal.querySelector('#traffic-settings-close').addEventListener('click', closeModal);
+    modal.querySelector('#traffic-settings-cancel').addEventListener('click', closeModal);
+    modal.querySelector('#traffic-settings-reset').addEventListener('click', fillDefaults);
+
+    modal.addEventListener('click', (event) => {
+        if (event.target === modal) closeModal();
+    });
+
+    modal.querySelector('#traffic-settings-apply').addEventListener('click', () => {
+        const radiusInput = modal.querySelector('#traffic-radius-input');
+        const maxAircraftInput = modal.querySelector('#traffic-max-aircraft-input');
+        const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
+        const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
+        const aroundOwnInput = modal.querySelector('#traffic-around-own-input');
+        const aroundFireInput = modal.querySelector('#traffic-around-fire-input');
+        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const relativeBandInput = modal.querySelector('#traffic-relative-band-input');
+        const altitudeLabelInput = modal.querySelector('#traffic-altitude-label-input');
+
+        saveTrafficSettings({
+            radiusNm: radiusInput.value,
+            maxAircraft: maxAircraftInput.value,
+            minAltitudeFt: minAltitudeInput.value,
+            maxAltitudeFt: maxAltitudeInput.value.trim() === '' ? null : maxAltitudeInput.value,
+            trafficAroundOwnPosition: !!aroundOwnInput.checked,
+            trafficAroundFire: !!aroundFireInput.checked,
+            relativeAltitudeEnabled: !!relativeAltitudeInput.checked,
+            relativeAltitudeBandFt: relativeBandInput.value,
+            showAltitudeLabel: !!altitudeLabelInput.checked
+        });
+
+        refreshTrafficButtonState(lastTrafficDisplayedCount);
+
+        if (showTrafficLayer) {
+            refreshTrafficLayer({ force: true, reason: 'settings' });
+        }
+
+        closeModal();
+    });
+
+    return modal;
+}
+
+function openTrafficSettingsDialog() {
+    const current = sanitizeTrafficSettings(trafficSettings);
+    const modal = ensureTrafficSettingsModal();
+
+    modal.querySelector('#traffic-radius-input').value = String(current.radiusNm);
+    modal.querySelector('#traffic-max-aircraft-input').value = String(current.maxAircraft);
+    modal.querySelector('#traffic-min-altitude-input').value = String(current.minAltitudeFt);
+    modal.querySelector('#traffic-max-altitude-input').value = current.maxAltitudeFt === null ? '' : String(current.maxAltitudeFt);
+    modal.querySelector('#traffic-around-own-input').checked = !!current.trafficAroundOwnPosition;
+    modal.querySelector('#traffic-around-fire-input').checked = !!current.trafficAroundFire;
+    modal.querySelector('#traffic-relative-altitude-input').checked = !!current.relativeAltitudeEnabled;
+    modal.querySelector('#traffic-relative-band-input').value = String(current.relativeAltitudeBandFt);
+    modal.querySelector('#traffic-altitude-label-input').checked = !!current.showAltitudeLabel;
+
+    try {
+        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
+        const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
+        const minAltitudeField = modal.querySelector('#traffic-min-altitude-field');
+        const maxAltitudeField = modal.querySelector('#traffic-max-altitude-field');
+        const disabled = !!relativeAltitudeInput?.checked;
+        [minAltitudeInput, maxAltitudeInput].forEach(input => { if (input) input.disabled = disabled; });
+        [minAltitudeField, maxAltitudeField].forEach(field => { if (field) field.classList.toggle('traffic-settings-field-disabled', disabled); });
+    } catch (_) {}
+
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+
+    setTimeout(() => {
+        try {
+            modal.querySelector('#traffic-radius-input').focus({ preventScroll: true });
+        } catch (_) {}
+    }, 50);
+}
+
+function installTrafficButtonInteractions(button) {
+    if (!button || button.dataset.trafficBound === '1') return;
+    button.dataset.trafficBound = '1';
+
+    try {
+        button.setAttribute('draggable', 'false');
+        button.querySelectorAll('*').forEach(child => child.setAttribute('draggable', 'false'));
+    } catch (_) {}
+
+    let longPressTimer = null;
+    let longPressTriggered = false;
+
+    const clearLongPress = () => {
+        if (longPressTimer) {
+            clearTimeout(longPressTimer);
+            longPressTimer = null;
+        }
+    };
+
+    const startLongPress = (event) => {
+        if (event && typeof event.preventDefault === 'function') event.preventDefault();
+        clearLongPress();
+        longPressTriggered = false;
+        longPressTimer = setTimeout(() => {
+            longPressTriggered = true;
+            openTrafficSettingsDialog();
+        }, 650);
+    };
+
+    button.addEventListener('selectstart', (event) => event.preventDefault());
+    button.addEventListener('dragstart', (event) => event.preventDefault());
+    button.addEventListener('pointerdown', startLongPress);
+    button.addEventListener('pointerup', clearLongPress);
+    button.addEventListener('pointerleave', clearLongPress);
+    button.addEventListener('pointercancel', clearLongPress);
+    button.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        clearLongPress();
+        longPressTriggered = true;
+        openTrafficSettingsDialog();
+    });
+    button.addEventListener('click', (event) => {
+        if (longPressTriggered) {
+            event.preventDefault();
+            event.stopPropagation();
+            longPressTriggered = false;
+            return;
+        }
+        toggleTrafficLayer();
+    });
+}
+
+function getTrafficRadiusNm() {
+    return sanitizeTrafficSettings(trafficSettings).radiusNm;
+}
+
+function parseTrafficAltitudeFeet(raw) {
+    const altitudeRaw = raw?.alt_baro ?? raw?.alt_geom ?? raw?.altitude;
+    if (altitudeRaw === 'ground') return 0;
+    const altitudeNumber = Number(altitudeRaw);
+    return Number.isFinite(altitudeNumber) ? Math.round(altitudeNumber) : null;
+}
+
+function getOwnTrafficPoint() {
+    if (userMarker && typeof userMarker.getLatLng === 'function') {
+        const ll = userMarker.getLatLng();
+        if (ll && Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) {
+            return { lat: ll.lat, lon: ll.lng, label: 'GPS', kind: 'own' };
+        }
+    }
+
+    if (lastPosition) {
+        const lat = Number(lastPosition.lat ?? lastPosition.latitude);
+        const lon = Number(lastPosition.lng ?? lastPosition.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lon)) {
+            return { lat, lon, label: 'GPS', kind: 'own' };
+        }
+    }
+
+    return null;
+}
+
+function getFireTrafficPoint() {
+    if (!currentCommune) return null;
+    const lat = Number(currentCommune.latitude_mairie);
+    const lon = Number(currentCommune.longitude_mairie);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+    return { lat, lon, label: buildFireDisplayName(currentCommune) || 'feu', kind: 'fire' };
+}
+
+function getTrafficQueryPoints() {
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const points = [];
+
+    if (settings.trafficAroundOwnPosition) {
+        const ownPoint = getOwnTrafficPoint();
+        if (ownPoint) points.push(ownPoint);
+    }
+
+    if (settings.trafficAroundFire) {
+        const firePoint = getFireTrafficPoint();
+        if (firePoint) points.push(firePoint);
+    }
+
+    if (!points.length) {
+        const ownPoint = getOwnTrafficPoint();
+        if (ownPoint) points.push(ownPoint);
+    }
+
+    if (!points.length) {
+        const firePoint = getFireTrafficPoint();
+        if (firePoint) points.push(firePoint);
+    }
+
+    if (!points.length && map && typeof map.getCenter === 'function') {
+        const center = map.getCenter();
+        if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
+            points.push({ lat: center.lat, lon: center.lng, label: 'centre carte', kind: 'map' });
+        }
+    }
+
+    const unique = [];
+    const keys = new Set();
+    points.forEach(point => {
+        const key = `${point.kind}:${Number(point.lat).toFixed(4)}:${Number(point.lon).toFixed(4)}`;
+        if (keys.has(key)) return;
+        keys.add(key);
+        unique.push(point);
+    });
+
+    return unique;
+}
+
+function getOwnTrafficAltitudeFeet() {
+    const candidates = [
+        lastPosition?.altitudeFt,
+        lastPosition?.altitudeFeet
+    ];
+
+    for (const candidate of candidates) {
+        const num = Number(candidate);
+        if (Number.isFinite(num)) return Math.round(num);
+    }
+
+    return null;
+}
+
+function getNearestTrafficReference(ac, points = []) {
+    if (!ac || !Array.isArray(points) || !points.length) return null;
+    let best = null;
+    points.forEach(point => {
+        const distance = calculateDistanceInNm(point.lat, point.lon, ac.lat, ac.lon);
+        if (!Number.isFinite(distance)) return;
+        if (!best || distance < best.distance) {
+            best = { point, distance };
+        }
+    });
+    return best;
+}
+
+function buildTrafficReferenceLabel(points = []) {
+    if (!Array.isArray(points) || !points.length) return '';
+    return points.map(point => point.label).filter(Boolean).join(' + ');
+}
+
+function buildTrafficAircraftKey(ac) {
+    if (!ac) return '';
+    if (ac.hex) return `hex:${ac.hex}`;
+    return `pos:${ac.callsign}:${Number(ac.lat).toFixed(4)}:${Number(ac.lon).toFixed(4)}`;
+}
+
+async function fetchTrafficAircraftForPoint(point, providers) {
+    const errors = [];
+
+    for (const provider of providers) {
+        try {
+            const result = await fetchTrafficAircraftFromProvider(point, provider);
+            return { provider: result.provider, aircraft: result.aircraft, raw: result.raw, point };
+        } catch (providerError) {
+            const errText = providerError && providerError.message ? providerError.message : String(providerError);
+            errors.push(`${provider.label}: ${errText}`);
+            console.warn(`Trafic ADS-B indisponible via ${provider.label} autour ${point.label}:`, providerError);
+        }
+    }
+
+    throw new Error(errors.length ? `${point.label}: ${errors.join(' / ')}` : `${point.label}: aucune source disponible`);
+}
+
+// =========================================================================
+// v12.96 TEST — calque trafic ADS-B indicatif
+// =========================================================================
+function getTrafficQueryPoint() {
+    const points = getTrafficQueryPoints();
+    return points.length ? points[0] : null;
+}
+
+function buildTrafficApiUrl(point, provider = null) {
+    const activeProvider = provider || TRAFFIC_API_PROVIDERS[0];
+    const lat = Number(point.lat).toFixed(4);
+    const lon = Number(point.lon).toFixed(4);
+    const radius = Math.max(5, Math.min(250, getTrafficRadiusNm()));
+
+    if (activeProvider.urlFormat === 'point') {
+        return `${activeProvider.baseUrl}/point/${lat}/${lon}/${radius}`;
+    }
+
+    return `${activeProvider.baseUrl}/lat/${lat}/lon/${lon}/dist/${radius}`;
+}
+
+function extractTrafficAircraftList(data) {
+    if (Array.isArray(data?.ac)) return data.ac;
+    if (Array.isArray(data?.aircraft)) return data.aircraft;
+    if (Array.isArray(data)) return data;
+    return [];
+}
+
+async function fetchTrafficAircraftFromProvider(point, provider) {
+    const url = buildTrafficApiUrl(point, provider);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 7500);
+    try {
+        const response = await fetch(url, {
+            cache: 'no-store',
+            mode: 'cors',
+            signal: controller.signal,
+            headers: { 'Accept': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        const data = await response.json();
+        return { provider, aircraft: extractTrafficAircraftList(data), raw: data };
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function normalizeTrafficAircraft(raw) {
+    if (!raw || !Number.isFinite(Number(raw.lat)) || !Number.isFinite(Number(raw.lon))) return null;
+
+    const callsign = String(raw.flight || raw.callsign || raw.r || raw.hex || '').trim() || 'N/A';
+    const hex = String(raw.hex || '').trim().toUpperCase();
+    const lat = Number(raw.lat);
+    const lon = Number(raw.lon);
+    const seenPos = Number.isFinite(Number(raw.seen_pos)) ? Number(raw.seen_pos) : (Number.isFinite(Number(raw.seen)) ? Number(raw.seen) : null);
+    const altitudeRaw = raw.alt_baro ?? raw.alt_geom ?? raw.altitude;
+    const altitudeFeet = parseTrafficAltitudeFeet(raw);
+    const altitude = altitudeRaw === 'ground' ? 'GND' : (Number.isFinite(Number(altitudeRaw)) ? `${Math.round(Number(altitudeRaw))} ft` : '--');
+    const gs = Number.isFinite(Number(raw.gs)) ? `${Math.round(Number(raw.gs))} kt` : '--';
+    const track = Number.isFinite(Number(raw.track)) ? Number(raw.track) : null;
+    const type = String(raw.t || raw.type || '').trim();
+    const registration = String(raw.r || '').trim();
+    const source = String(raw.type || raw.dbFlags || '').trim();
+
+    return { callsign, hex, lat, lon, seenPos, altitude, altitudeFeet, gs, track, type, registration, source, raw };
+}
+
+function formatTrafficAge(seconds) {
+    if (!Number.isFinite(seconds)) return 'âge inconnu';
+    if (seconds < 60) return `${Math.round(seconds)} s`;
+    return `${Math.round(seconds / 60)} min`;
+}
+
+function buildTrafficMarkerIcon(aircraft) {
+    const track = Number.isFinite(aircraft.track) ? aircraft.track : 0;
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const altitudeHtml = settings.showAltitudeLabel && aircraft.altitude && aircraft.altitude !== '--'
+        ? `<span class="traffic-aircraft-altitude-label">${escapeHtml(aircraft.altitude)}</span>`
+        : '';
+
+    return L.divIcon({
+        className: 'traffic-aircraft-icon',
+        html: `<span class="traffic-aircraft-symbol-wrap"><span class="traffic-aircraft-vector-wrap" style="transform: rotate(${track}deg);"><span class="traffic-aircraft-dotted-vector"></span></span><span class="traffic-aircraft-arrow" style="transform: translate(-50%, -50%) rotate(${track}deg);">▲</span>${altitudeHtml}</span>`,
+        iconSize: [128, 128],
+        iconAnchor: [64, 64],
+        popupAnchor: [0, -52]
+    });
+}
+
+function renderTrafficAircraft(aircraftList, meta = {}) {
+    if (!trafficLayer) return;
+    trafficLayer.clearLayers();
+
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const points = Array.isArray(meta.points) && meta.points.length ? meta.points : (meta.point ? [meta.point] : []);
+    const ownAltitudeFt = getOwnTrafficAltitudeFeet();
+    const useRelativeAltitude = settings.relativeAltitudeEnabled && Number.isFinite(ownAltitudeFt);
+    const relativeMinAltitudeFt = useRelativeAltitude ? ownAltitudeFt - settings.relativeAltitudeBandFt : null;
+    const relativeMaxAltitudeFt = useRelativeAltitude ? ownAltitudeFt + settings.relativeAltitudeBandFt : null;
+    const uniqueAircraft = [];
+    const seenAircraft = new Set();
+
+    aircraftList
+        .map(normalizeTrafficAircraft)
+        .filter(Boolean)
+        .filter(ac => !Number.isFinite(ac.seenPos) || ac.seenPos <= TRAFFIC_MAX_SEEN_SECONDS)
+        .filter(ac => settings.relativeAltitudeEnabled || ac.altitudeFeet === null || ac.altitudeFeet >= settings.minAltitudeFt)
+        .filter(ac => settings.relativeAltitudeEnabled || settings.maxAltitudeFt === null || ac.altitudeFeet === null || ac.altitudeFeet <= settings.maxAltitudeFt)
+        .filter(ac => !useRelativeAltitude || ac.altitudeFeet === null || (ac.altitudeFeet >= relativeMinAltitudeFt && ac.altitudeFeet <= relativeMaxAltitudeFt))
+        .forEach(ac => {
+            const reference = getNearestTrafficReference(ac, points);
+            if (points.length && (!reference || reference.distance > settings.radiusNm + 0.5)) return;
+            ac._trafficReference = reference;
+            const key = buildTrafficAircraftKey(ac);
+            if (seenAircraft.has(key)) return;
+            seenAircraft.add(key);
+            uniqueAircraft.push(ac);
+        });
+
+    const aircraft = uniqueAircraft.slice(0, settings.maxAircraft);
+
+    aircraft.forEach(ac => {
+        const marker = L.marker([ac.lat, ac.lon], {
+            icon: buildTrafficMarkerIcon(ac),
+            pane: 'trafficPane',
+            zIndexOffset: 7000,
+            keyboard: false
+        });
+
+        const title = escapeHtml(ac.callsign);
+        const subtitle = [ac.type, ac.registration, ac.hex].filter(Boolean).map(escapeHtml).join(' · ');
+        const reference = ac._trafficReference;
+        const distance = reference ? reference.distance : null;
+        const referenceLabel = reference?.point?.label ? escapeHtml(reference.point.label) : '';
+        const popup = `
+            <div class="traffic-popup">
+                <div class="traffic-popup-title">${title}</div>
+                ${subtitle ? `<div class="traffic-popup-subtitle">${subtitle}</div>` : ''}
+                <div>Altitude : <b>${escapeHtml(ac.altitude)}</b></div>
+                <div>Vitesse sol : <b>${escapeHtml(ac.gs)}</b></div>
+                <div>Route : <b>${Number.isFinite(ac.track) ? Math.round(ac.track) + '°' : '--'}</b></div>
+                ${Number.isFinite(distance) ? `<div>Distance ${referenceLabel ? `à ${referenceLabel}` : ''} : <b>${Math.round(distance)} Nm</b></div>` : ''}
+                <div>Âge position : <b>${escapeHtml(formatTrafficAge(ac.seenPos))}</b></div>
+                ${useRelativeAltitude ? `<div>Filtre altitude GPS : <b>${Math.round(relativeMinAltitudeFt)} / ${Math.round(relativeMaxAltitudeFt)} ft</b></div>` : ''}
+                <div class="traffic-popup-warning">ADS-B indicatif — non certifié</div>
+            </div>`;
+        marker.bindPopup(popup);
+        marker.bindTooltip(title, { direction: 'top', offset: [0, -10], className: 'traffic-tooltip' });
+        marker.addTo(trafficLayer);
+    });
+
+    lastTrafficDisplayedCount = aircraft.length;
+    refreshTrafficButtonState(aircraft.length);
+    updateTrafficStatus({
+        visible: showTrafficLayer,
+        state: 'ok',
+        count: aircraft.length,
+        pointLabel: buildTrafficReferenceLabel(points),
+        now: meta.now || Date.now()
+    });
+}
+
+function updateTrafficStatus({ visible = showTrafficLayer, state = 'idle', count = null, pointLabel = '', message = '', now = Date.now() } = {}) {
+    /* v13.03 : plus de fenêtre/bandeau d'alerte ADS-B sur la carte.
+       L'état est porté uniquement par le bouton TRAFIC : rouge = erreur, bleu = chargement, vert = OK. */
+    const status = document.getElementById('traffic-status-display');
+    if (!status) return;
+    status.style.display = 'none';
+    status.textContent = '';
+    status.className = 'traffic-status-display';
+}
+
+function refreshTrafficButtonState(count = null) {
+    const button = document.getElementById('traffic-layer-button');
+    const countEl = document.getElementById('traffic-button-count');
+    if (!button) return;
+
+    if (count !== null && count !== undefined && count !== '') {
+        const numericCount = Number(count);
+        if (Number.isFinite(numericCount)) {
+            lastTrafficDisplayedCount = Math.max(0, Math.round(numericCount));
+        }
+    }
+
+    button.classList.toggle('active', showTrafficLayer);
+    button.classList.toggle('loading', isTrafficLoading);
+    button.classList.toggle('traffic-state-loading', !!showTrafficLayer && isTrafficLoading);
+    button.classList.toggle('traffic-state-error', !!showTrafficLayer && !isTrafficLoading && !!lastTrafficError);
+    button.classList.toggle('traffic-state-ok', !!showTrafficLayer && !isTrafficLoading && !lastTrafficError);
+    button.classList.toggle('traffic-state-idle', !showTrafficLayer);
+    button.disabled = false;
+    button.title = isTrafficLoading
+        ? `Chargement du trafic ADS-B… — ${getTrafficSettingsSummary()}`
+        : `Afficher/Masquer le trafic ADS-B indicatif — appui long: filtres — ${getTrafficSettingsSummary()}`;
+
+    if (countEl) {
+        if (showTrafficLayer) {
+            if (lastTrafficError) {
+                countEl.textContent = '!';
+            } else if (isTrafficLoading) {
+                countEl.textContent = '…';
+            } else {
+                countEl.textContent = String(lastTrafficDisplayedCount);
+            }
+            countEl.style.display = 'inline-flex';
+        } else {
+            countEl.textContent = '0';
+            countEl.style.display = 'none';
+        }
+    }
+}
+
+async function refreshTrafficLayer(options = {}) {
+    const { force = false } = options;
+    if (!showTrafficLayer || !trafficLayer) return;
+
+    const now = Date.now();
+    if (!force && lastTrafficRefreshAt && now - lastTrafficRefreshAt < 4500) return;
+
+    const points = getTrafficQueryPoints();
+    if (!points.length) {
+        lastTrafficError = 'Aucun point de référence';
+        lastTrafficDisplayedCount = 0;
+        refreshTrafficButtonState(0);
+        updateTrafficStatus({ state: 'error', message: 'Trafic ADS-B : aucun point de référence', visible: true });
+        return;
+    }
+
+    isTrafficLoading = true;
+    refreshTrafficButtonState();
+    updateTrafficStatus({ state: 'loading', visible: true });
+
+    try {
+        const providers = Array.isArray(TRAFFIC_API_PROVIDERS) && TRAFFIC_API_PROVIDERS.length
+            ? TRAFFIC_API_PROVIDERS
+            : [{ label: TRAFFIC_PROVIDER_LABEL || 'ADS-B', baseUrl: 'https://opendata.adsb.fi/api/v2' }];
+        const errors = [];
+        const combinedAircraft = [];
+        const usedProviders = [];
+
+        for (const point of points) {
+            try {
+                const result = await fetchTrafficAircraftForPoint(point, providers);
+                combinedAircraft.push(...result.aircraft);
+                if (result.provider?.label && !usedProviders.includes(result.provider.label)) {
+                    usedProviders.push(result.provider.label);
+                }
+            } catch (pointError) {
+                const errText = pointError && pointError.message ? pointError.message : String(pointError);
+                errors.push(errText);
+            }
+        }
+
+        if (!combinedAircraft.length && errors.length === points.length) {
+            throw new Error(errors.join(' / ') || 'aucune source disponible');
+        }
+
+        lastTrafficRefreshAt = Date.now();
+        lastTrafficError = '';
+        renderTrafficAircraft(combinedAircraft, {
+            points,
+            provider: { label: usedProviders.join(' + ') },
+            now: lastTrafficRefreshAt
+        });
+    } catch (error) {
+        lastTrafficError = error && error.message ? error.message : String(error);
+        lastTrafficDisplayedCount = 0;
+        console.warn('Trafic ADS-B temporairement indisponible:', error);
+        if (trafficLayer) trafficLayer.clearLayers();
+        refreshTrafficButtonState(0);
+        updateTrafficStatus({ state: 'error', visible: true, message: 'Trafic ADS-B temporairement indisponible — nouvelle tentative automatique' });
+    } finally {
+        isTrafficLoading = false;
+        refreshTrafficButtonState();
+    }
+}
+
+function startTrafficAutoRefresh() {
+    stopTrafficAutoRefresh();
+    trafficRefreshTimer = setInterval(() => {
+        refreshTrafficLayer({ force: false, reason: 'timer' });
+    }, TRAFFIC_REFRESH_INTERVAL_MS);
+}
+
+function stopTrafficAutoRefresh() {
+    if (trafficRefreshTimer) {
+        clearInterval(trafficRefreshTimer);
+        trafficRefreshTimer = null;
+    }
+}
+
+function toggleTrafficLayer(forceState = null) {
+    if (TRAFFIC_DISABLED_FOR_NOW) {
+        showTrafficLayer = false;
+        try { localStorage.setItem(TRAFFIC_LAYER_KEY, 'false'); } catch (_) {}
+        stopTrafficAutoRefresh();
+        if (trafficLayer) trafficLayer.clearLayers();
+        if (trafficLayer && map && map.hasLayer(trafficLayer)) map.removeLayer(trafficLayer);
+        updateTrafficStatus({ visible: false });
+        refreshTrafficButtonState(0);
+        return;
+    }
+    const shouldShow = forceState === null ? !showTrafficLayer : Boolean(forceState);
+    showTrafficLayer = shouldShow;
+    localStorage.setItem(TRAFFIC_LAYER_KEY, showTrafficLayer ? 'true' : 'false');
+
+    if (showTrafficLayer) {
+        if (trafficLayer && map && !map.hasLayer(trafficLayer)) trafficLayer.addTo(map);
+        startTrafficAutoRefresh();
+        refreshTrafficButtonState();
+        refreshTrafficLayer({ force: true, reason: 'toggle' });
+    } else {
+        stopTrafficAutoRefresh();
+        lastTrafficDisplayedCount = 0;
+        if (trafficLayer) trafficLayer.clearLayers();
+        if (trafficLayer && map && map.hasLayer(trafficLayer)) map.removeLayer(trafficLayer);
+        refreshTrafficButtonState(0);
+        updateTrafficStatus({ visible: false });
+    }
+}
+
+window.toggleTrafficLayer = toggleTrafficLayer;
+window.refreshTrafficLayer = refreshTrafficLayer;
+
 function updateMapBingoDisplay() {
     const bingoDisplay = document.getElementById('bingo-map-display');
     if (!currentCommune) {
@@ -3103,6 +3998,7 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
             deleteButton.className = 'fire-history-map-delete-btn';
             deleteButton.title = 'Supprimer ce feu de la carte et de l’historique';
             deleteButton.addEventListener('click', () => {
+                if (!confirm('Supprimer ce feu de la carte et de l’historique ?')) return;
                 deleteFireHistoryItemByCommune(commune);
                 clearCurrentSelection({ preserveMapView: true });
                 try { map.closePopup(); } catch (_) {}
@@ -3153,7 +4049,18 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
         }, 300);
     }
 
+    if (showTrafficLayer) {
+        refreshTrafficLayer({ force: true, reason: 'commune' });
+    }
+
     document.dispatchEvent(new Event('communeSelected'));
+}
+
+function selectPelicanOaciFromRoute(oaci) {
+    const normalizedOaci = String(oaci || '').trim().toUpperCase();
+    if (!normalizedOaci) return;
+    selectedPelicanOACI = normalizedOaci;
+    displayCommuneDetails(currentCommune, false);
 }
 
 function drawRoute(startLatLng, endLatLng, options = {}) {
@@ -3180,30 +4087,62 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
         L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8 }).addTo(layer);
 
         const hitbox = L.polyline([startLatLng, endLatLng], { color: 'transparent', weight: 20, opacity: 0 }).addTo(layer);
-        hitbox.on('click', () => {
-            selectedPelicanOACI = oaci;
-            displayCommuneDetails(currentCommune, false);
-        });
+        const selectPelicRoute = (event) => {
+            try {
+                if (event && event.originalEvent && typeof event.originalEvent.stopPropagation === 'function') {
+                    event.originalEvent.stopPropagation();
+                }
+            } catch (_) {}
+            selectPelicanOaciFromRoute(oaci);
+        };
+
+        hitbox.on('click', selectPelicRoute);
 
         const tooltipOptions = getRouteLabelNearAirportOptions(startLatLng, endLatLng, 'pelic');
 
-        L.tooltip({
+        const tooltip = L.tooltip({
             permanent: true,
+            interactive: true,
             direction: tooltipOptions.direction,
             offset: tooltipOptions.offset,
-            className: tooltipClass
+            className: `${tooltipClass} route-tooltip-clickable`,
+            bubblingMouseEvents: false
         }).setLatLng(tooltipOptions.latLng).setContent(labelText).addTo(layer);
+
+        tooltip.on('click', selectPelicRoute);
+        tooltip.on('touchstart', selectPelicRoute);
         return;
     } else {
         labelText = `${Math.round(distance)} Nm`;
     }
 
-    L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8, dashArray }).addTo(layer);
-
     if (isUser) {
+        /* v13.04 — route GPS -> feu rendue plus lisible : halo blanc + trait rouge épais. */
+        L.polyline([startLatLng, endLatLng], {
+            color: '#ffffff',
+            weight: 9,
+            opacity: 0.95,
+            dashArray,
+            interactive: false,
+            lineCap: 'round',
+            lineJoin: 'round'
+        }).addTo(layer);
+        L.polyline([startLatLng, endLatLng], {
+            color: '#e3001b',
+            weight: 5,
+            opacity: 1,
+            dashArray,
+            interactive: false,
+            lineCap: 'round',
+            lineJoin: 'round'
+        }).addTo(layer);
         // Pas d'étiquette sur la route rouge GPS -> Feu : l'information est affichée dans le bandeau commune.
         return;
-    } else if (isLftwRoute) {
+    }
+
+    L.polyline([startLatLng, endLatLng], { color, weight: 3, opacity: 0.8, dashArray }).addTo(layer);
+
+    if (isLftwRoute) {
         const tooltipOptions = getRouteLabelNearAirportOptions(startLatLng, endLatLng, 'base');
         L.tooltip({
             permanent: true,
@@ -4587,11 +5526,17 @@ function restartLiveGpsWatch({ silent = true } = {}) {
 
 function setupGpsResumeHandlers() {
     const resumeGps = () => {
+        if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') {
+            refreshNearestCommuneDisplayFromKnownGps();
+        }
         if (localStorage.getItem('liveGpsActive') === 'true') {
             restartLiveGpsWatch({ silent: true });
         } else {
             requestOneShotGps({ silent: true, highAccuracy: true, timeout: 30000, maximumAge: 600000 });
         }
+        setTimeout(() => {
+            if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') refreshNearestCommuneDisplayFromKnownGps();
+        }, 1500);
     };
 
     window.addEventListener('online', resumeGps);
@@ -4661,9 +5606,50 @@ function drawUserToTargetRoute() {
     updateCommuneGpsRouteDisplay();
 }
 
+
+function getOrCreateNearestCommuneDisplay() {
+    let display = document.getElementById('nearest-commune-display');
+    if (!display && document.body) {
+        display = document.createElement('div');
+        display.id = 'nearest-commune-display';
+        display.className = 'gps-waiting';
+        display.innerHTML = '📍 Survolée: <b>GPS en attente</b>';
+        document.body.appendChild(display);
+    }
+    return display;
+}
+
+function forceNearestCommuneHudVisible(display) {
+    if (!display) return;
+    const importantStyles = {
+        position: 'fixed',
+        display: 'flex',
+        visibility: 'visible',
+        opacity: '1',
+        zIndex: '980',
+        pointerEvents: 'none'
+    };
+
+    Object.entries(importantStyles).forEach(([prop, value]) => {
+        try { display.style.setProperty(prop.replace(/[A-Z]/g, m => '-' + m.toLowerCase()), value, 'important'); } catch (_) {}
+    });
+
+    try {
+        display.setAttribute('aria-live', 'polite');
+        display.dataset.npfHud = 'commune-survolee';
+    } catch (_) {}
+}
+
 function updateNearestCommuneDisplay(lat, lon) {
-    const nearestDisplay = document.getElementById('nearest-commune-display');
+    const nearestDisplay = getOrCreateNearestCommuneDisplay();
     if (!nearestDisplay) return;
+    forceNearestCommuneHudVisible(nearestDisplay);
+
+    const showDisplay = (html, extraClass = '') => {
+        nearestDisplay.style.display = 'flex';
+        nearestDisplay.className = extraClass ? `nearest-commune-display ${extraClass}` : 'nearest-commune-display';
+        nearestDisplay.innerHTML = html;
+    };
 
     const enrichCommuneForDisplay = (commune) => {
         if (!commune) return null;
@@ -4677,45 +5663,131 @@ function updateNearestCommuneDisplay(lat, lon) {
         return `📍 ${prefix}: <b>${displayCommune.nom_standard || displayCommune.name || 'non déterminée'}${depLabel ? ` (${depLabel})` : ''}</b>`;
     };
 
-    const showUndetermined = () => {
-        nearestDisplay.style.display = 'block';
-        nearestDisplay.innerHTML = '📍 Commune: <b>non déterminée</b>';
-    };
+    const numericLat = Number(lat);
+    const numericLon = Number(lon);
+    if (!Number.isFinite(numericLat) || !Number.isFinite(numericLon)) {
+        showDisplay('📍 Survolée: <b>GPS en attente</b>', 'gps-waiting');
+        return;
+    }
 
-    const containedCommune = findCommuneContainingPoint(lat, lon);
+    const containedCommune = findCommuneContainingPoint(numericLat, numericLon);
     if (containedCommune) {
-        nearestDisplay.style.display = 'block';
-        nearestDisplay.innerHTML = buildLabel(containedCommune, 'Commune');
+        showDisplay(buildLabel(containedCommune, 'Survolée'));
         return;
     }
 
     /*
-     * v12.58 — affichage GPS par polygone obligatoire.
-     * On n'affiche plus temporairement la commune la plus proche pendant le
-     * chargement, car cela provoquait un flash Plan-de-Cuques avant Marseille.
+     * v12.99 — restauration robuste du bandeau "commune survolée".
+     * Le bandeau doit rester visible même si les polygones ne sont pas encore
+     * chargés ou si le réseau est mauvais. La valeur précise est mise à jour
+     * dès que les polygones deviennent disponibles.
      */
     if (!hasLoadedCommunes) {
-        nearestDisplay.style.display = 'block';
-        nearestDisplay.innerHTML = '📍 Commune: <b>chargement...</b>';
-
+        showDisplay('📍 Survolée: <b>chargement...</b>', 'loading');
         ensureCommunesLayerDataLoaded()
             .then(() => {
-                const preciseCommune = findCommuneContainingPoint(lat, lon);
+                const preciseCommune = findCommuneContainingPoint(numericLat, numericLon);
                 const display = document.getElementById('nearest-commune-display');
                 if (!display) return;
-                display.style.display = 'block';
-                display.innerHTML = preciseCommune ? buildLabel(preciseCommune, 'Commune') : '📍 Commune: <b>non déterminée</b>';
+                if (preciseCommune) {
+                    display.style.display = 'flex';
+                    display.className = 'nearest-commune-display';
+                    display.innerHTML = buildLabel(preciseCommune, 'Survolée');
+                } else {
+                    display.style.display = 'flex';
+                    display.className = 'nearest-commune-display unknown';
+                    display.innerHTML = '📍 Survolée: <b>non déterminée</b>';
+                }
                 repairManualFireCommuneLabelsFromPolygons();
             })
             .catch((error) => {
                 console.warn('Chargement du calque communes pour identification impossible:', error);
-                showUndetermined();
+                const display = document.getElementById('nearest-commune-display');
+                if (!display) return;
+                display.style.display = 'flex';
+                display.className = 'nearest-commune-display unavailable';
+                display.innerHTML = '📍 Survolée: <b>indisponible</b>';
             });
         return;
     }
 
-    showUndetermined();
+    showDisplay('📍 Survolée: <b>non déterminée</b>', 'unknown');
 }
+
+function refreshNearestCommuneDisplayFromKnownGps() {
+    /*
+     * v12.99 — le bandeau bas droit doit être visible en permanence :
+     * - commune précise si GPS + polygones disponibles ;
+     * - chargement/attente si la position ou les polygones ne sont pas prêts.
+     */
+    let lat = NaN;
+    let lon = NaN;
+
+    try {
+        if (userMarker && typeof userMarker.getLatLng === 'function') {
+            const ll = userMarker.getLatLng();
+            if (ll && Number.isFinite(Number(ll.lat)) && Number.isFinite(Number(ll.lng))) {
+                lat = Number(ll.lat);
+                lon = Number(ll.lng);
+            }
+        }
+    } catch (_) {}
+
+    if ((!Number.isFinite(lat) || !Number.isFinite(lon)) && lastPosition) {
+        lat = Number(lastPosition.lat ?? lastPosition.latitude);
+        lon = Number(lastPosition.lng ?? lastPosition.longitude);
+    }
+
+    if ((!Number.isFinite(lat) || !Number.isFinite(lon)) && typeof getStoredGpsPosition === 'function') {
+        const stored = getStoredGpsPosition();
+        if (stored) {
+            lat = Number(stored.lat);
+            lon = Number(stored.lng);
+        }
+    }
+
+    updateNearestCommuneDisplay(lat, lon);
+    return Number.isFinite(lat) && Number.isFinite(lon);
+}
+
+function ensureNearestCommuneDisplayBootstrapped() {
+    const display = getOrCreateNearestCommuneDisplay();
+    if (!display) return;
+    forceNearestCommuneHudVisible(display);
+    display.classList.add('gps-waiting');
+    if (!display.innerHTML || !display.textContent.trim()) {
+        display.innerHTML = '📍 Survolée: <b>GPS en attente</b>';
+    }
+}
+
+(function bootstrapNearestCommuneDisplayPersistence() {
+    const run = () => {
+        ensureNearestCommuneDisplayBootstrapped();
+        if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') {
+            refreshNearestCommuneDisplayFromKnownGps();
+        }
+    };
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', run, { once: true });
+    } else {
+        run();
+    }
+    [100, 700, 2000, 5000].forEach(delay => setTimeout(run, delay));
+    setInterval(run, 5000);
+
+    try {
+        const observer = new MutationObserver(() => {
+            const display = getOrCreateNearestCommuneDisplay();
+            if (!display) return;
+            forceNearestCommuneHudVisible(display);
+            if (!display.textContent || !display.textContent.trim()) {
+                display.innerHTML = '📍 Survolée: <b>GPS en attente</b>';
+            }
+        });
+        if (document.documentElement) observer.observe(document.documentElement, { childList: true, subtree: true });
+    } catch (_) {}
+})();
+
 
 function findClosestCommune(lat, lon, maxDistanceNm = null) {
     if (!allCommunes || allCommunes.length === 0) return null;
@@ -5074,7 +6146,7 @@ function buildOwnGpsVectorLabel(minutes, latLng) {
         interactive: false,
         icon: L.divIcon({
             className: 'own-gps-vector-time-marker',
-            html: `<div style="font-size:12px;font-weight:900;color:#111;text-shadow:-1px -1px 0 #fff,1px -1px 0 #fff,-1px 1px 0 #fff,1px 1px 0 #fff,0 1px 4px rgba(0,0,0,.55);white-space:nowrap;line-height:1;">${minutes}'</div>`,
+            html: `<div style="font-size:12px;font-weight:900;color:#ffea00;text-shadow:-1px -1px 0 #111827,1px -1px 0 #111827,-1px 1px 0 #111827,1px 1px 0 #111827,0 1px 5px rgba(0,0,0,.75);white-space:nowrap;line-height:1;">${minutes}'</div>`,
             iconSize: [28, 16],
             iconAnchor: [-6, 8]
         })
@@ -5098,12 +6170,25 @@ function updateOwnGpsVector(latitude, longitude, headingDeg, speedMps) {
     const endDistanceMeters = speedMps * maxMinutes * 60;
     const end = calculateDestinationLatLng(latitude, longitude, headingDeg, endDistanceMeters);
 
+    /* v13.04 — vecteur de position plus visible : halo noir + trait jaune. */
+    L.polyline([start, end], {
+        color: '#111827',
+        weight: 9,
+        opacity: 0.82,
+        dashArray: '12,7',
+        interactive: false,
+        lineCap: 'round',
+        lineJoin: 'round'
+    }).addTo(layer);
+
     const vectorLine = L.polyline([start, end], {
-        color: '#7c3aed',
-        weight: 4,
-        opacity: 0.9,
-        dashArray: '10,7',
-        interactive: false
+        color: '#ffea00',
+        weight: 5,
+        opacity: 1,
+        dashArray: '12,7',
+        interactive: false,
+        lineCap: 'round',
+        lineJoin: 'round'
     }).addTo(layer);
 
     timeMarksMinutes.forEach((minutes) => {
@@ -5111,10 +6196,10 @@ function updateOwnGpsVector(latitude, longitude, headingDeg, speedMps) {
         const point = calculateDestinationLatLng(latitude, longitude, headingDeg, markDistanceMeters);
 
         L.circleMarker(point, {
-            radius: 4,
-            color: '#7c3aed',
-            weight: 2,
-            fillColor: '#ffffff',
+            radius: 5,
+            color: '#111827',
+            weight: 3,
+            fillColor: '#ffea00',
             fillOpacity: 1,
             interactive: false
         }).addTo(layer);
@@ -5147,24 +6232,26 @@ function updateUserPosition(pos) {
         lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs, simulation: true };
     } else {
         updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
-        lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs };
+        lastPosition = {
+            lat: latitude,
+            lng: longitude,
+            timestamp: gpsTimestampMs,
+            altitudeFt: Number.isFinite(Number(pos.coords.altitude)) ? Math.round(Number(pos.coords.altitude) * 3.28084) : null,
+            altitudeTimeMs: Number.isFinite(Number(pos.coords.altitude)) ? gpsTimestampMs : null
+        };
         saveStoredGpsPosition(latitude, longitude, gpsTimestampMs);
         applyStartupGpsAutoCenter(latitude, longitude, {
             source: pos && pos.npfIsStoredPosition ? 'stored' : 'real'
         });
     }
 
-    const ownGpsPopupHtml = isSimulationPosition
-        ? 'Position simulée'
-        : (ownAltitudeLabel ? `Votre position<br>${escapeHtml(ownAltitudeLabel)}` : 'Votre position');
-
     if (!userMarker) {
         const userIcon = buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition });
-        userMarker = L.marker([latitude, longitude], { icon: userIcon, zIndexOffset: 500, keyboard: false }).bindPopup(ownGpsPopupHtml).addTo(map);
+        userMarker = L.marker([latitude, longitude], { icon: userIcon, zIndexOffset: 500, keyboard: false, interactive: false }).addTo(map);
     } else {
         userMarker.setLatLng([latitude, longitude]);
         userMarker.setIcon(buildOwnGpsIcon(ownAltitudeLabel, { simulation: isSimulationPosition }));
-        userMarker.bindPopup(ownGpsPopupHtml);
+        try { if (typeof userMarker.unbindPopup === 'function') userMarker.unbindPopup(); } catch (_) {}
     }
 
     /* v12.85 — priorité tactile : les icônes pélicandrome restent au-dessus de l'avion si les deux sont superposées. */
@@ -5173,6 +6260,7 @@ function updateUserPosition(pos) {
     applyOwnGpsPlaneHeading(motionHeading);
 
     updateNearestCommuneDisplay(latitude, longitude);
+    setTimeout(() => { if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') refreshNearestCommuneDisplayFromKnownGps(); }, 250);
 
     if (typeof window.refreshCalculatorAirportContext === 'function') {
         window.refreshCalculatorAirportContext();
@@ -9512,8 +10600,7 @@ function initializeCalculator() {
 
         const flightDuration = getFlightDurationFromState(state);
         const activeIndex = getActiveFlightIndex();
-        const flightNumber = activeIndex >= 0 ? activeIndex + 1 : 1;
-        const flightText = `Tps de vol n°${flightNumber} : ${formatDurationForFlightSummary(flightDuration)}`;
+        const flightText = `Tps de vol : ${formatDurationForFlightSummary(flightDuration)}`;
 
         if (activeIndex > 0) {
             const totalDuration = getCumulativeHdvBeforeActiveFlight() + flightDuration;
@@ -9593,6 +10680,609 @@ function initializeCalculator() {
 
         activeFlight.state = nextState;
         persistFlights();
+    }
+
+
+    function buildRltExportCalculationLabel(rowData = {}) {
+        const parseExportNumber = (value) => {
+            if (value === null || value === undefined) return null;
+            const normalized = String(value).replace(/[^0-9,.-]/g, '').replace(',', '.');
+            const num = Number(normalized);
+            return Number.isFinite(num) ? num : null;
+        };
+        const formatExportNumber = (value, decimals = 0) => {
+            const num = parseExportNumber(value);
+            if (num === null) return '';
+            return decimals > 0 ? num.toFixed(decimals) : String(Math.round(num));
+        };
+
+        const candidates = [
+            { volume: rowData.rltBottomVolume, density: rowData.rltBottomDensity, mass: rowData.rltBottomMass || rowData.rltMass },
+            { volume: rowData.rltVolume, density: rowData.rltDensity, mass: rowData.rltMass },
+            { volume: rowData.rltTopVolume, density: rowData.rltTopDensity, mass: rowData.rltTopMass || rowData.rltMass }
+        ];
+
+        for (const candidate of candidates) {
+            const volume = parseExportNumber(candidate.volume);
+            const density = parseExportNumber(candidate.density);
+            const mass = parseExportNumber(candidate.mass);
+            if (volume !== null && density !== null) {
+                const computedMass = mass !== null ? mass : volume * density;
+                return `${formatExportNumber(volume)} L × ${formatExportNumber(density, 3)} = ${formatExportNumber(computedMass)} kg`;
+            }
+        }
+
+        return '';
+    }
+
+    function getBlocFuelExportRowCalculations(state, flightIndex = 0) {
+        const rows = [];
+        const globalLimit = parseTime(dailyFlights[0]?.state?.['limite-hdv']) ?? parseTime(state?.['limite-hdv']);
+        const hdvBeforeFlight = dailyFlights
+            .slice(0, Math.max(0, flightIndex))
+            .reduce((total, flight) => total + getFlightDurationFromState(flight.state), 0);
+        const limitForFlight = globalLimit !== null ? Math.max(0, globalLimit - hdvBeforeFlight) : null;
+
+        let previousBlocArrivee = parseTime(state?.['bloc-depart']);
+        let previousFuelPelic = parseNumeric(state?.['fuel-depart']);
+        let cumulativeTpsVol = 0;
+
+        compactCalculatorTableData(state?.calculator_table_data || []).forEach((rowData) => {
+            const blocArrivee = parseTime(rowData.time || '');
+            const fuelPelic = parseNumeric(rowData.fuel || '');
+            const isFirstFullRlt = rowData.rltFirstFull === '1' || rowData.rltMode === 'firstFull';
+
+            let dureeRotation = null;
+            let fuelRotation = null;
+            let tpsVol = null;
+            let tpsVolRestant = null;
+
+            if (!isFirstFullRlt) {
+                if (blocArrivee !== null && previousBlocArrivee !== null) {
+                    dureeRotation = blocArrivee - previousBlocArrivee;
+                }
+                if (fuelPelic !== null && previousFuelPelic !== null) {
+                    fuelRotation = previousFuelPelic - fuelPelic;
+                }
+                if (blocArrivee !== null) {
+                    if (dureeRotation !== null && dureeRotation > 0) cumulativeTpsVol += dureeRotation;
+                    tpsVol = cumulativeTpsVol;
+                    tpsVolRestant = limitForFlight !== null ? limitForFlight - cumulativeTpsVol : null;
+                }
+            }
+
+            rows.push({
+                blocArrivee: rowData.time || '',
+                fuelPelic: rowData.fuel || '',
+                oaci: rowData.oaci || '',
+                rlt: rowData.rltMass || '',
+                rltCalculation: buildRltExportCalculationLabel(rowData),
+                dureeRotation: isFirstFullRlt ? '' : (formatTime(dureeRotation) || '--'),
+                fuelRotation: isFirstFullRlt ? '' : (fuelRotation === null ? '--' : String(fuelRotation)),
+                tpsVol: isFirstFullRlt ? '' : (formatTime(tpsVol) || (blocArrivee !== null ? '00:00' : '--')),
+                tpsVolRestant: isFirstFullRlt ? '' : (formatTime(tpsVolRestant) || '--'),
+                isFirstFullRlt
+            });
+
+            if (blocArrivee !== null) previousBlocArrivee = blocArrivee;
+            if (fuelPelic !== null) previousFuelPelic = fuelPelic;
+        });
+
+        return rows;
+    }
+
+    function getBlocFuelExportTimestamp(date = new Date()) {
+        const dd = String(date.getDate()).padStart(2, '0');
+        const mm = String(date.getMonth() + 1).padStart(2, '0');
+        const yy = String(date.getFullYear()).slice(-2);
+        const hh = String(date.getHours()).padStart(2, '0');
+        const min = String(date.getMinutes()).padStart(2, '0');
+        return `${dd}/${mm}/${yy} ${hh}:${min}`;
+    }
+
+    function getBlocFuelExportTitle(date = new Date()) {
+        return `NPF-Q400 ${getBlocFuelExportTimestamp(date)}`;
+    }
+
+    function getBlocFuelExportSafeFileName(extension = 'pdf', date = new Date()) {
+        const timestamp = getBlocFuelExportTimestamp(date)
+            .replace(/\//g, '-')
+            .replace(/:/g, 'h');
+        return `NPF-Q400 ${timestamp}.${extension}`;
+    }
+
+    function getBlocFuelExportPrintDocumentTitle(date = new Date()) {
+        /*
+         * iPadOS refuse les / et : comme nom de fichier. Le titre interne du
+         * document garde le format demandé, mais le nom PDF proposé utilise une
+         * variante compatible fichiers : NPF-Q400 10-07-26 15h10.
+         */
+        const timestamp = getBlocFuelExportTimestamp(date)
+            .replace(/\//g, '-')
+            .replace(/:/g, 'h');
+        return `NPF-Q400 ${timestamp}`;
+    }
+
+    function getBlocFuelFlightsForExport() {
+        return dailyFlights
+            .map((flight, originalIndex) => ({ flight, originalIndex }))
+            .filter(({ flight }) => parseTime(flight?.state?.['bloc-depart']) !== null);
+    }
+
+    function buildBlocFuelExportHtml(options = {}) {
+        updateActiveFlightStateFromDom();
+        ensureFlightsLoadedFromStorage();
+        normalizeFlightNumbers();
+
+        const exportGeneratedAt = options.exportGeneratedAt instanceof Date ? options.exportGeneratedAt : new Date();
+        const exportDate = getBlocFuelExportTimestamp(exportGeneratedAt);
+        const exportTitle = getBlocFuelExportTitle(exportGeneratedAt);
+        const exportPrintDocumentTitle = getBlocFuelExportPrintDocumentTitle(exportGeneratedAt);
+        const exportHtmlFileName = getBlocFuelExportSafeFileName('html', exportGeneratedAt);
+        const includeControls = !!options.includeControls;
+        const safe = (value) => escapeHtml(value || '');
+        const stripKgForExport = (value) => String(value ?? '')
+            .replace(/kg/gi, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+        const kgExportHtml = (value, fallback = '--') => {
+            const raw = stripKgForExport(value);
+            const clean = raw || fallback;
+            if (!clean || clean === '--') return '<span class="kg-inline"><span class="kg-number">--</span></span>';
+            return `<span class="kg-inline"><span class="kg-number">${safe(clean)}</span><span class="kg-unit">kg</span></span>`;
+        };
+        const plainExportHtml = (value, fallback = '--') => safe(String(value ?? '').trim() || fallback);
+        const flightsForExport = getBlocFuelFlightsForExport();
+        const totalHdv = flightsForExport.reduce((total, item) => total + getFlightDurationFromState(item.flight.state), 0);
+        let cumulativeExportHdv = 0;
+
+        const flightSections = flightsForExport.length ? flightsForExport.map(({ flight, originalIndex }, exportIndex) => {
+            const state = flight.state || {};
+            const rows = getBlocFuelExportRowCalculations(state, originalIndex);
+            const flightDuration = getFlightDurationFromState(state);
+            cumulativeExportHdv += flightDuration;
+            const flightDurationLabel = formatDurationForFlightSummary(flightDuration);
+            const titleDurationLabel = exportIndex > 0
+                ? `Tps de vol : ${safe(flightDurationLabel)} / Total : ${safe(formatDurationForFlightSummary(cumulativeExportHdv))}`
+                : `Tps de vol : ${safe(flightDurationLabel)}`;
+            const rowsHtml = rows.length
+                ? rows.map(row => `
+                    <tr${row.isFirstFullRlt ? ' class="first-full-row"' : ''}>
+                        <td>${plainExportHtml(row.blocArrivee)}</td>
+                        <td class="kg-cell">${kgExportHtml(row.fuelPelic)}</td>
+                        <td>${plainExportHtml(row.oaci, '--')}</td>
+                        <td class="kg-cell rlt-export-cell">${kgExportHtml(row.rlt)}${row.rltCalculation ? `<div class="rlt-calc-line">${safe(row.rltCalculation)}</div>` : ''}</td>
+                        <td>${plainExportHtml(row.dureeRotation)}</td>
+                        <td>${plainExportHtml(row.fuelRotation)}</td>
+                        <td>${plainExportHtml(row.tpsVol)}</td>
+                        <td>${plainExportHtml(row.tpsVolRestant)}</td>
+                    </tr>`).join('')
+                : '<tr><td colspan="8" class="empty-row">Aucune ligne BLOC arrivée saisie</td></tr>';
+
+            return `
+                <section class="flight-section">
+                    <div class="flight-title-row">
+                        <h2>Vol n°${flight.number || exportIndex + 1}${flight.closed ? ' — clôturé' : ''}</h2>
+                        <span>${titleDurationLabel}</span>
+                    </div>
+                    <div class="header-grid">
+                        <div><b>BLOC DÉPART</b><span>${plainExportHtml(state['bloc-depart'], '--:--')}</span></div>
+                        <div class="header-card-fuel-depart"><b>FUEL DÉPART</b><span class="fuel-depart-export-value">${kgExportHtml(state['fuel-depart'])}</span></div>
+                        <div><b>BASE</b><span>${plainExportHtml(state['base-oaci-input'] || selectedBaseOACI || DEFAULT_BASE_OACI)}</span></div>
+                        <div><b>TMD</b><span>${plainExportHtml(state['tmd'], '--:--')}</span></div>
+                        <div><b>LIMITE HDV</b><span>${plainExportHtml(state['limite-hdv'], '--:--')}</span></div>
+                    </div>
+                    <table class="bloc-fuel-export-table">
+                        <colgroup>
+                            <col class="col-bloc-arrivee">
+                            <col class="col-fuel-pelic">
+                            <col class="col-oaci">
+                            <col class="col-masse-rlt">
+                            <col class="col-duree-rot">
+                            <col class="col-fuel-rot">
+                            <col class="col-tps-vol">
+                            <col class="col-tps-restant">
+                        </colgroup>
+                        <thead>
+                            <tr>
+                                <th>BLOC Arrivée</th>
+                                <th>FUEL Pélic.</th>
+                                <th>OACI</th>
+                                <th>Masse Rlt</th>
+                                <th>Durée Rot.</th>
+                                <th>Fuel Rot.</th>
+                                <th>Tps de Vol</th>
+                                <th>Tps de Vol Restant</th>
+                            </tr>
+                        </thead>
+                        <tbody>${rowsHtml}</tbody>
+                    </table>
+                </section>`;
+        }).join('') : '<section class="flight-section"><h2>Aucun vol avec BLOC DÉPART renseigné</h2></section>';
+
+        return `<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>${safe(exportPrintDocumentTitle)}</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+    @page { size: A4 landscape; margin: 5mm; }
+    * { box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif; margin: 0; padding: 8px 10px; color: #111827; background: #fff; }
+    .topbar { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; margin-bottom: 10px; border-bottom: 3px solid #005a9c; padding-bottom: 8px; }
+    h1 { margin: 0; font-size: 24px; color: #005a9c; }
+    .meta { text-align: right; font-size: 13px; color: #475569; font-weight: 700; }
+    .export-toolbar { position: fixed; right: 18px; bottom: 18px; z-index: 10; display: flex; gap: 8px; align-items: center; }
+    .export-toolbar button { border: 0; border-radius: 12px; background: #005a9c; color: #fff; padding: 12px 16px; font-size: 15px; font-weight: 900; box-shadow: 0 4px 14px rgba(0,0,0,.25); }
+    .export-toolbar .close-export-btn { background: #334155; }
+    .flight-section { page-break-inside: avoid; margin: 0 0 12px; padding: 10px; border: 1px solid #cbd5e1; border-radius: 12px; background: #f8fafc; overflow: hidden; }
+    .flight-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
+    h2 { margin: 0; font-size: 20px; color: #0f172a; }
+    .flight-title-row span { font-size: 15px; font-weight: 900; color: #005a9c; white-space: nowrap; }
+    .header-grid { display: grid; grid-template-columns: .95fr 1.25fr .95fr .95fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .header-grid div { border: 1px solid #d7dee8; background: #fff; border-radius: 10px; padding: 8px 9px; min-height: 76px; overflow: hidden; display: grid; grid-template-rows: 28px 1fr; align-items: stretch; }
+    .header-grid b { display: flex; align-items: flex-start; min-height: 28px; margin: 0; font-size: 10.5px; line-height: 1.1; letter-spacing: .04em; color: #64748b; text-transform: uppercase; }
+    .header-grid span { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-width: 0; margin: 0; font-size: 19px; line-height: 1; font-weight: 950; color: #111827; white-space: nowrap; overflow: visible; }
+    .header-grid span .kg-inline { justify-content: flex-start !important; max-width: 100%; min-width: 0; }
+    .header-grid span .kg-unit { font-size: .50em !important; }
+    .header-card-fuel-depart { overflow: visible !important; }
+    .header-card-fuel-depart .fuel-depart-export-value { font-size: 19px !important; letter-spacing: -0.04em; overflow: visible !important; white-space: nowrap !important; }
+    .header-card-fuel-depart .kg-inline { gap: 5px !important; transform: none !important; transform-origin: left center; flex-shrink: 0; }
+    .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-inline,
+    .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-number,
+    .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-unit { font-size: 1em !important; line-height: 1 !important; }
+    .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-unit { margin-left: 0 !important; }
+    .kg-inline { display: inline-flex !important; align-items: baseline; justify-content: center; gap: 4px; white-space: nowrap; line-height: 1 !important; }
+    .kg-number { display: inline-block; line-height: 1 !important; }
+    .kg-unit { display: inline-block; font-size: .48em; line-height: 1 !important; font-weight: 900; color: #111827; }
+    table.bloc-fuel-export-table { width: 100%; table-layout: fixed; border-collapse: collapse; background: #fff; border-radius: 10px; overflow: hidden; }
+    .bloc-fuel-export-table .col-bloc-arrivee { width: 10%; }
+    .bloc-fuel-export-table .col-fuel-pelic { width: 11%; }
+    .bloc-fuel-export-table .col-oaci { width: 8%; }
+    .bloc-fuel-export-table .col-masse-rlt { width: 27%; }
+    .bloc-fuel-export-table .col-duree-rot { width: 9%; }
+    .bloc-fuel-export-table .col-fuel-rot { width: 9%; }
+    .bloc-fuel-export-table .col-tps-vol { width: 10%; }
+    .bloc-fuel-export-table .col-tps-restant { width: 16%; }
+    th, td { border: 1px solid #d7dee8; padding: 6px 4px; text-align: center; font-size: 12.5px; line-height: 1.12; vertical-align: middle; overflow: hidden; }
+    th { background: #005a9c; color: #fff; font-weight: 900; font-size: 12px; line-height: 1.08; }
+    td { font-weight: 800; }
+    th:nth-child(5), th:nth-child(6) { font-size: 11.8px; }
+    td:nth-child(5), td:nth-child(6) { font-size: 12.5px; white-space: nowrap; }
+    td.kg-cell .kg-inline { font-size: 14px; }
+    td.kg-cell .kg-unit { font-size: .68em; }
+    .rlt-export-cell { line-height: 1.06; padding-left: 3px; padding-right: 3px; white-space: nowrap; overflow: hidden; }
+    .rlt-export-cell .kg-inline { font-size: 13px; }
+    .rlt-calc-line { display: block; margin-top: 2px; font-size: 8.4px; line-height: 1.05; font-weight: 800; color: #475569; white-space: nowrap; letter-spacing: -0.055em; overflow: visible; }
+    tr.first-full-row td { background: #fff7ed; }
+    .empty-row { color: #64748b; font-style: italic; padding: 16px; }
+
+    .header-card-fuel-depart .kg-number,
+    .header-card-fuel-depart .kg-unit { font-size: 1em !important; line-height: 1 !important; }
+    .header-card-fuel-depart .kg-unit { color: #111827 !important; font-weight: 950 !important; }
+    .rlt-export-cell .kg-number { font-size: 13px; }
+    @media print { .export-toolbar { display: none; } body { padding: 0; } .flight-section { background: #fff; } }
+</style>
+</head>
+<body>
+    ${includeControls ? `<div class="export-toolbar"><button onclick="shareBlocFuelPreview()">Partager</button><button onclick="window.print()">PDF / Imprimer</button><button class="close-export-btn" onclick="closeBlocFuelPreview()">Fermer</button></div>` : ''}
+    <div class="topbar">
+        <div>
+            <h1>${safe(exportTitle)}</h1>
+            <div>Total vols exportés : ${flightsForExport.length} · Total HDV : ${safe(formatDurationForFlightSummary(totalHdv))}</div>
+        </div>
+        <div class="meta">Export : ${safe(exportDate)}<br>Vols exportés : ${flightsForExport.length}<br>Version : ${safe(window.APP_VERSION || 'v2026.53')}</div>
+    </div>
+    ${flightSections}
+    <script>
+    function closeBlocFuelPreview() {
+        try { window.close(); } catch (_) {}
+        setTimeout(function () {
+            try {
+                if (!window.closed) {
+                    document.body.classList.add('export-close-failed');
+                    alert("Fermez cet aperçu avec le bouton retour ou la gestion des fenêtres de l’iPad.");
+                }
+            } catch (_) {}
+        }, 250);
+    }
+    async function shareBlocFuelPreview() {
+        try {
+            const clone = document.documentElement.cloneNode(true);
+            clone.querySelectorAll('.export-toolbar, script').forEach(function (el) { el.remove(); });
+            const html = '<!doctype html>\n' + clone.outerHTML;
+            const file = new File([html], '${safe(exportHtmlFileName)}', { type: 'text/html' });
+            if (navigator.canShare && navigator.canShare({ files: [file] })) {
+                await navigator.share({ title: '${safe(exportPrintDocumentTitle)}', text: 'Export BLOC/FUEL NPF-Q400', files: [file] });
+                return;
+            }
+            if (navigator.share) {
+                await navigator.share({ title: '${safe(exportPrintDocumentTitle)}', text: 'Export BLOC/FUEL NPF-Q400' });
+                return;
+            }
+            alert('Partage natif non disponible sur ce navigateur. Utilisez PDF / Imprimer.');
+        } catch (error) {
+            if (error && error.name === 'AbortError') return;
+            alert('Partage impossible : ' + (error && error.message ? error.message : error));
+        }
+    }
+    <\/script>
+</body>
+</html>`;
+    }
+
+    function buildBlocFuelExportFileName(extension = 'pdf') {
+        return getBlocFuelExportSafeFileName(extension, new Date());
+    }
+
+    function normalizePdfText(value) {
+        return String(value ?? '')
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .replace(/[’‘]/g, "'")
+            .replace(/[“”]/g, '"')
+            .replace(/[–—]/g, '-')
+            .replace(/°/g, 'deg')
+            .replace(/[^\x20-\x7E]/g, ' ');
+    }
+
+    function escapePdfText(value) {
+        return normalizePdfText(value)
+            .replace(/\\/g, '\\\\')
+            .replace(/\(/g, '\\(')
+            .replace(/\)/g, '\\)');
+    }
+
+    function fitPdfCell(value, width) {
+        const text = normalizePdfText(value).replace(/\s+/g, ' ').trim();
+        if (text.length <= width) return text.padEnd(width, ' ');
+        return (text.slice(0, Math.max(0, width - 1)) + '…').replace(/[^\x20-\x7E]/g, '.');
+    }
+
+    function splitPdfLine(value, maxChars = 118) {
+        const text = normalizePdfText(value).replace(/\s+/g, ' ').trimEnd();
+        if (text.length <= maxChars) return [text];
+
+        const lines = [];
+        let rest = text;
+        while (rest.length > maxChars) {
+            let cut = rest.lastIndexOf(' ', maxChars);
+            if (cut < 40) cut = maxChars;
+            lines.push(rest.slice(0, cut).trimEnd());
+            rest = rest.slice(cut).trimStart();
+        }
+        if (rest) lines.push(rest);
+        return lines;
+    }
+
+    function buildBlocFuelExportPdfPages() {
+        updateActiveFlightStateFromDom();
+        ensureFlightsLoadedFromStorage();
+        normalizeFlightNumbers();
+
+        const pages = [[]];
+        const maxLinesPerPage = 36;
+        const addLine = (line = '') => {
+            const parts = splitPdfLine(line, 118);
+            parts.forEach((part) => {
+                if (pages[pages.length - 1].length >= maxLinesPerPage) pages.push([]);
+                pages[pages.length - 1].push(part);
+            });
+        };
+        const addBlank = () => addLine('');
+        const addSeparator = () => addLine('-'.repeat(118));
+
+        const exportGeneratedAt = new Date();
+        const exportDate = getBlocFuelExportTimestamp(exportGeneratedAt);
+        const exportTitle = getBlocFuelExportTitle(exportGeneratedAt);
+        const flightsForExport = getBlocFuelFlightsForExport();
+        const totalHdv = flightsForExport.reduce((total, item) => total + getFlightDurationFromState(item.flight.state), 0);
+        let cumulativeExportHdv = 0;
+
+        addLine(exportTitle);
+        addLine(`Export : ${exportDate}    Version : ${window.APP_VERSION || 'v13.20'}`);
+        addLine(`Total vols exportes : ${flightsForExport.length}    Total HDV : ${formatDurationForFlightSummary(totalHdv)}`);
+        addSeparator();
+
+        flightsForExport.forEach(({ flight, originalIndex }, exportIndex) => {
+            const state = flight.state || {};
+            const rows = getBlocFuelExportRowCalculations(state, originalIndex);
+            const flightDuration = getFlightDurationFromState(state);
+            cumulativeExportHdv += flightDuration;
+            const durationText = exportIndex > 0
+                ? `Tps de vol : ${formatDurationForFlightSummary(flightDuration)} / Total : ${formatDurationForFlightSummary(cumulativeExportHdv)}`
+                : `Tps de vol : ${formatDurationForFlightSummary(flightDuration)}`;
+            addBlank();
+            addLine(`VOL N°${flight.number || exportIndex + 1}${flight.closed ? ' - cloture' : ''}    ${durationText}`);
+            addLine(`BLOC DEPART : ${state['bloc-depart'] || '--:--'}    FUEL Depart : ${state['fuel-depart'] || '-- kg'}    Base : ${state['base-oaci-input'] || selectedBaseOACI || DEFAULT_BASE_OACI}    TMD : ${state['tmd'] || '--:--'}    LIMITE HDV : ${state['limite-hdv'] || '--:--'}`);
+            addLine('BLOC Arr | FUEL Pelic | OACI | Masse Rlt | Duree Rot | Fuel Rot | Tps Vol | Restant');
+            addSeparator();
+
+            if (!rows.length) {
+                addLine('Aucune ligne BLOC arrivee saisie');
+                return;
+            }
+
+            rows.forEach((row) => {
+                addLine([
+                    fitPdfCell(row.blocArrivee || '--:--', 8),
+                    fitPdfCell(row.fuelPelic || '--', 10),
+                    fitPdfCell(row.oaci || '--', 4),
+                    fitPdfCell(row.rlt || '--', 9),
+                    fitPdfCell(row.dureeRotation || '--', 9),
+                    fitPdfCell(row.fuelRotation || '--', 8),
+                    fitPdfCell(row.tpsVol || '--', 7),
+                    fitPdfCell(row.tpsVolRestant || '--', 7)
+                ].join(' | '));
+                if (row.rltCalculation) addLine(`          Calcul RLT : ${row.rltCalculation}`);
+            });
+        });
+
+        return pages;
+    }
+
+    function createSimplePdfBlobFromPages(pages) {
+        const pageWidth = 842;
+        const pageHeight = 595;
+        const marginLeft = 32;
+        const startY = 560;
+        const lineHeight = 13;
+        const objects = [];
+
+        const addObject = (body) => {
+            objects.push(body);
+            return objects.length;
+        };
+
+        const catalogId = addObject('');
+        const pagesId = addObject('');
+        const fontId = addObject('<< /Type /Font /Subtype /Type1 /BaseFont /Courier >>');
+        const pageIds = [];
+
+        pages.forEach((lines, pageIndex) => {
+            const contentLines = [
+                'BT',
+                `/F1 ${pageIndex === 0 ? 10 : 9.5} Tf`,
+                `${marginLeft} ${startY} Td`,
+                `${lineHeight} TL`
+            ];
+            lines.forEach((line) => {
+                contentLines.push(`(${escapePdfText(line)}) Tj`);
+                contentLines.push('T*');
+            });
+            contentLines.push('ET');
+            const stream = contentLines.join('\n');
+            const contentId = addObject(`<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+            const pageId = addObject(`<< /Type /Page /Parent ${pagesId} 0 R /MediaBox [0 0 ${pageWidth} ${pageHeight}] /Resources << /Font << /F1 ${fontId} 0 R >> >> /Contents ${contentId} 0 R >>`);
+            pageIds.push(pageId);
+        });
+
+        objects[catalogId - 1] = `<< /Type /Catalog /Pages ${pagesId} 0 R >>`;
+        objects[pagesId - 1] = `<< /Type /Pages /Kids [${pageIds.map(id => `${id} 0 R`).join(' ')}] /Count ${pageIds.length} >>`;
+
+        let pdf = '%PDF-1.4\n%NPF-Q400\n';
+        const offsets = [0];
+        objects.forEach((body, index) => {
+            offsets[index + 1] = pdf.length;
+            pdf += `${index + 1} 0 obj\n${body}\nendobj\n`;
+        });
+        const xrefOffset = pdf.length;
+        pdf += `xref\n0 ${objects.length + 1}\n`;
+        pdf += '0000000000 65535 f \n';
+        for (let i = 1; i <= objects.length; i += 1) {
+            pdf += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+        }
+        pdf += `trailer\n<< /Size ${objects.length + 1} /Root ${catalogId} 0 R >>\nstartxref\n${xrefOffset}\n%%EOF`;
+
+        return new Blob([pdf], { type: 'application/pdf' });
+    }
+
+    function buildBlocFuelExportPdfBlob() {
+        const pages = buildBlocFuelExportPdfPages();
+        return createSimplePdfBlobFromPages(pages);
+    }
+
+    async function shareBlocFuelPdfFile() {
+        if (!navigator.share || typeof File === 'undefined') return false;
+
+        const pdfBlob = buildBlocFuelExportPdfBlob();
+        const pdfFile = new File([pdfBlob], buildBlocFuelExportFileName('pdf'), { type: 'application/pdf' });
+
+        if (!navigator.canShare || !navigator.canShare({ files: [pdfFile] })) {
+            return false;
+        }
+
+        await navigator.share({
+            title: 'NPF-Q400 — BLOC/FUEL',
+            text: 'Export PDF BLOC/FUEL NPF-Q400',
+            files: [pdfFile]
+        });
+        return true;
+    }
+
+    function openBlocFuelExportPreview() {
+        const exportGeneratedAt = new Date();
+        const exportPrintDocumentTitle = getBlocFuelExportPrintDocumentTitle(exportGeneratedAt);
+        const html = buildBlocFuelExportHtml({ includeControls: false, exportGeneratedAt });
+        let overlay = document.getElementById('bloc-fuel-export-overlay');
+        if (overlay) overlay.remove();
+
+        overlay = document.createElement('div');
+        overlay.id = 'bloc-fuel-export-overlay';
+        overlay.dataset.exportPrintTitle = exportPrintDocumentTitle;
+        overlay.innerHTML = `
+            <div class="bloc-fuel-export-panel" role="dialog" aria-modal="true" aria-label="Aperçu export BLOC/FUEL">
+                <div class="bloc-fuel-export-toolbar">
+                    <div class="bloc-fuel-export-title">Export BLOC/FUEL</div>
+                    <div class="export-hint">Aperçu imprimable. Utiliser “PDF / Imprimer” puis “Partager / Enregistrer en PDF” sur iPad.</div>
+                    <button type="button" id="bloc-fuel-export-print-btn" class="print-primary">PDF / Imprimer</button>
+                    <button type="button" id="bloc-fuel-export-close-btn" class="secondary">Fermer</button>
+                </div>
+                <iframe id="bloc-fuel-export-frame" title="${escapeHtml(exportPrintDocumentTitle)}"></iframe>
+            </div>`;
+        document.body.appendChild(overlay);
+
+        const cleanupPreview = () => {
+            try {
+                const blobUrl = overlay.dataset.exportBlobUrl;
+                if (blobUrl) URL.revokeObjectURL(blobUrl);
+            } catch (_) {}
+            overlay.remove();
+        };
+
+        const frame = overlay.querySelector('#bloc-fuel-export-frame');
+        if (frame) {
+            try {
+                const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
+                const blobUrl = URL.createObjectURL(blob);
+                overlay.dataset.exportBlobUrl = blobUrl;
+                frame.src = blobUrl;
+            } catch (_) {
+                frame.srcdoc = html;
+            }
+            frame.addEventListener('load', () => {
+                try {
+                    frame.contentWindow.document.title = exportPrintDocumentTitle;
+                } catch (_) {}
+            }, { once: true });
+        }
+
+        overlay.querySelector('#bloc-fuel-export-close-btn')?.addEventListener('click', cleanupPreview);
+        overlay.addEventListener('click', (event) => {
+            if (event.target === overlay) cleanupPreview();
+        });
+        overlay.querySelector('#bloc-fuel-export-print-btn')?.addEventListener('click', () => {
+            try {
+                const win = frame?.contentWindow;
+                const printTitle = overlay.dataset.exportPrintTitle || exportPrintDocumentTitle;
+                const previousAppTitle = document.title;
+                if (win) {
+                    try { document.title = printTitle; } catch (_) {}
+                    try { win.document.title = printTitle; } catch (_) {}
+                    win.focus();
+                    win.print();
+                    setTimeout(() => {
+                        try { document.title = previousAppTitle || 'NPF-Q400'; } catch (_) {}
+                    }, 12000);
+                }
+            } catch (error) {
+                alert(`Impression impossible : ${error.message || error}`);
+            }
+        });
+    }
+
+    async function exportBlocFuelPdf() {
+        try {
+            /*
+             * v13.13 — retour au rendu imprimable HTML, plus propre que le PDF
+             * généré en texte pur. L'export s'ouvre dans une modale fermable.
+             */
+            openBlocFuelExportPreview();
+        } catch (error) {
+            console.error('Export BLOC/FUEL impossible:', error);
+            alert(`Export BLOC/FUEL impossible : ${error.message || error}`);
+        }
     }
 
     function ensureFlightsLoadedFromStorage() {
@@ -9763,6 +11453,26 @@ function initializeCalculator() {
         updateActiveFlightStateFromDom();
     }
 
+    function getPreviousBlocFuelArrivalTimeForWrapper(wrapper) {
+        try {
+            const row = wrapper?.closest?.('tr');
+            const table = row?.closest?.('#bloc-fuel');
+            if (!row || !table) return '';
+
+            const rows = Array.from(table.querySelectorAll('tbody tr'));
+            const rowIndex = rows.indexOf(row);
+            for (let i = rowIndex - 1; i >= 0; i -= 1) {
+                const previousValue = rows[i].querySelector('.time-input-wrapper .display-input')?.value || '';
+                if (parseTime(previousValue) !== null) return previousValue;
+            }
+
+            const blocDepartValue = document.getElementById('bloc-depart')?.querySelector('.display-input')?.value || '';
+            return parseTime(blocDepartValue) !== null ? blocDepartValue : '';
+        } catch (_) {
+            return '';
+        }
+    }
+
     function initializeTimeInput(wrapper, initialValue = '') {
         if (!wrapper) return;
         const displayInput = wrapper.querySelector('.display-input');
@@ -9922,6 +11632,24 @@ function initializeCalculator() {
         });
 
         if (engineInput) {
+            const prepareTimePickerDefault = () => {
+                try {
+                    const isBlocFuelArrival = !!wrapper.closest('tr')?.closest('#bloc-fuel');
+                    if (isBlocFuelArrival && !displayInput.value) {
+                        const previousTime = getPreviousBlocFuelArrivalTimeForWrapper(wrapper);
+                        if (previousTime) engineInput.value = previousTime;
+                        return;
+                    }
+                    if (!engineInput.value && !displayInput.value) {
+                        engineInput.value = getAutoTimeValue();
+                    }
+                } catch (_) {}
+            };
+
+            ['pointerdown', 'touchstart', 'mousedown', 'focus'].forEach((eventName) => {
+                engineInput.addEventListener(eventName, prepareTimePickerDefault, { passive: true });
+            });
+
             engineInput.addEventListener('change', () => {
                 if (engineInput.value) {
                     setTimeValue(engineInput.value);
@@ -11211,6 +12939,7 @@ function initializeCalculator() {
     const newFlightButton = document.getElementById('new-flight-btn');
     const closeFlightButton = document.getElementById('close-flight-btn');
     const deleteFlightButton = document.getElementById('delete-flight-btn');
+    const exportBlocFuelPdfButton = document.getElementById('export-bloc-fuel-pdf-btn');
 
     if (flightSelect) {
         flightSelect.addEventListener('change', () => {
@@ -11284,6 +13013,11 @@ function initializeCalculator() {
             persistFlights();
             loadActiveFlightState();
         });
+    }
+
+
+    if (exportBlocFuelPdfButton) {
+        exportBlocFuelPdfButton.addEventListener('click', exportBlocFuelPdf);
     }
 
     resetButton.addEventListener('click', () => {
