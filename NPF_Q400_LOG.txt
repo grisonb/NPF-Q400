@@ -1,3 +1,505 @@
+NPF-Q400 — VERSION PÉRENNE v2026.53
+Date : 2026-07-11
+Base : TEST v13.23_export_pdf_colonnes_homogenes
+
+Intégration pérenne :
+- Reprise de la version TEST v13.23 validée comme base pérenne.
+- Export BLOC/FUEL : mise en page PDF propre avec colonnes rééquilibrées.
+- Export BLOC/FUEL : colonne OACI légèrement élargie.
+- Export BLOC/FUEL : colonne Masse Rlt légèrement réduite et calcul retardant conservé.
+- Export BLOC/FUEL : colonnes Durée Rot. et Fuel Rot. homogénéisées.
+- Export BLOC/FUEL : colonne Tps de Vol Restant légèrement réduite.
+- Trafic ADS-B : code conservé mais fonctionnalité désactivée/masquée selon décision précédente.
+- Version application, manifest, service worker et cache-buster passés en v2026.53.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique TEST intégré ---
+NPF-Q400 — TEST v13.23_export_pdf_colonnes_homogenes
+Date : 2026-07-11
+Base : TEST v13.22_export_pdf_layout_propre
+
+Corrections :
+- Export BLOC/FUEL : rééquilibrage des colonnes du tableau PDF.
+- Colonne OACI légèrement élargie.
+- Colonne Masse Rlt légèrement réduite.
+- Colonnes Durée Rot. et Fuel Rot. légèrement élargies.
+- Colonne Tps de Vol Restant légèrement réduite.
+- Rendu des colonnes Durée Rot. / Fuel Rot. homogénéisé.
+- Cache-buster index/manifest/script actualisé en v13.23.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.22_export_pdf_layout_propre
+Date : 2026-07-11
+Base : TEST v13.21_export_rlt_colonne_elargie
+
+Corrections :
+- Export BLOC/FUEL : réduction forte des marges latérales pour donner plus de largeur au tableau.
+- Export BLOC/FUEL : reprise complète de la mise en page tableau pour obtenir un rendu plus propre.
+- Colonne Masse Rlt élargie à 30 % du tableau avec colgroup dédié.
+- Colonne Durée Rot. resserrée mais nettoyée pour éviter l’effet colonne tassée.
+- Ligne de calcul retardant forcée sur une seule ligne avec "kg" visible à la fin.
+- Carte FUEL DÉPART revue : largeur relative augmentée, valeur "3400 kg" affichée sans masquage.
+- Les autres fonctions de v13.21 sont conservées.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.21_export_rlt_colonne_elargie
+Date : 2026-07-11
+Base : TEST v13.20_export_rlt_offline_horloge
+
+Corrections :
+- Export BLOC/FUEL : colonne « Masse Rlt » élargie pour que le calcul complet litres × densité = kg reste sur une seule ligne.
+- Export BLOC/FUEL : colonne « Durée Rot. » resserrée pour récupérer de la largeur au profit de « Masse Rlt ».
+- Export BLOC/FUEL : ligne de calcul RLT passée en affichage sans retour à la ligne, avec police légèrement resserrée.
+- Cache-buster index/manifest actualisé en v13.21.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.20_export_rlt_offline_horloge
+Date : 2026-07-11
+Base : TEST v13.19_fuel_depart_kg_pleine_taille
+
+Corrections :
+- Export BLOC/FUEL : ajout du calcul complet retardant par ligne dans la colonne Masse Rlt, au format volume en litres × densité = masse kg.
+- Export BLOC/FUEL : le PDF/aperçu conserve l’export de tous les vols valides et continue d’exclure les vols sans BLOC DÉPART.
+- Démarrage PWA en réseau dégradé : service worker modifié pour servir rapidement l’app-shell en cache si le réseau répond mal, afin d’éviter l’écran blanc quand la 4G/Wi-Fi commence à décrocher.
+- Horloge BLOC arrivée : si la cellule est vide, l’heure proposée par défaut reprend la cellule BLOC arrivée précédente ; à défaut seulement, elle reprend BLOC DÉPART.
+- Fenêtre post-MAJ : restauration de l’affichage immédiat au premier lancement d’une nouvelle version, sans supprimer la logique de détection/activation automatique.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.19_fuel_depart_kg_pleine_taille
+Date : 2026-07-10
+Base : TEST v13.18_fuel_depart_kg_meme_taille
+
+Correction :
+- Export BLOC/FUEL : correction de spécificité CSS. Dans la carte FUEL DÉPART, l’unité « kg » prend maintenant strictement la même taille que la quantité.
+- Aucune modification du comportement d’export ni du nom de fichier PDF, laissé tel quel à cause de la limite iPadOS/PWA constatée.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.18_fuel_depart_kg_meme_taille
+Date : 2026-07-10
+Base : TEST v13.17_export_layout_filename_blob
+
+Corrections :
+- Export BLOC/FUEL : abandon de la correction sur le nom PDF, limitation iPadOS/PWA acceptée.
+- Export BLOC/FUEL : dans la carte FUEL DÉPART, l’unité « kg » a maintenant la même taille visuelle que la quantité.
+- La mise en page générale restaurée en v13.17 est conservée.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.17_export_layout_filename_blob
+Date : 2026-07-10
+Base : TEST v13.16_export_nom_pdf_fuel_depart
+
+Corrections :
+- Export BLOC/FUEL : restauration de la mise en page générale des cellules d’en-tête comme avant v13.16.
+- Correction ciblée de la cellule FUEL DÉPART uniquement : 3400 kg reste visible sans repousser l’unité à droite.
+- Export BLOC/FUEL : l’aperçu est maintenant chargé via un document Blob horodaté, avec titre interne horodaté, avant impression.
+- Objectif : améliorer la reprise du nom horodaté par iPadOS lors de “PDF / Imprimer”.
+- Limite connue : si iPadOS force encore le nom “NPF-Q400” dans Fichiers, c’est le nom de l’app PWA imposé par le système et il faudra renommer manuellement le PDF après enregistrement.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.16_export_nom_pdf_fuel_depart
+Date : 2026-07-10
+Base : TEST v13.15_export_horodatage_filtre_vols
+
+Corrections :
+- Export BLOC/FUEL : le titre utilisé par l’impression iPad est maintenant horodaté avec un nom compatible fichier, par exemple `NPF-Q400 10-07-26 15h10`.
+- Le titre visible dans le document conserve le format demandé avec date/heure d’export.
+- Correction de la carte `FUEL DÉPART` dans l’export : largeur de colonne augmentée, overflow supprimé, police légèrement réduite et unité `kg` intégrée sans masquer le dernier chiffre.
+- Conservation de l’export stylé imprimable et du bouton Fermer.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.15_export_horodatage_filtre_vols
+Date : 2026-07-10
+Base : TEST v13.14_ui_export_sans_trafic
+
+Corrections :
+- Export BLOC/FUEL : horodatage ajouté au titre du document exporté avec le format « NPF-Q400 JJ/MM/AA HH:MM ».
+- Export BLOC/FUEL : nom de fichier horodaté pour les exports/partages utilisant un vrai fichier.
+- Export BLOC/FUEL : seuls les vols ayant une heure de BLOC DÉPART renseignée sont exportés ; les vols suivants vides ne sont plus affichés.
+- Export BLOC/FUEL : à partir du 2e vol exporté, affichage du temps du vol et du temps total cumulé.
+- Export BLOC/FUEL : alignement renforcé des cartes d’en-tête, notamment FUEL DÉPART et son unité kg.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.14_ui_export_sans_trafic
+Date : 2026-07-10
+Base : TEST v13.13_export_bloc_fuel_layout_fix
+
+Corrections :
+- Export BLOC/FUEL : alignement renforcé des cartes d’en-tête, notamment FUEL DÉPART et son unité kg.
+- Position GPS : suppression du popup « Votre position » au clic sur l’avion, pour éviter de masquer/surcharger le clic lorsqu’il est confondu avec un pélicandrome.
+- BLOC/FUEL : suppression visuelle du libellé « Vol n° » dans la barre, car l’information est déjà dans le menu déroulant.
+- BLOC/FUEL : résumé des heures de vol placé sur la même ligne que les boutons quand la largeur le permet.
+- BLOC/FUEL : résumé simplifié en « Tps de vol : … / Total : … ».
+- Trafic ADS-B : code conservé, mais fonction désactivée par défaut et bouton TRAFIC masqué.
+- Prévi rotations et Suivi rotations : contenu de la fenêtre de droite remonté comme dans Déroutement / GAAR.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.13_export_bloc_fuel_layout_fix
+Date : 2026-07-10
+Base : TEST v13.12_export_print_styled_preview
+
+Corrections :
+- Export BLOC/FUEL : correction des problèmes de mise en page visibles dans l’aperçu.
+- Les unités kg ne débordent plus des cartes ou des cellules du tableau.
+- Fuel départ, Fuel Pélic et Masse Rlt sont formatés avec une unité compacte maîtrisée.
+- Cartes hautes de l’export agrandies et alignées pour éviter les chevauchements.
+- Tableau export passé en mise en page fixe avec largeurs de colonnes et polices réduites.
+- Aperçu imprimable conservé avec bouton Fermer et bouton PDF / Imprimer.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.12_export_print_styled_preview
+Date : 2026-07-10
+Base : TEST v13.11_export_pdf_partage_reel
+
+Corrections :
+- Export BLOC/FUEL : abandon du PDF texte généré en interne, jugé trop pauvre visuellement.
+- Retour au rendu imprimable HTML stylé, équivalent au premier rendu propre, avec cartes/sections/tableaux bien mis en forme.
+- L’aperçu reste intégré dans l’application avec bouton Fermer : plus besoin de relancer la PWA.
+- Le bouton ouvre directement l’aperçu imprimable ; le PDF se fait via « PDF / Imprimer » puis partage/enregistrement PDF iPad.
+- Bouton renommé « Export PDF ».
+
+Note :
+- Sans bibliothèque PDF dédiée ou service serveur, un vrai PDF graphique fidèle à l’écran est moins fiable qu’un rendu HTML imprimable. La solution retenue privilégie le rendu propre et la fermeture sûre de l’aperçu.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.11_export_pdf_partage_reel
+Date : 2026-07-10
+Base : TEST v13.10_partage_bloc_fuel_vecteur_centre
+
+Corrections :
+- Export BLOC/FUEL : suppression du fallback de partage texte simple, qui produisait un fichier texte avec une seule ligne.
+- Création d’un vrai fichier PDF BLOC/FUEL généré localement dans le navigateur.
+- Le bouton Partager tente maintenant de partager ce fichier PDF via la feuille de partage native si le navigateur l’autorise.
+- Si le partage direct de fichier PDF n’est pas disponible, ouverture d’un aperçu intégré à l’application avec boutons Partager PDF, PDF / Imprimer et Fermer.
+- L’aperçu n’ouvre plus une fenêtre externe impossible à fermer dans la PWA.
+- L’export continue de reprendre tous les vols enregistrés, quelle que soit la page de vol active.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.10_partage_bloc_fuel_vecteur_centre
+Date : 2026-07-10
+Base : TEST v13.09_export_bloc_fuel_vecteur_trafic
+
+Corrections :
+- Vecteur pointillé des trafics recentré sur le centre exact de l’icône trafic.
+- Vecteur trafic redessiné en CSS pour éviter le décalage visuel lié à la bordure pointillée.
+- Export BLOC/FUEL : suppression de l’ouverture automatique de l’impression.
+- Export BLOC/FUEL : le bouton lance d’abord le partage natif iPad/navigateur quand disponible.
+- Export BLOC/FUEL : fallback sur un aperçu ouvrable avec boutons Partager, PDF/Imprimer et Fermer.
+- Le bouton d’export BLOC/FUEL est renommé « Partager ».
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.09_export_bloc_fuel_vecteur_trafic
+Date : 2026-07-10
+Base : TEST v13.08_post_maj_retablie
+
+Corrections :
+- Vecteur pointillé trafic recentré sur le milieu exact de l’icône avion trafic.
+- Vecteur trafic légèrement allongé pour mieux matérialiser la route ADS-B.
+- Dans BLOC/FUEL, suppression du bouton « Nouveau » dans la barre des vols.
+- Ajout d’un bouton « Export PDF » après « Supprimer ».
+- Export BLOC/FUEL tous vols : le bouton exporte tous les vols enregistrés, quelle que soit la page de vol actuellement sélectionnée.
+- Export sous forme de page imprimable/PDF reprenant les champs BLOC départ, FUEL départ, Base, TMD, limite HDV et le tableau jusqu’à la dernière ligne BLOC arrivée de chaque vol.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.08_post_maj_retablie
+Date : 2026-07-10
+Base : TEST v13.07_maj_trafic_modal_vecteurs
+
+Corrections :
+- Fenêtre post-MAJ rétablie : le message « Une mise à jour vient d’être effectuée. Fermez et relancez l’application. » est conservé.
+- La logique de détection/activation automatique de mise à jour de v13.07 est conservée.
+- Clarification : la fenêtre post-MAJ sert d’indication après bascule de version ; elle n’est pas supprimée.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.07_maj_trafic_modal_vecteurs
+Date : 2026-07-10
+Base : TEST v13.06_trafic_zones_alt_relative_vector
+
+Corrections :
+- Mise à jour PWA renforcée : détection au chargement, pageshow et retour au premier plan.
+- Activation automatique du nouveau service worker dès installation, avec rechargement automatique unique.
+- Suppression de la fenêtre post-MAJ demandant de fermer/relancer la PWA, pour éviter la double relance.
+- Filtres trafic : quand « Tranche autour de mon altitude » est cochée, les champs Altitude mini/maxi sont grisés et désactivés.
+- Filtres trafic : la ligne « Tranche autour de mon altitude » est déplacée sous Alt mini/maxi, avec libellé et saisie de tranche sur la même ligne.
+- Filtrage ADS-B : quand la tranche autour de mon altitude est active, les filtres absolus mini/maxi ne s'appliquent plus.
+- Vecteurs trafic agrandis et corrigés : pointillés plus longs, départ centré sur l'avion, orientation cohérente avec la route ADS-B.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.06_trafic_zones_alt_relative_vector
+Date : 2026-07-10
+Base : TEST v13.05_pelic_label_click
+
+Corrections :
+- Bandeau « Survolée » abaissé en priorité d'affichage : il reste visible sur la carte mais ne passe plus devant les fenêtres/panneaux comme Suivi rotation ou Importation cartes.
+- Filtres trafic ADS-B enrichis : cases « Trafic autour de ma position » et « Trafic autour du feu ».
+- Si les deux cases sont cochées, les requêtes ADS-B sont faites autour des deux points puis les aéronefs sont fusionnés/dédoublonnés.
+- Ajout du filtre « Tranche autour de mon altitude » avec valeur paramétrable, par défaut ±1500 ft, basé sur l'altitude GPS disponible.
+- Renommage de la case altitude en « Etiquette Alt. Trafics » sans titre séparé.
+- Ajout d'un petit vecteur de déplacement en pointillés sur les symboles trafic, orienté selon la route/track ADS-B.
+- Conservation du rafraîchissement ADS-B à 5 secondes avec garde interne 4,5 secondes.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.05_pelic_label_click
+Date : 2026-07-10
+Base : TEST v13.04_refresh_5s_ligne_position_visible
+
+Corrections :
+- Sélection du pélicandrome possible directement par clic/tap sur son étiquette OACI.
+- Conservation de l’ancien comportement : le clic sur le vecteur feu-pélicandrome fonctionne toujours.
+- Étiquette pélicandrome rendue interactive avec curseur/touch-action dédiée et sélection de texte désactivée.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.04_refresh_5s_ligne_position_visible
+Date : 2026-07-10
+Base : TEST v13.03_trafic_bouton_altitude_refresh
+
+Corrections :
+- Rafraîchissement ADS-B passé à 5 secondes.
+- Garde anti-requête ADS-B ajustée à 4,5 secondes pour éviter qu’un cycle à 5 secondes soit ignoré par quelques millisecondes de décalage.
+- Route GPS -> feu rendue plus lisible par double tracé : halo blanc épais + trait rouge renforcé.
+- Vecteur de position propre rendu plus visible : halo noir épais + trait jaune vif, repères 2/5/10 minutes plus contrastés.
+- Icône avion GPS propre renforcée : contour noir, halo blanc et contraste jaune/noir.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.03_trafic_bouton_altitude_refresh
+Date : 2026-07-10
+Base : TEST v13.02_trafic_modal_commune_decalee
+
+Corrections :
+- Suppression complète de la grande fenêtre/bandeau d'avertissement ADS-B sur la carte.
+- État ADS-B porté uniquement par le bouton TRAFIC : rouge si problème, bleu en chargement, vert/actif si trafic OK.
+- Ajout dans la fenêtre Filtres ADS-B d'une case à cocher « Étiquette altitude ».
+- Si « Étiquette altitude » est cochée, chaque avion affiché reçoit une étiquette avec son altitude ADS-B.
+- Rafraîchissement automatique du trafic ADS-B accéléré : 15 secondes au lieu de 30 secondes.
+- Note de la fenêtre filtres mise à jour avec la fréquence de rafraîchissement.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.02_trafic_modal_commune_decalee
+Date : 2026-07-10
+Base : TEST v13.01_commune_gauche_trafic_filtres
+
+Corrections :
+- Filtres ADS-B regroupés dans une seule fenêtre de réglage plus conviviale.
+- Suppression des fenêtres successives `prompt` pour le rayon, le nombre d’avions et les altitudes.
+- Appui long sur le bouton TRAFIC conservé pour ouvrir les réglages.
+- Correction de la zone bleue de sélection de texte sur le bouton TRAFIC lors de l’appui long.
+- Bandeau « Survolée » remis en bas à droite, avec simple décalage vers la gauche pour éviter le bouton MAJ.
+- Ordre de livraison modifié : fichier modifications fourni en premier.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v13.01_commune_gauche_trafic_filtres
+Date : 2026-07-10
+Base : TEST v13.00_commune_hud_trafic_v3
+
+Corrections :
+- Bandeau bas « Survolée » déplacé sur la gauche et légèrement agrandi.
+- Affichage du département fiabilisé dans le bandeau commune avec parenthèses quand le code département est disponible.
+- Bandeau texte trafic ADS-B supprimé en fonctionnement nominal ; il ne s’affiche plus qu’en cas d’erreur temporaire.
+- Bouton TRAFIC coloré selon l’état : normal actif, chargement, erreur.
+- Correction du badge TRAFIC : il affiche désormais le nombre réel d’avions affichés, au lieu de retomber à 0 après une mise à jour réussie.
+- Ajout de filtres configurables pour le trafic ADS-B : rayon, nombre maximal d’avions, altitude mini et altitude maxi.
+- Accès aux filtres trafic par appui long sur le bouton TRAFIC.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+--- Historique précédent ---
+NPF-Q400 — TEST v12.99_commune_trafic_fallback
+Date : 2026-07-09
+Base : TEST v12.98_commune_trafic_stabilite
+
+Corrections :
+- Bandeau bas droit « Commune survolée » forcé visible en permanence dès le HTML initial et au démarrage JS.
+- Le bandeau affiche au minimum « GPS en attente » même sans position/polygones prêts.
+- Actualisation de la commune maintenue à la réception GPS, à la reprise PWA et par garde-fou léger périodique.
+- Trafic ADS-B : passage en sources multiples/fallback : adsb.fi v2, adsb.fi v3, adsb.lol v2.
+- En cas d'échec d'une source ADS-B, essai automatique de la source suivante avant d'afficher une indisponibilité.
+- Message erreur trafic rendu moins bloquant visuellement.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+
+NPF-Q400 — TEST v13.00_commune_hud_trafic_v3
+Date : 2026-07-09
+Base : TEST v12.99_commune_trafic_fallback
+
+Corrections :
+- Bandeau bas droit « commune survolée » transformé en HUD fixe auto-réparant : création automatique si l'élément HTML manque, position fixed, visibilité/opacité forcées et garde-fou toutes les 5 s.
+- Libellé du bandeau renommé « Survolée » pour éviter la confusion avec la commune recherchée/feu sélectionné.
+- Le bandeau reste visible pendant les reprises iPad/PWA et même si une ancienne règle CSS `display:none` persiste en cache.
+- Trafic ADS-B : priorité à adsb.fi v3 pour les recherches lat/lon/dist ; retrait de la tentative v2 en premier.
+- Ajout d'une troisième source de secours Airplanes.live v2 avec format `/point/lat/lon/radius`.
+- Service worker : les requêtes ADS-B ne sont plus transformées en réponse cache/504 par le fallback générique ; elles passent en réseau direct.
+
+Contrôles :
+- Syntaxe script.js OK.
+- Syntaxe sw.js OK.
+- manifest.json OK.
+
+
+--- Historique précédent ---
+# NPF-Q400 — MODIFICATIONS v12.98_commune_trafic_stabilite
+
+Base : TEST v12.97_trafic_stabilite_carte.
+
+## Corrections TEST
+- Restauration robuste du bandeau bas droit `commune survolée` : il reste visible avec `chargement...`, `GPS en attente` ou la commune calculée par polygone dès que disponible.
+- Repositionnement CSS du bandeau commune pour éviter qu’il soit masqué par les boutons carte à droite.
+- Trafic ADS-B : correction du badge `null` sur le bouton `TRAFIC`; il affiche maintenant `0`, `…` ou `!` selon l’état.
+- Trafic ADS-B : message d’erreur rendu explicitement temporaire en cas d’indisponibilité HTTP/timeout.
+
+## Non modifié
+- Calculs mission.
+- BLOC/FUEL et Plein au départ.
+- Hauteur carte iPad validée v12.90.
+- Pérenne v2026.52.
+
+---
+
+# NPF-Q400 — MODIFICATIONS v12.96_trafic_adsb
+
+Base : version pérenne v2026.52, elle-même issue de TEST v12.95.
+
+## Ajouts TEST
+- Ajout d’un bouton carte `TRAFIC` dans la colonne gauche, sous le bouton `HT`.
+- Ajout d’un calque trafic ADS-B indicatif, désactivé par défaut et mémorisé en localStorage.
+- Source utilisée en TEST : API publique adsb.fi Open Data, endpoint v3 `lat/lon/dist`, rayon 50 Nm.
+- Requête autour du feu sélectionné ; à défaut autour de la position GPS connue ; à défaut autour du centre carte.
+- Rafraîchissement automatique toutes les 30 secondes quand le calque est actif.
+- Limitation locale d’affichage : 80 appareils maximum, positions âgées de plus de 90 s filtrées.
+- Popup trafic : callsign, type/immat/hex si disponible, altitude, vitesse sol, route, distance au point de référence, âge de la position.
+- Bandeau statut : nombre d’appareils, point de référence et heure de mise à jour.
+
+## Avertissement intégré
+- Les popups affichent `ADS-B indicatif — non certifié`.
+- Ce calque ne doit pas être traité comme anticollision ni comme source opérationnelle certifiée.
+
+## Non modifié
+- Calculs Prévi / Bloc-Fuel / Suivi / Déroutement.
+- Hauteur carte iPad validée v12.90.
+- GPS automatique DÉROUT/GAAR v12.95.
+- Import offline, tuiles, lignes HT, recherche commune.
+
+---
+
 NPF-Q400 — JOURNAL DES MODIFICATIONS TECHNIQUES
 
 But du fichier
@@ -654,3 +1156,22 @@ Contrôles :
 - sw.js : syntaxe OK ;
 - manifest.json : JSON OK ;
 - archive ZIP complète : OK.
+
+
+============================================================
+NPF-Q400 — TEST v12.97_trafic_stabilite_carte
+============================================================
+Base : TEST v12.96_trafic_adsb.
+
+Corrections :
+- Restauration/renforcement de la fenêtre bas droite indiquant la commune survolée.
+  Elle est recréée depuis la dernière position GPS connue après reprise PWA, mauvais réseau ou chargement différé des polygones.
+- Pop-up feu sur la carte : boutons Sélectionner et Supprimer agrandis pour usage tactile iPad.
+- Suppression d’un feu depuis la carte : confirmation obligatoire avant suppression.
+- Stabilité mauvais réseau : les requêtes critiques du service worker basculent sur le cache après délai court au lieu de laisser une page blanche en attente réseau.
+- Trafic ADS-B : ajout d’un timeout de requête pour éviter un blocage prolongé en réseau très faible.
+
+Non modifié :
+- Calculs mission / BLOC-FUEL / Plein au départ.
+- Hauteur carte validée v12.90.
+- Version pérenne v2026.52.
