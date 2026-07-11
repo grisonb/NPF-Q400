@@ -1,13 +1,13 @@
 {
     "name": "NPF-Q400",
     "short_name": "NPF-Q400",
-    "id": "./index.html",
-    "start_url": "./index.html?appv=v2026.52",
+    "id": "./index.html?prod=1",
+    "start_url": "./index.html?appv=v2026.53",
     "scope": "./",
     "display": "standalone",
     "background_color": "#0b2f6b",
     "theme_color": "#0b2f6b",
-    "description": "Nearest Pélicandrome Finder Q400 - version pérenne",
+    "description": "Nearest Pélicandrome Finder Q400",
     "icons": [
         {
             "src": "icons/icon-192x192.png",
