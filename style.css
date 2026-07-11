@@ -5398,6 +5398,174 @@ body {
     cursor: pointer;
 }
 
+
+
+/* v12.96 TEST — calque trafic ADS-B indicatif */
+.traffic-map-button {
+    font-size: 34px;
+    overflow: hidden;
+}
+
+.traffic-map-button.active {
+    background: linear-gradient(180deg, #0b6fb3 0%, #064f8a 100%);
+    border-color: #064f8a;
+    color: #ffffff;
+}
+
+.traffic-map-button.loading .traffic-icon {
+    animation: trafficPulse 0.9s ease-in-out infinite alternate;
+}
+
+.traffic-icon {
+    display: block;
+    transform: translateY(-5px) rotate(-18deg);
+    font-size: 44px;
+    line-height: 1;
+    font-weight: 900;
+}
+
+.traffic-label {
+    position: absolute;
+    left: 50%;
+    bottom: 7px;
+    transform: translateX(-50%);
+    padding: 2px 7px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.94);
+    color: var(--primary-color);
+    border: 1px solid rgba(0,90,156,.28);
+    font-size: 11px;
+    font-weight: 950;
+    letter-spacing: .03em;
+}
+
+.traffic-button-count {
+    position: absolute;
+    top: 5px;
+    right: 6px;
+    min-width: 22px;
+    height: 20px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: #e9002f;
+    color: #ffffff;
+    border: 1px solid rgba(255,255,255,.9);
+    font-size: 12px;
+    font-weight: 950;
+    line-height: 20px;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.left-map-action-button.active .traffic-label {
+    background: rgba(255,255,255,.96);
+    color: var(--primary-color);
+}
+
+.traffic-status-display {
+    position: absolute;
+    left: 130px;
+    top: calc(var(--safe-area-top) + var(--map-action-top-offset) + 10px);
+    z-index: 1002;
+    max-width: min(560px, calc(100vw - 300px));
+    padding: 8px 12px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.92);
+    color: #073763;
+    border: 1px solid rgba(0,90,156,.22);
+    box-shadow: 0 3px 12px rgba(0,0,0,.16);
+    font-size: 14px;
+    font-weight: 800;
+    pointer-events: none;
+}
+
+.traffic-status-loading { color: #0b5e93; }
+.traffic-status-error { color: #9b1c1c; border-color: rgba(220,38,38,.35); background: rgba(255,245,245,.95); }
+.traffic-status-ok { color: #064e3b; border-color: rgba(16,185,129,.35); background: rgba(240,253,244,.95); }
+
+.traffic-aircraft-icon {
+    background: transparent;
+    border: none;
+}
+
+.traffic-aircraft-arrow {
+    width: 24px;
+    height: 24px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #101828;
+    background: #ffd400;
+    border: 2px solid #111827;
+    border-radius: 50%;
+    font-size: 14px;
+    line-height: 1;
+    font-weight: 950;
+    box-shadow: 0 1px 6px rgba(0,0,0,.35);
+    transform-origin: center center;
+}
+
+.traffic-tooltip {
+    background: rgba(17,24,39,.90) !important;
+    color: #ffffff !important;
+    border: none !important;
+    border-radius: 6px !important;
+    font-weight: 900 !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.28) !important;
+}
+
+.traffic-popup {
+    min-width: 180px;
+    font-size: 13px;
+    line-height: 1.35;
+}
+
+.traffic-popup-title {
+    font-size: 17px;
+    font-weight: 950;
+    color: #003b70;
+    margin-bottom: 2px;
+}
+
+.traffic-popup-subtitle {
+    color: #667085;
+    font-weight: 800;
+    margin-bottom: 6px;
+}
+
+.traffic-popup-warning {
+    margin-top: 7px;
+    padding: 5px 7px;
+    border-radius: 8px;
+    background: #fff5f5;
+    color: #9b1c1c;
+    font-weight: 900;
+    font-size: 12px;
+}
+
+@keyframes trafficPulse {
+    from { opacity: .55; transform: translateY(-5px) rotate(-18deg) scale(.96); }
+    to { opacity: 1; transform: translateY(-5px) rotate(-18deg) scale(1.06); }
+}
+
+@media (max-width: 760px) {
+    .traffic-icon { font-size: 26px !important; transform: translateY(-4px) rotate(-18deg); }
+    .traffic-label { bottom: 3px !important; padding: 0 4px !important; font-size: 8px !important; }
+    .traffic-button-count { top: 2px !important; right: 3px !important; min-width: 16px !important; height: 14px !important; font-size: 9px !important; line-height: 14px !important; padding: 0 3px !important; }
+    .traffic-status-display {
+        left: 68px;
+        top: calc(env(safe-area-inset-top, 0px) + 31px);
+        max-width: calc(100vw - 160px);
+        padding: 5px 8px;
+        font-size: 11px;
+    }
+}
+
+@media (max-width: 430px) {
+    .traffic-status-display { left: 72px; top: 42px; max-width: calc(100vw - 150px); }
+}
+
 .update-reminder-primary {
     background: var(--primary-color);
     color: #ffffff;
@@ -6275,5 +6443,1124 @@ body {
     #deroutement .derout-gps-status-row-outside .derout-gps-status {
         width: 100% !important;
         justify-content: center !important;
+    }
+}
+
+
+/* ==========================================================================
+   v12.97 — bandeau commune survolée + popup feu plus tactile
+   ========================================================================== */
+#nearest-commune-display {
+    z-index: 1004 !important;
+    background-color: rgba(255,255,255,.96) !important;
+    border: 1px solid rgba(0,0,0,.25) !important;
+    box-shadow: 0 3px 14px rgba(0,0,0,.22) !important;
+}
+
+@media (min-width: 761px) {
+    #nearest-commune-display {
+        left: auto !important;
+        right: calc(env(safe-area-inset-right, 0px) + 18px) !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 18px) !important;
+        max-width: min(540px, calc(100vw - 230px)) !important;
+    }
+}
+
+.fire-history-map-popup {
+    min-width: 220px !important;
+    font-size: 18px !important;
+    line-height: 1.25 !important;
+}
+
+.fire-history-map-popup-actions {
+    gap: 12px !important;
+    margin-top: 12px !important;
+}
+
+.fire-history-map-select-btn,
+.fire-history-map-delete-btn {
+    min-height: 52px !important;
+    padding: 13px 16px !important;
+    border-radius: 14px !important;
+    font-size: 18px !important;
+    font-weight: 950 !important;
+    touch-action: manipulation !important;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    .fire-history-map-popup { min-width: 250px !important; }
+    .fire-history-map-select-btn,
+    .fire-history-map-delete-btn {
+        min-height: 58px !important;
+        font-size: 20px !important;
+        border-radius: 16px !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v12.99 — commune survolée restaurée + trafic ADS-B erreur lisible
+   ========================================================================== */
+#nearest-commune-display {
+    position: absolute !important;
+    display: none;
+    z-index: 1600 !important;
+    left: auto !important;
+    right: calc(env(safe-area-inset-right, 0px) + 130px) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 18px) !important;
+    width: auto !important;
+    max-width: min(560px, calc(100vw - 260px)) !important;
+    min-width: 260px !important;
+    max-height: none !important;
+    padding: 11px 18px !important;
+    border-radius: 18px !important;
+    background: rgba(255,255,255,.97) !important;
+    border: 1px solid rgba(0,0,0,.22) !important;
+    box-shadow: 0 4px 16px rgba(0,0,0,.24) !important;
+    color: #20242a !important;
+    font-size: 24px !important;
+    line-height: 1.15 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    box-sizing: border-box !important;
+    pointer-events: none !important;
+}
+#nearest-commune-display,
+#nearest-commune-display * {
+    font-size: 24px !important;
+}
+#nearest-commune-display b {
+    font-size: 28px !important;
+    font-weight: 900 !important;
+    color: var(--primary-color) !important;
+}
+#nearest-commune-display.gps-waiting b,
+#nearest-commune-display.loading b,
+#nearest-commune-display.unavailable b,
+#nearest-commune-display.unknown b {
+    color: #6f7780 !important;
+}
+.traffic-button-count {
+    min-width: 20px !important;
+}
+.traffic-status-display.traffic-status-error {
+    z-index: 1500 !important;
+    max-width: min(520px, calc(100vw - 220px)) !important;
+    white-space: normal !important;
+}
+
+@media (max-width: 760px) {
+    #nearest-commune-display {
+        left: 76px !important;
+        right: 88px !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 12px) !important;
+        max-width: none !important;
+        min-width: 0 !important;
+        padding: 8px 12px !important;
+        font-size: 17px !important;
+        white-space: normal !important;
+    }
+    #nearest-commune-display,
+    #nearest-commune-display * {
+        font-size: 17px !important;
+    }
+    #nearest-commune-display b {
+        font-size: 22px !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v12.99 — commune survolée visible en permanence + trafic ADS-B fallback
+   ========================================================================== */
+#nearest-commune-display {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    z-index: 1800 !important;
+    pointer-events: none !important;
+}
+
+#nearest-commune-display:empty::before {
+    content: "📍 Commune: GPS en attente";
+    color: #20242a;
+    font-weight: 900;
+}
+
+.traffic-status-display.traffic-status-error {
+    top: calc(var(--safe-area-top) + var(--map-action-top-offset) + 112px) !important;
+    left: 18px !important;
+    max-width: 340px !important;
+    border-radius: 14px !important;
+    font-size: 13px !important;
+    white-space: normal !important;
+}
+
+@media (hover: none) and (pointer: coarse) {
+    #nearest-commune-display {
+        display: flex !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.00 — HUD commune survolée auto-réparant
+   Objectif : ne plus dépendre d'un ancien display:none, d'un parent Leaflet,
+   d'un écran de reprise iPad ou d'un ordre CSS antérieur.
+   ========================================================================== */
+#nearest-commune-display {
+    position: fixed !important;
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+    z-index: 2147483000 !important;
+    left: auto !important;
+    top: auto !important;
+    right: calc(env(safe-area-inset-right, 0px) + 16px) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 16px) !important;
+    width: auto !important;
+    min-width: 250px !important;
+    max-width: min(560px, calc(100vw - 34px)) !important;
+    min-height: 44px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    padding: 10px 16px !important;
+    border-radius: 18px !important;
+    box-sizing: border-box !important;
+    background: rgba(255, 255, 255, 0.98) !important;
+    border: 2px solid rgba(0, 90, 156, 0.35) !important;
+    box-shadow: 0 5px 18px rgba(0, 0, 0, 0.30) !important;
+    color: #20242a !important;
+    font-size: 22px !important;
+    line-height: 1.12 !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    transform: none !important;
+    pointer-events: none !important;
+    contain: layout paint style !important;
+}
+
+#nearest-commune-display,
+#nearest-commune-display * {
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+#nearest-commune-display b {
+    color: var(--primary-color) !important;
+    font-size: 26px !important;
+    font-weight: 950 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+}
+
+#nearest-commune-display.gps-waiting b,
+#nearest-commune-display.loading b,
+#nearest-commune-display.unavailable b,
+#nearest-commune-display.unknown b {
+    color: #6f7780 !important;
+}
+
+#nearest-commune-display:empty::before {
+    content: "📍 Survolée: GPS en attente";
+    color: #20242a;
+    font-weight: 900;
+}
+
+body.npf-resuming #nearest-commune-display,
+html:not(.app-ready) #nearest-commune-display,
+body:not(.app-ready) #nearest-commune-display {
+    display: flex !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+}
+
+@media (max-width: 760px) {
+    #nearest-commune-display {
+        left: 10px !important;
+        right: 10px !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+        min-width: 0 !important;
+        max-width: none !important;
+        min-height: 38px !important;
+        padding: 8px 11px !important;
+        font-size: 16px !important;
+        white-space: normal !important;
+    }
+
+    #nearest-commune-display b {
+        font-size: 21px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.01 TEST — bandeau commune à gauche + état trafic par couleur
+   ========================================================================== */
+#nearest-commune-display {
+    left: 14px !important;
+    right: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14px) !important;
+    min-width: 360px !important;
+    max-width: min(560px, calc(100vw - 150px)) !important;
+    min-height: 54px !important;
+    padding: 12px 18px !important;
+    border-radius: 20px !important;
+    font-size: 24px !important;
+}
+
+#nearest-commune-display b {
+    font-size: 28px !important;
+}
+
+.traffic-status-display {
+    left: 14px !important;
+    right: auto !important;
+    top: auto !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 82px) !important;
+    max-width: min(520px, calc(100vw - 28px)) !important;
+    padding: 10px 14px !important;
+    border-radius: 16px !important;
+    font-size: 14px !important;
+}
+
+#traffic-layer-button.traffic-state-idle {
+    box-shadow: var(--shadow);
+}
+
+#traffic-layer-button.traffic-state-ok {
+    background: linear-gradient(180deg, rgba(230, 251, 241, 0.98) 0%, rgba(196, 244, 214, 0.98) 100%) !important;
+    border-color: rgba(22, 163, 74, 0.55) !important;
+}
+
+#traffic-layer-button.traffic-state-ok .traffic-label,
+#traffic-layer-button.traffic-state-ok .traffic-icon {
+    color: #0f6b34 !important;
+}
+
+#traffic-layer-button.traffic-state-loading {
+    background: linear-gradient(180deg, rgba(232, 244, 255, 0.98) 0%, rgba(206, 227, 255, 0.98) 100%) !important;
+    border-color: rgba(37, 99, 235, 0.45) !important;
+}
+
+#traffic-layer-button.traffic-state-loading .traffic-label,
+#traffic-layer-button.traffic-state-loading .traffic-icon {
+    color: #0b5e93 !important;
+}
+
+#traffic-layer-button.traffic-state-error {
+    background: linear-gradient(180deg, rgba(255, 240, 240, 0.98) 0%, rgba(255, 220, 220, 0.98) 100%) !important;
+    border-color: rgba(220, 38, 38, 0.45) !important;
+}
+
+#traffic-layer-button.traffic-state-error .traffic-label,
+#traffic-layer-button.traffic-state-error .traffic-icon {
+    color: #b42318 !important;
+}
+
+@media (max-width: 760px) {
+    #nearest-commune-display {
+        left: 10px !important;
+        right: auto !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+        min-width: 0 !important;
+        max-width: calc(100vw - 108px) !important;
+        min-height: 42px !important;
+        padding: 9px 12px !important;
+        font-size: 18px !important;
+        white-space: nowrap !important;
+    }
+
+    #nearest-commune-display b {
+        font-size: 23px !important;
+    }
+
+    .traffic-status-display {
+        left: 10px !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 66px) !important;
+        max-width: calc(100vw - 20px) !important;
+        padding: 8px 10px !important;
+        font-size: 12px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.02 TEST — bandeau commune bas droit décalé + fenêtre filtres ADS-B
+   ========================================================================== */
+#nearest-commune-display {
+    left: auto !important;
+    right: calc(env(safe-area-inset-right, 0px) + 116px) !important;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 14px) !important;
+    min-width: 360px !important;
+    max-width: min(560px, calc(100vw - 140px)) !important;
+    min-height: 54px !important;
+    padding: 12px 18px !important;
+    border-radius: 20px !important;
+    font-size: 24px !important;
+}
+
+#nearest-commune-display b {
+    font-size: 28px !important;
+}
+
+#traffic-layer-button,
+#traffic-layer-button * {
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    -webkit-touch-callout: none !important;
+    touch-action: manipulation !important;
+}
+
+.traffic-settings-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483200;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 18px;
+    background: rgba(15, 23, 42, 0.38);
+    backdrop-filter: blur(3px);
+    -webkit-backdrop-filter: blur(3px);
+}
+
+.traffic-settings-modal.open {
+    display: flex;
+}
+
+.traffic-settings-card {
+    width: min(620px, calc(100vw - 36px));
+    max-height: calc(100vh - 36px);
+    overflow: auto;
+    border-radius: 22px;
+    background: rgba(255, 255, 255, 0.98);
+    box-shadow: 0 12px 34px rgba(0,0,0,.34);
+    border: 1px solid rgba(255,255,255,.95);
+    padding: 20px;
+    color: #1f2937;
+    box-sizing: border-box;
+}
+
+.traffic-settings-header {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: 14px;
+    margin-bottom: 16px;
+}
+
+.traffic-settings-title {
+    font-size: 28px;
+    font-weight: 950;
+    color: var(--primary-color);
+    line-height: 1.1;
+}
+
+.traffic-settings-subtitle {
+    margin-top: 3px;
+    font-size: 14px;
+    font-weight: 800;
+    color: var(--light-text-color);
+}
+
+.traffic-settings-close {
+    width: 42px;
+    height: 42px;
+    border-radius: 999px;
+    border: 1px solid rgba(0,0,0,.12);
+    background: #f8fafc;
+    color: #334155;
+    font-size: 30px;
+    font-weight: 800;
+    line-height: 34px;
+    cursor: pointer;
+}
+
+.traffic-settings-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.traffic-settings-field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 12px;
+    border-radius: 16px;
+    background: #f8fafc;
+    border: 1px solid #dbe4ef;
+}
+
+.traffic-settings-field span {
+    font-size: 14px;
+    font-weight: 900;
+    color: #334155;
+}
+
+.traffic-settings-input-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.traffic-settings-input-row input {
+    width: 100%;
+    height: 46px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    padding: 0 12px;
+    font-size: 22px;
+    font-weight: 900;
+    color: #0f172a;
+    background: #ffffff;
+    box-sizing: border-box;
+}
+
+.traffic-settings-input-row em {
+    min-width: 48px;
+    font-style: normal;
+    font-size: 14px;
+    font-weight: 900;
+    color: #64748b;
+}
+
+.traffic-settings-note {
+    margin-top: 14px;
+    padding: 10px 12px;
+    border-radius: 14px;
+    background: #fff7ed;
+    border: 1px solid #fed7aa;
+    color: #7c2d12;
+    font-size: 13px;
+    font-weight: 800;
+}
+
+.traffic-settings-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 10px;
+    margin-top: 18px;
+}
+
+.traffic-settings-actions button {
+    min-width: 112px;
+    height: 46px;
+    border-radius: 12px;
+    border: 1px solid transparent;
+    font-size: 16px;
+    font-weight: 950;
+    cursor: pointer;
+}
+
+.traffic-settings-primary {
+    background: var(--primary-color);
+    color: #ffffff;
+}
+
+.traffic-settings-secondary {
+    background: #f8fafc;
+    color: #334155;
+    border-color: #cbd5e1 !important;
+}
+
+@media (max-width: 760px) {
+    #nearest-commune-display {
+        left: auto !important;
+        right: calc(env(safe-area-inset-right, 0px) + 96px) !important;
+        bottom: calc(env(safe-area-inset-bottom, 0px) + 10px) !important;
+        min-width: 0 !important;
+        max-width: calc(100vw - 116px) !important;
+        min-height: 42px !important;
+        padding: 9px 12px !important;
+        font-size: 18px !important;
+        white-space: nowrap !important;
+    }
+
+    #nearest-commune-display b {
+        font-size: 23px !important;
+    }
+
+    .traffic-settings-card {
+        padding: 16px;
+    }
+
+    .traffic-settings-title {
+        font-size: 24px;
+    }
+
+    .traffic-settings-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .traffic-settings-actions {
+        flex-direction: column-reverse;
+    }
+
+    .traffic-settings-actions button {
+        width: 100%;
+    }
+}
+
+
+/* ==========================================================================
+   v13.03 TEST — ADS-B sans bandeau, étiquette altitude et refresh 15 s
+   ========================================================================== */
+.traffic-status-display {
+    display: none !important;
+}
+
+.traffic-settings-checkbox-field {
+    justify-content: center;
+}
+
+.traffic-settings-check-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    min-height: 46px;
+}
+
+.traffic-settings-check-row input[type="checkbox"] {
+    width: 28px;
+    height: 28px;
+    flex: 0 0 auto;
+    accent-color: var(--primary-color);
+}
+
+.traffic-settings-check-row em {
+    font-style: normal;
+    font-size: 14px;
+    font-weight: 900;
+    color: #475569;
+}
+
+.traffic-aircraft-symbol-wrap {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 82px;
+    height: 44px;
+    pointer-events: none;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    position: absolute;
+    left: 29px;
+    top: 10px;
+}
+
+.traffic-aircraft-altitude-label {
+    position: absolute;
+    left: 54px;
+    top: 11px;
+    padding: 2px 5px;
+    border-radius: 7px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(17, 24, 39, 0.35);
+    color: #111827;
+    font-size: 11px;
+    font-weight: 950;
+    line-height: 1.05;
+    white-space: nowrap;
+    box-shadow: 0 1px 5px rgba(0,0,0,.22);
+}
+
+@media (max-width: 760px) {
+    .traffic-aircraft-altitude-label {
+        font-size: 10px;
+        padding: 2px 4px;
+    }
+}
+
+
+/* ==========================================================================
+   v13.04 TEST — meilleure visibilité de la position propre
+   ========================================================================== */
+.own-gps-vector-time-marker {
+    pointer-events: none !important;
+}
+
+.own-gps-plane-body {
+    background: rgba(255, 234, 0, 0.22) !important;
+    border-color: #111827 !important;
+    box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.95), 0 2px 10px rgba(0,0,0,.45) !important;
+}
+
+.own-gps-plane-shape {
+    color: #111827 !important;
+    text-shadow: -1px -1px 0 #ffea00, 1px -1px 0 #ffea00, -1px 1px 0 #ffea00, 1px 1px 0 #ffea00 !important;
+}
+
+
+/* ==========================================================================
+   v13.05 TEST — étiquette pélicandrome cliquable
+   ========================================================================== */
+.leaflet-tooltip.route-tooltip-clickable {
+    cursor: pointer !important;
+    pointer-events: auto !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+    touch-action: manipulation !important;
+}
+
+.leaflet-tooltip.route-tooltip-clickable:active {
+    transform: scale(0.98);
+}
+
+
+/* ==========================================================================
+   v13.06 TEST — priorités affichage commune + filtres trafic enrichis
+   ========================================================================== */
+#nearest-commune-display {
+    z-index: 980 !important;
+}
+
+.traffic-settings-modal {
+    z-index: 5000 !important;
+}
+
+.traffic-settings-nested-input-row {
+    margin-top: 8px !important;
+}
+
+.traffic-settings-nested-input-row > span {
+    font-weight: 950;
+    color: #0f172a;
+    min-width: 16px;
+    text-align: center;
+}
+
+.traffic-aircraft-symbol-wrap {
+    width: 96px !important;
+    height: 52px !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    position: absolute;
+    left: 48px;
+    top: 25px;
+    width: 34px;
+    height: 0;
+    border-top: 3px dotted rgba(17, 24, 39, 0.88);
+    transform-origin: left center;
+    pointer-events: none;
+    filter: drop-shadow(0 1px 2px rgba(255,255,255,.95));
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    left: 35px !important;
+    top: 14px !important;
+}
+
+.traffic-aircraft-altitude-label {
+    left: 62px !important;
+    top: 15px !important;
+}
+
+@media (max-width: 760px) {
+    .traffic-settings-card {
+        max-height: calc(100vh - 26px) !important;
+        padding: 16px !important;
+    }
+
+    .traffic-settings-grid {
+        grid-template-columns: 1fr !important;
+        gap: 10px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.07 TEST — MAJ PWA, modal trafic et vecteurs trafic corrigés
+   ========================================================================== */
+.traffic-settings-relative-line {
+    grid-column: 1 / -1;
+}
+
+.traffic-settings-inline-band-row {
+    display: grid !important;
+    grid-template-columns: auto 1fr auto minmax(110px, 150px) auto;
+    align-items: center;
+    gap: 10px !important;
+    min-height: 46px;
+}
+
+.traffic-settings-inline-band-row input[type="number"] {
+    width: 100%;
+    height: 42px;
+    border: 1px solid #cbd5e1;
+    border-radius: 12px;
+    padding: 0 10px;
+    font-size: 20px;
+    font-weight: 900;
+    color: #0f172a;
+    background: #ffffff;
+    box-sizing: border-box;
+}
+
+.traffic-relative-plusminus,
+.traffic-settings-inline-band-row strong {
+    font-size: 16px;
+    font-weight: 950;
+    color: #334155;
+}
+
+.traffic-settings-field-disabled {
+    opacity: 0.48;
+    filter: grayscale(0.25);
+}
+
+.traffic-settings-field-disabled input {
+    background: #e2e8f0 !important;
+    color: #64748b !important;
+}
+
+.traffic-aircraft-symbol-wrap {
+    width: 128px !important;
+    height: 128px !important;
+    position: relative !important;
+}
+
+.traffic-aircraft-vector-wrap {
+    position: absolute;
+    left: 64px;
+    top: 64px;
+    width: 0;
+    height: 0;
+    transform-origin: center center;
+    pointer-events: none;
+    z-index: 1;
+}
+
+.traffic-aircraft-dotted-vector {
+    position: absolute;
+    left: -2px !important;
+    top: -86px !important;
+    width: 0 !important;
+    height: 72px !important;
+    border-left: 4px dotted rgba(17, 24, 39, 0.95) !important;
+    border-top: none !important;
+    transform: none !important;
+    transform-origin: center bottom !important;
+    filter: drop-shadow(0 0 2px rgba(255,255,255,.98)) drop-shadow(0 1px 2px rgba(0,0,0,.45)) !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    left: 52px !important;
+    top: 52px !important;
+    z-index: 3 !important;
+}
+
+.traffic-aircraft-altitude-label {
+    left: 75px !important;
+    top: 54px !important;
+    z-index: 4 !important;
+}
+
+@media (max-width: 760px) {
+    .traffic-settings-inline-band-row {
+        grid-template-columns: auto 1fr auto minmax(96px, 130px) auto;
+        gap: 8px !important;
+    }
+
+    .traffic-settings-inline-band-row em {
+        font-size: 13px !important;
+    }
+}
+
+
+/* v13.08 TEST — fenêtre post-MAJ rétablie côté index.html ; styles existants conservés. */
+
+
+/* ==========================================================================
+   v13.09 TEST — export BLOC/FUEL PDF + centrage vecteur trafic
+   ========================================================================== */
+#export-bloc-fuel-pdf-btn {
+    background: #005a9c !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,.5) !important;
+    font-weight: 950 !important;
+}
+
+#export-bloc-fuel-pdf-btn:active {
+    transform: translateY(1px);
+}
+
+.traffic-aircraft-vector-wrap {
+    left: 64px !important;
+    top: 64px !important;
+    transform-origin: center center !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    left: -2px !important;
+    top: -92px !important;
+    height: 92px !important;
+    width: 0 !important;
+    border-left: 4px dotted rgba(17, 24, 39, 0.96) !important;
+    border-top: none !important;
+    transform: none !important;
+    transform-origin: center bottom !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    left: 52px !important;
+    top: 52px !important;
+}
+
+
+/* ==========================================================================
+   v13.11 TEST — vecteur trafic centré + partage BLOC/FUEL
+   ========================================================================== */
+#export-bloc-fuel-pdf-btn {
+    background: #005a9c !important;
+    color: #ffffff !important;
+    border: 1px solid rgba(255,255,255,.5) !important;
+    font-weight: 950 !important;
+}
+
+.traffic-aircraft-icon {
+    overflow: visible !important;
+}
+
+.traffic-aircraft-symbol-wrap {
+    display: block !important;
+    position: relative !important;
+    width: 128px !important;
+    height: 128px !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+}
+
+.traffic-aircraft-vector-wrap {
+    position: absolute !important;
+    left: 64px !important;
+    top: 64px !important;
+    width: 0 !important;
+    height: 0 !important;
+    transform-origin: 0 0 !important;
+    pointer-events: none !important;
+    z-index: 1 !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    position: absolute !important;
+    left: -2px !important;
+    top: -82px !important;
+    width: 4px !important;
+    height: 82px !important;
+    border-left: none !important;
+    background-image: radial-gradient(circle, rgba(17, 24, 39, 0.98) 0 2px, transparent 2.6px) !important;
+    background-size: 4px 9px !important;
+    background-repeat: repeat-y !important;
+    background-position: center top !important;
+    transform: none !important;
+    filter: drop-shadow(0 0 2px rgba(255,255,255,.98)) drop-shadow(0 1px 2px rgba(0,0,0,.45)) !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    position: absolute !important;
+    left: 64px !important;
+    top: 64px !important;
+    width: 26px !important;
+    height: 26px !important;
+    z-index: 3 !important;
+    transform-origin: center center !important;
+}
+
+.traffic-aircraft-altitude-label {
+    position: absolute !important;
+    left: 78px !important;
+    top: 51px !important;
+    z-index: 4 !important;
+}
+
+
+/* ========================================================================== 
+   v13.11 TEST — aperçu export BLOC/FUEL intégré à l'application
+   ========================================================================== */
+#bloc-fuel-export-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483200;
+    background: rgba(15, 23, 42, 0.58);
+    display: flex;
+    align-items: stretch;
+    justify-content: center;
+    padding: calc(env(safe-area-inset-top, 0px) + 12px) 12px calc(env(safe-area-inset-bottom, 0px) + 12px);
+    box-sizing: border-box;
+}
+
+.bloc-fuel-export-panel {
+    width: min(1180px, 100%);
+    height: 100%;
+    background: #ffffff;
+    border-radius: 18px;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.bloc-fuel-export-toolbar {
+    min-height: 58px;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid #cbd5e1;
+    background: #f8fafc;
+}
+
+.bloc-fuel-export-title {
+    flex: 1;
+    color: #0f172a;
+    font-size: 18px;
+    font-weight: 950;
+}
+
+.bloc-fuel-export-toolbar button {
+    border: none;
+    border-radius: 12px;
+    background: var(--primary-color);
+    color: #ffffff;
+    min-height: 42px;
+    padding: 0 14px;
+    font-size: 15px;
+    font-weight: 950;
+}
+
+.bloc-fuel-export-toolbar button.secondary {
+    background: #334155;
+}
+
+#bloc-fuel-export-frame {
+    flex: 1;
+    width: 100%;
+    border: none;
+    background: #ffffff;
+}
+
+@media (max-width: 760px) {
+    #bloc-fuel-export-overlay {
+        padding: calc(env(safe-area-inset-top, 0px) + 6px) 6px calc(env(safe-area-inset-bottom, 0px) + 6px);
+    }
+
+    .bloc-fuel-export-toolbar {
+        gap: 6px;
+        padding: 8px;
+        flex-wrap: wrap;
+    }
+
+    .bloc-fuel-export-title {
+        flex-basis: 100%;
+        font-size: 16px;
+    }
+
+    .bloc-fuel-export-toolbar button {
+        flex: 1;
+        min-width: 0;
+        padding: 0 8px;
+        font-size: 13px;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.12 TEST — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
+   ========================================================================== */
+.bloc-fuel-export-toolbar .print-primary {
+    background: #005a9c !important;
+}
+
+.bloc-fuel-export-toolbar .export-hint {
+    flex-basis: 100%;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 800;
+    line-height: 1.25;
+}
+
+@media (min-width: 761px) {
+    .bloc-fuel-export-toolbar .export-hint {
+        flex: 1 1 auto;
+        text-align: right;
+        padding-right: 6px;
+    }
+}
+
+
+/* ==========================================================================
+   v13.14 TEST — ajustements UI, export, position et trafic masqué
+   ========================================================================== */
+#traffic-layer-button {
+    display: none !important;
+}
+
+#bloc-fuel .flight-manager-bar {
+    flex-wrap: nowrap !important;
+    align-items: center !important;
+    gap: 10px !important;
+}
+
+#bloc-fuel .flight-manager-bar label.sr-only {
+    position: absolute !important;
+    width: 1px !important;
+    height: 1px !important;
+    padding: 0 !important;
+    margin: -1px !important;
+    overflow: hidden !important;
+    clip: rect(0, 0, 0, 0) !important;
+    white-space: nowrap !important;
+    border: 0 !important;
+}
+
+#bloc-fuel #flight-select {
+    flex: 0 0 250px !important;
+    min-width: 250px !important;
+}
+
+#bloc-fuel .flight-manager-bar button {
+    flex: 0 0 auto !important;
+    white-space: nowrap !important;
+}
+
+#bloc-fuel .flight-duration-summary {
+    margin-left: 0 !important;
+    flex: 0 0 auto !important;
+    min-height: 36px !important;
+    white-space: nowrap !important;
+}
+
+#previ-rotations .analyse-col:nth-child(2) .rotations-group .analyse-col-title,
+#suivi-rotations .analyse-col:nth-child(2) .rotations-group .analyse-col-title {
+    display: none !important;
+}
+
+#previ-rotations .analyse-col:nth-child(2) .rotations-group,
+#suivi-rotations .analyse-col:nth-child(2) .rotations-group {
+    padding-top: 14px !important;
+}
+
+#previ-rotations .analyse-col:nth-child(2) .rotations-group .result-line:first-of-type,
+#suivi-rotations .analyse-col:nth-child(2) .rotations-group .result-line:first-of-type {
+    margin-top: 0 !important;
+}
+
+@media (max-width: 760px) {
+    #bloc-fuel .flight-manager-bar {
+        flex-wrap: wrap !important;
+    }
+    #bloc-fuel #flight-select {
+        flex: 1 1 210px !important;
+        min-width: 210px !important;
     }
 }
