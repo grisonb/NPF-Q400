@@ -7564,3 +7564,111 @@ body:not(.app-ready) #nearest-commune-display {
         min-width: 210px !important;
     }
 }
+
+
+/* ==========================================================================
+   v13.27 TEST — suivi automatique position GPS depuis le bouton centrage
+   ========================================================================== */
+#center-gps-button.center-follow-active {
+    background: rgba(210, 245, 222, 0.96) !important;
+    border-color: #72c98a !important;
+    box-shadow: 0 4px 14px rgba(40, 167, 69, 0.32) !important;
+}
+
+#center-gps-button.center-follow-active .center-gps-icon,
+#center-gps-button.center-follow-active .map-action-icon {
+    filter: saturate(1.18) contrast(1.05);
+}
+
+#center-gps-button.center-follow-active::after {
+    content: "SUIVI";
+    position: absolute;
+    left: 50%;
+    bottom: 5px;
+    transform: translateX(-50%);
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(34, 139, 54, 0.30);
+    color: #1b7f38;
+    font-size: 10px;
+    font-weight: 950;
+    letter-spacing: .03em;
+    line-height: 1.25;
+    pointer-events: none;
+}
+
+@media (max-width: 760px) {
+    #center-gps-button.center-follow-active::after {
+        bottom: 3px;
+        font-size: 8px;
+        padding: 0 4px;
+    }
+}
+
+
+/* v13.30 — Historique des feux repliable dans la recherche */
+.fire-history-toggle {
+    flex: 1 1 auto;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    min-height: 34px;
+    border: none;
+    background: transparent;
+    color: #0b3d63;
+    font: inherit;
+    font-weight: 900;
+    text-align: left;
+    cursor: pointer;
+    padding: 0;
+}
+
+.fire-history-arrow {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 32px;
+    min-height: 32px;
+    border-radius: 999px;
+    background: rgba(0, 86, 179, 0.10);
+    color: #0056b3;
+    font-size: 17px;
+    font-weight: 900;
+    line-height: 1;
+}
+
+#results-list li.fire-history-header .fire-history-toggle:hover,
+#results-list li.fire-history-header .fire-history-toggle:active {
+    background: transparent;
+}
+
+
+/* v13.31 — Historique ouvert : flèche maintenue à droite de « Tout effacer » */
+.fire-history-title-toggle {
+    justify-content: flex-start !important;
+    min-width: 0;
+}
+
+.fire-history-arrow-button {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border: none;
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    cursor: pointer;
+}
+
+.fire-history-arrow-button:active .fire-history-arrow {
+    transform: scale(0.96);
+}
+
+#results-list li.fire-history-header .fire-history-arrow-button:hover,
+#results-list li.fire-history-header .fire-history-arrow-button:active {
+    background: transparent;
+}
