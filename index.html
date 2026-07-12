@@ -7,11 +7,11 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.53">
-    <link rel="manifest" href="manifest.json?appv=v2026.53">
-    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v2026.53">
-    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v2026.53">
-    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v2026.53">
+    <link rel="stylesheet" href="style.css?appv=v2026.54">
+    <link rel="manifest" href="manifest.json?appv=v2026.54">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v2026.54">
+    <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v2026.54">
+    <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v2026.54">
     <meta name="theme-color" content="#0b2f6b">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -56,12 +56,37 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.53';
+        const APP_VERSION = 'v2026.54';
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
         window.APP_VERSION = APP_VERSION;
         const shouldDisableServiceWorker = false;
         window.SW_DISABLED_FOR_PLATFORM = shouldDisableServiceWorker;
+
+        // v2026.54 — sur iPad/PWA la bascule de service worker peut nécessiter deux relances.
+        // On conserve donc volontairement l'alerte post-MAJ sur deux ouvertures.
+        const POST_UPDATE_NOTICE_REMAINING_KEY = 'npfPostUpdateRestartNoticeRemaining';
+        function markPostUpdateRestartNotice(version = APP_VERSION, remaining = 2) {
+            try {
+                localStorage.setItem('npfPostUpdateRestartNoticeVersion', version);
+                localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                localStorage.setItem(POST_UPDATE_NOTICE_REMAINING_KEY, String(Math.max(1, remaining)));
+            } catch (_) {}
+        }
+
+        // Sécurité : ne jamais laisser l'écran de démarrage bloquer indéfiniment.
+        // Ne remplace pas l'initialisation normale ; sert uniquement en secours si Safari/PWA rate un évènement.
+        window.addEventListener('load', () => {
+            setTimeout(() => {
+                try {
+                    if (document.body && !document.body.classList.contains('app-ready')) {
+                        document.body.classList.add('app-ready');
+                        document.documentElement.classList.add('app-ready');
+                    }
+                } catch (_) {}
+            }, 12000);
+        }, { once: true });
+
 
         /*
          * v13.00 TEST — HUD commune survolée auto-réparant + trafic ADS-B v3/source de secours, basé sur v12.99.
@@ -76,8 +101,7 @@
                     const reloadKey = `${SW_CONTROLLER_RELOAD_GUARD_KEY}:${APP_VERSION}`;
                     if (sessionStorage.getItem(reloadKey) === '1') return;
                     sessionStorage.setItem(reloadKey, '1');
-                    localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
-                    localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                    markPostUpdateRestartNotice(APP_VERSION, 2);
                 } catch (_) {}
 
                 window.location.reload();
@@ -142,8 +166,7 @@
             refreshUrl.searchParams.set('appv', APP_VERSION);
             refreshUrl.searchParams.set('ts', Date.now().toString());
             try {
-                localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
-                    localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                markPostUpdateRestartNotice(APP_VERSION, 2);
             } catch (_) {}
             window.location.replace(refreshUrl.toString());
         };
@@ -167,8 +190,7 @@
                     worker.addEventListener('statechange', () => {
                         if (worker.state === 'installed') {
                             try {
-                                localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
-                                localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                                markPostUpdateRestartNotice(APP_VERSION, 2);
                             } catch (_) {}
                             worker.postMessage({ type: 'SKIP_WAITING' });
                         }
@@ -197,8 +219,7 @@
                     const previousVersion = localStorage.getItem(APP_VERSION_STORAGE_KEY);
                     if (previousVersion !== APP_VERSION) {
                         if (previousVersion) {
-                            localStorage.setItem('npfPostUpdateRestartNoticeVersion', APP_VERSION);
-                            localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                            markPostUpdateRestartNotice(APP_VERSION, 2);
                             // v13.20 — réafficher immédiatement la fenêtre post-MAJ au premier lancement de la nouvelle version.
                             setTimeout(showEarlyPostUpdateRestartNoticeModalIfNeeded, 0);
                         }
@@ -237,8 +258,11 @@
                 modal.className = 'update-reminder-modal post-update-restart-modal';
                 modal.innerHTML = `
                     <div class="update-reminder-modal-content post-update-restart-modal-content" role="dialog" aria-modal="true" aria-labelledby="post-update-restart-title">
-                        <h3 id="post-update-restart-title">Mise à jour</h3>
-                        <p><strong>Une mise à jour vient d’être effectuée.</strong><br>Fermez et relancez l’application.</p>
+                        <h3 id="post-update-restart-title">Mise à jour installée</h3>
+                        <p>Une nouvelle version de NPF-Q400 vient d’être chargée.</p>
+                        <p>Ferme complètement l’application puis relance-la pour finaliser la mise à jour.</p>
+                        <p>Ce message peut apparaître plusieurs fois : c’est normal. Relance simplement l’application à chaque demande jusqu’à disparition du message.</p>
+                        <p>Si à un moment l’application devient anormalement lente à s’ouvrir ou reste bloquée au démarrage, supprime-la de l’écran d’accueil puis réinstalle-la depuis Safari.</p>
                     </div>
                 `;
                 document.body.appendChild(modal);
@@ -250,8 +274,16 @@
                  * au lancement suivant.
                  */
                 try {
-                    localStorage.removeItem('npfPostUpdateRestartNoticeVersion');
-                    localStorage.removeItem('npfPostUpdateRestartNoticePending');
+                    const remainingRaw = Number(localStorage.getItem(POST_UPDATE_NOTICE_REMAINING_KEY) || '1');
+                    const remaining = Number.isFinite(remainingRaw) ? remainingRaw : 1;
+                    if (remaining > 1) {
+                        localStorage.setItem(POST_UPDATE_NOTICE_REMAINING_KEY, String(remaining - 1));
+                        localStorage.setItem('npfPostUpdateRestartNoticePending', '1');
+                    } else {
+                        localStorage.removeItem('npfPostUpdateRestartNoticeVersion');
+                        localStorage.removeItem('npfPostUpdateRestartNoticePending');
+                        localStorage.removeItem(POST_UPDATE_NOTICE_REMAINING_KEY);
+                    }
                 } catch (_) {}
             } catch (_) {}
         }
@@ -386,7 +418,7 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.53"></script>
+    <script src="script.js?appv=v2026.54"></script>
     
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
