@@ -415,11 +415,20 @@ let communesByCodeInsee = new Map();
 let disabledAirports = new Set(), waterAirports = new Set(), customPelicanAirports = new Set();
 const MAGNETIC_DECLINATION = 1.0;
 let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
+let centerGpsFollowActive = false;
+let centerGpsFollowProgrammaticMove = false;
+let centerGpsFollowPauseTimer = null;
+let centerGpsFollowPausedUntil = 0;
+let centerGpsFollowStartedLiveGps = false;
+let centerGpsFollowHandlersInstalled = false;
+const CENTER_GPS_FOLLOW_RECENTER_DELAY_MS = 10000;
 let ownGpsVectorLayer = null, ownGpsVectorMarkers = [];
 let userToTargetLayer = null, lftwRouteLayer = null, fireHistoryLayer = null;
 let showLftwRoute = true;
 let departmentsLayerGroup = null;
 let departmentsLabelsLayer = null;
+let departmentsPolygonData = [];
+let departmentsLayerLoadPromise = null;
 let highVoltageLinesLayer = null;
 let highVoltageLinesRenderer = null;
 let areDepartmentsVisible = false;
@@ -498,6 +507,7 @@ const DEFAULT_TRAFFIC_SETTINGS = Object.freeze({
 });
 let trafficSettings = loadTrafficSettings();
 const FIRE_HISTORY_STORAGE_KEY = 'fireHistoryV1';
+const FIRE_HISTORY_COLLAPSED_STORAGE_KEY = 'fireHistoryCollapsedV1';
 const FIRE_HISTORY_MAX_ITEMS = 20;
 const FORCE_DISPLAY_MODE = new URLSearchParams(window.location.search).get('force_display') === '1';
 const SHOW_DEPARTMENTS_LAYER_KEY = 'showDepartmentsLayer';
@@ -680,6 +690,51 @@ async function refreshOfflineTilesRendering() {
 }
 
 
+function normalizeDepartmentCode(value) {
+    if (value === undefined || value === null) return '';
+    const raw = String(value).trim().toUpperCase();
+    if (!raw) return '';
+
+    if (/^(2A|2B)$/.test(raw)) return raw;
+    if (/^2[AB]$/.test(raw)) return raw;
+    if (/^\d$/.test(raw)) return `0${raw}`;
+    if (/^\d{2,3}$/.test(raw)) return raw;
+
+    return raw;
+}
+
+function deriveDepartmentCodeFromInsee(codeInsee) {
+    if (codeInsee === undefined || codeInsee === null) return '';
+    const code = String(codeInsee).trim().toUpperCase();
+    if (!code) return '';
+
+    if (/^2[AB]\d{3}$/.test(code)) return code.slice(0, 2);
+    if (/^97[1-6]\d{2}$/.test(code)) return code.slice(0, 3);
+    if (/^98\d{3}$/.test(code)) return code.slice(0, 3);
+    if (/^\d{5}$/.test(code)) return code.slice(0, 2);
+
+    return '';
+}
+
+function getCommuneCodeInsee(commune = {}) {
+    const directCandidates = [
+        commune.code_insee,
+        commune.codeInsee,
+        commune.insee,
+        commune.insee_code,
+        commune.code_commune,
+        commune.codeCommune,
+        commune.code
+    ];
+
+    for (const candidate of directCandidates) {
+        const value = candidate === undefined || candidate === null ? '' : String(candidate).trim().toUpperCase();
+        if (value) return value;
+    }
+
+    return '';
+}
+
 function formatCommuneDepartment(commune) {
     if (!commune || typeof commune !== 'object') return '';
 
@@ -696,9 +751,12 @@ function formatCommuneDepartment(commune) {
     ];
 
     for (const candidate of directCandidates) {
-        const value = candidate === undefined || candidate === null ? '' : String(candidate).trim().toUpperCase();
+        const value = normalizeDepartmentCode(candidate);
         if (value) return value;
     }
+
+    const fromInsee = deriveDepartmentCodeFromInsee(getCommuneCodeInsee(commune));
+    if (fromInsee) return fromInsee;
 
     const postalCode = commune.code_postal || commune.postal_code || commune.postcode;
     if (postalCode !== undefined && postalCode !== null) {
@@ -712,15 +770,21 @@ function formatCommuneDepartment(commune) {
 function getCommuneFromDatabaseByNameAndDepartment(commune) {
     if (!commune || !Array.isArray(allCommunes) || !allCommunes.length) return null;
 
+    const targetCodeInsee = getCommuneCodeInsee(commune);
+    if (targetCodeInsee && communesByCodeInsee instanceof Map) {
+        const exactByCode = communesByCodeInsee.get(targetCodeInsee);
+        if (exactByCode) return exactByCode;
+    }
+
     const targetName = simplifyString(commune.nom_standard || commune.name || '');
     if (!targetName) return null;
 
-    const targetDep = commune.dep_code ? String(commune.dep_code).trim().toUpperCase() : '';
+    const targetDep = formatCommuneDepartment(commune);
     const sameName = allCommunes.filter(item => simplifyString(item.nom_standard || item.name || '') === targetName);
 
     if (!sameName.length) return null;
     if (targetDep) {
-        const sameDep = sameName.find(item => String(item.dep_code || '').trim().toUpperCase() === targetDep);
+        const sameDep = sameName.find(item => formatCommuneDepartment(item) === targetDep);
         if (sameDep) return sameDep;
     }
 
@@ -1055,7 +1119,22 @@ function clearFireHistory() {
     drawFireHistoryMarkers();
 }
 
+function isFireHistoryCollapsed() {
+    try {
+        return localStorage.getItem(FIRE_HISTORY_COLLAPSED_STORAGE_KEY) === 'true';
+    } catch (_) {
+        return false;
+    }
+}
+
+function setFireHistoryCollapsed(collapsed) {
+    try {
+        localStorage.setItem(FIRE_HISTORY_COLLAPSED_STORAGE_KEY, collapsed ? 'true' : 'false');
+    } catch (_) {}
+}
+
 function displayFireHistory() {
+    // v13.31 — flèche de repli conservée à droite de « Tout effacer » quand l’historique est ouvert.
     const resultsList = document.getElementById('results-list');
     if (!resultsList) return;
 
@@ -1067,13 +1146,51 @@ function displayFireHistory() {
         return;
     }
 
+    const collapsed = isFireHistoryCollapsed();
+
     const header = document.createElement('li');
     header.className = 'fire-history-header';
-    header.innerHTML = `
-        <span>Derniers feux</span>
-        <button type="button" class="fire-history-clear-all" onclick="window.clearFireHistory()">🗑️ Tout effacer</button>
-    `;
+
+    const toggleHistory = () => {
+        setFireHistoryCollapsed(!collapsed);
+        displayFireHistory();
+    };
+
+    const titleButton = document.createElement('button');
+    titleButton.type = 'button';
+    titleButton.className = 'fire-history-toggle fire-history-title-toggle';
+    titleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    titleButton.innerHTML = '<span>Historique des feux</span>';
+    titleButton.addEventListener('click', toggleHistory);
+    header.appendChild(titleButton);
+
+    if (!collapsed) {
+        const clearButton = document.createElement('button');
+        clearButton.type = 'button';
+        clearButton.className = 'fire-history-clear-all';
+        clearButton.textContent = '🗑️ Tout effacer';
+        clearButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            window.clearFireHistory();
+        });
+        header.appendChild(clearButton);
+    }
+
+    const arrowButton = document.createElement('button');
+    arrowButton.type = 'button';
+    arrowButton.className = 'fire-history-arrow-button';
+    arrowButton.setAttribute('aria-label', collapsed ? 'Afficher l’historique des feux' : 'Masquer l’historique des feux');
+    arrowButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+    arrowButton.innerHTML = `<span class="fire-history-arrow">${collapsed ? '▼' : '▲'}</span>`;
+    arrowButton.addEventListener('click', toggleHistory);
+    header.appendChild(arrowButton);
+
     resultsList.appendChild(header);
+
+    if (collapsed) {
+        resultsList.style.display = 'block';
+        return;
+    }
 
     history.forEach((item, index) => {
         const li = document.createElement('li');
@@ -1113,6 +1230,11 @@ function displayFireHistory() {
 
     resultsList.style.display = 'block';
 }
+
+window.toggleFireHistoryCollapsed = function() {
+    setFireHistoryCollapsed(!isFireHistoryCollapsed());
+    displayFireHistory();
+};
 
 window.deleteFireHistoryItem = function(index) {
     const history = getFireHistory();
@@ -1419,6 +1541,18 @@ async function initializeApp() {
                 }
             });
     }, 500);
+    setTimeout(() => {
+        ensureDepartmentsLayerDataLoaded()
+            .then(() => {
+                if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') {
+                    refreshNearestCommuneDisplayFromKnownGps();
+                }
+                repairManualFireCommuneLabelsFromPolygons();
+            })
+            .catch((error) => {
+                console.warn('Préchargement calque départements impossible:', error);
+            });
+    }, 650);
     primeGpsFromStoredPosition();
     setTimeout(() => {
         if (typeof refreshNearestCommuneDisplayFromKnownGps === 'function') refreshNearestCommuneDisplayFromKnownGps();
@@ -2413,7 +2547,9 @@ function setupEventListeners() {
     });
 
     if (centerGpsButton) {
-        centerGpsButton.addEventListener('click', centerMapOnCurrentPosition);
+        refreshCenterGpsFollowButtonState();
+        installCenterGpsFollowHandlers();
+        centerGpsButton.addEventListener('click', toggleCenterGpsFollow);
     }
 
     liveGpsButton.addEventListener('click', toggleLiveGps);
@@ -2704,8 +2840,11 @@ function showPostUpdateRestartNoticeModal() {
     modal.className = 'update-reminder-modal post-update-restart-modal';
     modal.innerHTML = `
         <div class="update-reminder-modal-content post-update-restart-modal-content" role="dialog" aria-modal="true" aria-labelledby="post-update-restart-title">
-            <h3 id="post-update-restart-title">Mise à jour</h3>
-            <p><strong>Une mise à jour vient d’être effectuée.</strong><br>Fermez et relancez l’application.</p>
+            <h3 id="post-update-restart-title">Mise à jour installée</h3>
+            <p>Une nouvelle version de NPF-Q400 vient d’être chargée.</p>
+            <p>Ferme complètement l’application puis relance-la pour finaliser la mise à jour.</p>
+            <p>Ce message peut apparaître plusieurs fois : c’est normal. Relance simplement l’application à chaque demande jusqu’à disparition du message.</p>
+            <p>Si à un moment l’application devient anormalement lente à s’ouvrir ou reste bloquée au démarrage, supprime-la de l’écran d’accueil puis réinstalle-la depuis Safari.</p>
         </div>
     `;
 
@@ -4750,8 +4889,10 @@ function updateDepartmentsLayerAppearance() {
 }
 
 async function loadDepartmentsLayerData() {
+    if (hasLoadedDepartments) return;
+
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
-    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v12-38';
+    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-54';
     let response = null;
 
     /*
@@ -4786,6 +4927,15 @@ async function loadDepartmentsLayerData() {
     }
 
     const departmentsGeojson = await response.json();
+    departmentsPolygonData = buildDepartmentPolygonIndex(departmentsGeojson);
+
+    if (departmentsLayerGroup && typeof departmentsLayerGroup.clearLayers === 'function') {
+        departmentsLayerGroup.clearLayers();
+    }
+    if (departmentsLabelsLayer && typeof departmentsLabelsLayer.clearLayers === 'function') {
+        departmentsLabelsLayer.clearLayers();
+    }
+
     const geoJsonLayer = L.geoJSON(departmentsGeojson, {
         style: getDepartmentBoundaryStyle
     });
@@ -4808,12 +4958,25 @@ async function loadDepartmentsLayerData() {
     updateDepartmentsLayerAppearance();
 }
 
+function ensureDepartmentsLayerDataLoaded() {
+    if (hasLoadedDepartments) return Promise.resolve();
+    if (departmentsLayerLoadPromise) return departmentsLayerLoadPromise;
+
+    departmentsLayerLoadPromise = loadDepartmentsLayerData()
+        .catch((error) => {
+            departmentsLayerLoadPromise = null;
+            throw error;
+        });
+
+    return departmentsLayerLoadPromise;
+}
+
 async function toggleDepartmentsLayer(shouldShow) {
     const departmentsLayerButton = document.getElementById('departments-layer-button');
 
     if (shouldShow && !hasLoadedDepartments) {
         try {
-            await loadDepartmentsLayerData();
+            await ensureDepartmentsLayerDataLoaded();
         } catch (error) {
             console.error('Erreur de chargement du calque départements:', error);
             alert("Impossible de générer le calque des départements. Si l'appareil est hors ligne, il faut que le calque ait été préchargé au moins une fois après la mise à jour.");
@@ -5027,8 +5190,120 @@ function getCommuneNameFromProperties(properties = {}) {
     return simplifyCommuneDisplayName(rawName);
 }
 
+/*
+ * v13.29 — commune survolée : l'identification du département ne doit plus
+ * dépendre d'une recherche par nom. Les communes homonymes comme Mérignac
+ * existent dans plusieurs départements ; on utilise donc le code INSEE du
+ * polygone Etalab quand il est disponible.
+ */
+function getCommuneInseeCodeFromProperties(properties = {}) {
+    const directCandidates = [
+        properties.code,
+        properties.code_insee,
+        properties.codeInsee,
+        properties.insee,
+        properties.insee_code,
+        properties.code_commune,
+        properties.codeCommune
+    ];
+
+    for (const candidate of directCandidates) {
+        const value = candidate === undefined || candidate === null ? '' : String(candidate).trim().toUpperCase();
+        if (/^(?:\d{5}|2[AB]\d{3})$/.test(value)) return value;
+    }
+
+    return '';
+}
+
 function getCommuneDepCodeFromProperties(properties = {}) {
-    return properties.code_departement || properties.dep_code || properties.dep || properties.codeDepartement || '';
+    const directDep = properties.code_departement || properties.dep_code || properties.dep || properties.codeDepartement || '';
+    const normalizedDirectDep = normalizeDepartmentCode(directDep);
+    if (normalizedDirectDep) return normalizedDirectDep;
+
+    return deriveDepartmentCodeFromInsee(getCommuneInseeCodeFromProperties(properties));
+}
+
+/*
+ * v13.30 — commune survolée : le département affiché est calculé à partir
+ * du calque départements au même point GPS. Le nom vient du calque communes,
+ * le département vient du calque départements ; le code INSEE reste un secours.
+ */
+function getDepartmentCodeFromProperties(properties = {}) {
+    const directCandidates = [
+        properties.code,
+        properties.code_departement,
+        properties.dep_code,
+        properties.dep,
+        properties.codeDepartement,
+        properties.num_dep,
+        properties.numero
+    ];
+
+    for (const candidate of directCandidates) {
+        const value = normalizeDepartmentCode(candidate);
+        if (value) return value;
+    }
+
+    return '';
+}
+
+function getDepartmentNameFromProperties(properties = {}) {
+    return String(properties.nom || properties.nom_departement || properties.name || properties.libelle || properties.dep_nom || '').trim();
+}
+
+function buildDepartmentPolygonIndex(departmentsGeojson) {
+    const features = Array.isArray(departmentsGeojson?.features) ? departmentsGeojson.features : [];
+    const index = [];
+
+    features.forEach((feature) => {
+        const properties = feature.properties || {};
+        const depCode = getDepartmentCodeFromProperties(properties);
+        if (!depCode) return;
+
+        const rings = coordinatesToRings(feature.geometry);
+        const bounds = getGeometryBoundsFromRings(rings);
+        if (!bounds) return;
+
+        index.push({
+            depCode,
+            depName: getDepartmentNameFromProperties(properties),
+            rings,
+            bounds
+        });
+    });
+
+    return index;
+}
+
+function findDepartmentContainingPoint(lat, lon) {
+    if (!Array.isArray(departmentsPolygonData) || !departmentsPolygonData.length) return null;
+
+    const numericLat = Number(lat);
+    const numericLon = Number(lon);
+    if (!Number.isFinite(numericLat) || !Number.isFinite(numericLon)) return null;
+
+    for (const department of departmentsPolygonData) {
+        const bounds = department.bounds;
+        if (!bounds) continue;
+
+        if (
+            numericLat < bounds.minLat
+            || numericLat > bounds.maxLat
+            || numericLon < bounds.minLon
+            || numericLon > bounds.maxLon
+        ) {
+            continue;
+        }
+
+        if (isPointInPolygonRings(numericLat, numericLon, department.rings)) {
+            return {
+                dep_code: department.depCode,
+                dep_nom: department.depName || ''
+            };
+        }
+    }
+
+    return null;
 }
 
 function coordinatesToRings(geometry) {
@@ -5124,8 +5399,11 @@ function buildCommunePolygonIndex(communesGeojson) {
         const bounds = getGeometryBoundsFromRings(rings);
         if (!bounds) return;
 
+        const codeInsee = getCommuneInseeCodeFromProperties(properties);
+
         index.push({
             name,
+            codeInsee,
             depCode: getCommuneDepCodeFromProperties(properties),
             rings,
             bounds
@@ -5152,9 +5430,12 @@ function findCommuneContainingPoint(lat, lon) {
         }
 
         if (isPointInPolygonRings(lat, lon, commune.rings)) {
+            const departmentAtPoint = findDepartmentContainingPoint(lat, lon);
             return {
                 nom_standard: commune.name,
-                dep_code: commune.depCode || ''
+                dep_code: departmentAtPoint?.dep_code || commune.depCode || deriveDepartmentCodeFromInsee(commune.codeInsee) || '',
+                dep_nom: departmentAtPoint?.dep_nom || '',
+                code_insee: commune.codeInsee || ''
             };
         }
     }
@@ -5546,15 +5827,170 @@ function setupGpsResumeHandlers() {
 }
 
 
+function getKnownGpsLatLngForCentering() {
+    if (userMarker && typeof userMarker.getLatLng === 'function') {
+        try {
+            const pos = userMarker.getLatLng();
+            if (pos && Number.isFinite(pos.lat) && Number.isFinite(pos.lng)) {
+                return { lat: pos.lat, lng: pos.lng };
+            }
+        } catch (_) {}
+    }
+
+    if (lastPosition) {
+        const lat = Number(lastPosition.lat ?? lastPosition.latitude);
+        const lng = Number(lastPosition.lng ?? lastPosition.longitude);
+        if (Number.isFinite(lat) && Number.isFinite(lng)) {
+            return { lat, lng };
+        }
+    }
+
+    return null;
+}
+
+function refreshCenterGpsFollowButtonState() {
+    const button = document.getElementById('center-gps-button');
+    if (!button) return;
+    button.classList.toggle('center-follow-active', centerGpsFollowActive);
+    button.classList.toggle('active', centerGpsFollowActive);
+    button.setAttribute('aria-pressed', centerGpsFollowActive ? 'true' : 'false');
+    button.title = centerGpsFollowActive
+        ? 'Suivi position actif — cliquer pour désactiver'
+        : 'Centrer puis suivre ma position GPS';
+}
+
+function recenterMapOnKnownGpsPosition(reason = 'manual') {
+    if (!map) return false;
+    const pos = getKnownGpsLatLngForCentering();
+    if (!pos) return false;
+
+    centerGpsFollowProgrammaticMove = true;
+    try {
+        map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 11), {
+            animate: reason !== 'gps-update'
+        });
+    } finally {
+        setTimeout(() => {
+            centerGpsFollowProgrammaticMove = false;
+        }, 600);
+    }
+    return true;
+}
+
+function scheduleCenterGpsFollowRecentering() {
+    if (!centerGpsFollowActive) return;
+
+    centerGpsFollowPausedUntil = Date.now() + CENTER_GPS_FOLLOW_RECENTER_DELAY_MS;
+    if (centerGpsFollowPauseTimer) {
+        clearTimeout(centerGpsFollowPauseTimer);
+        centerGpsFollowPauseTimer = null;
+    }
+
+    centerGpsFollowPauseTimer = setTimeout(() => {
+        centerGpsFollowPauseTimer = null;
+        centerGpsFollowPausedUntil = 0;
+        if (centerGpsFollowActive) {
+            recenterMapOnKnownGpsPosition('manual-delay');
+        }
+    }, CENTER_GPS_FOLLOW_RECENTER_DELAY_MS);
+}
+
+function installCenterGpsFollowHandlers() {
+    if (!map || centerGpsFollowHandlersInstalled) return;
+    centerGpsFollowHandlersInstalled = true;
+
+    const onManualMapMove = (event) => {
+        if (!centerGpsFollowActive) return;
+
+        /*
+         * v13.28 — correction suivi GPS : lors du premier déplacement manuel
+         * juste après l'activation, Leaflet peut encore être dans une séquence
+         * de recentrage programmatique. On ne doit ignorer que les mouvements
+         * réellement générés par le code, pas le drag/touch de l'utilisateur.
+         */
+        const isUserInteraction = !!(event && event.originalEvent);
+        if (centerGpsFollowProgrammaticMove && !isUserInteraction) return;
+
+        scheduleCenterGpsFollowRecentering();
+    };
+
+    map.on('dragstart zoomstart', onManualMapMove);
+    map.on('movestart', (event) => {
+        if (event && event.originalEvent) onManualMapMove(event);
+    });
+}
+
+function enableCenterGpsFollow() {
+    centerGpsFollowActive = true;
+    centerGpsFollowPausedUntil = 0;
+    if (centerGpsFollowPauseTimer) {
+        clearTimeout(centerGpsFollowPauseTimer);
+        centerGpsFollowPauseTimer = null;
+    }
+
+    refreshCenterGpsFollowButtonState();
+    installCenterGpsFollowHandlers();
+
+    const liveGpsWasActive = !!watchId || localStorage.getItem('liveGpsActive') === 'true';
+    centerGpsFollowStartedLiveGps = !liveGpsWasActive;
+
+    if (!liveGpsWasActive) {
+        restartLiveGpsWatch({ silent: false });
+    } else {
+        requestOneShotGps({ silent: true, highAccuracy: true, timeout: 30000, maximumAge: 600000 });
+    }
+
+    if (!recenterMapOnKnownGpsPosition('enable') && navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition(
+            (pos) => {
+                updateUserPosition(pos);
+                recenterMapOnKnownGpsPosition('enable-current');
+            },
+            () => {
+                if (!recenterMapOnKnownGpsPosition('enable-fallback')) {
+                    alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
+                    disableCenterGpsFollow({ keepLiveGps: true });
+                }
+            },
+            { enableHighAccuracy: true, timeout: 30000, maximumAge: 600000 }
+        );
+    }
+}
+
+function disableCenterGpsFollow({ keepLiveGps = false } = {}) {
+    centerGpsFollowActive = false;
+    centerGpsFollowPausedUntil = 0;
+    if (centerGpsFollowPauseTimer) {
+        clearTimeout(centerGpsFollowPauseTimer);
+        centerGpsFollowPauseTimer = null;
+    }
+
+    if (!keepLiveGps && centerGpsFollowStartedLiveGps && watchId) {
+        try { navigator.geolocation.clearWatch(watchId); } catch (_) {}
+        watchId = null;
+        const liveGpsButton = document.getElementById('live-gps-button');
+        if (liveGpsButton) liveGpsButton.classList.remove('active');
+        localStorage.setItem('liveGpsActive', 'false');
+    }
+
+    centerGpsFollowStartedLiveGps = false;
+    refreshCenterGpsFollowButtonState();
+}
+
+function toggleCenterGpsFollow() {
+    if (centerGpsFollowActive) {
+        disableCenterGpsFollow();
+    } else {
+        enableCenterGpsFollow();
+    }
+}
+
 function centerMapOnCurrentPosition() {
+    // Conservé pour compatibilité avec d'éventuels appels existants : action ponctuelle sans activer le suivi.
     if (!map) return;
 
     if (!navigator.geolocation) {
-        if (userMarker && userMarker.getLatLng()) {
-            const pos = userMarker.getLatLng();
-            map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 11));
-            return;
-        }
+        if (recenterMapOnKnownGpsPosition('legacy')) return;
         alert("La géolocalisation n'est pas supportée par votre navigateur.");
         return;
     }
@@ -5562,19 +5998,12 @@ function centerMapOnCurrentPosition() {
     navigator.geolocation.getCurrentPosition(
         (pos) => {
             updateUserPosition(pos);
-            map.setView([pos.coords.latitude, pos.coords.longitude], Math.max(map.getZoom(), 11));
+            recenterMapOnKnownGpsPosition('legacy-current');
         },
         () => {
-            if (lastPosition && Number.isFinite(lastPosition.lat) && Number.isFinite(lastPosition.lng)) {
-                map.setView([lastPosition.lat, lastPosition.lng], Math.max(map.getZoom(), 11));
-                return;
+            if (!recenterMapOnKnownGpsPosition('legacy-fallback')) {
+                alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
             }
-            if (userMarker && userMarker.getLatLng()) {
-                const pos = userMarker.getLatLng();
-                map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 11));
-                return;
-            }
-            alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
         },
         { enableHighAccuracy: true, timeout: 30000, maximumAge: 600000 }
     );
@@ -5583,11 +6012,16 @@ function centerMapOnCurrentPosition() {
 function toggleLiveGps() {
     const liveGpsButton = document.getElementById('live-gps-button');
     if (watchId) {
+        if (centerGpsFollowActive) {
+            disableCenterGpsFollow({ keepLiveGps: true });
+        }
         navigator.geolocation.clearWatch(watchId);
         watchId = null;
         if (liveGpsButton) liveGpsButton.classList.remove('active');
         localStorage.setItem('liveGpsActive', 'false');
+        centerGpsFollowStartedLiveGps = false;
     } else {
+        centerGpsFollowStartedLiveGps = false;
         restartLiveGpsWatch({ silent: false });
     }
 }
@@ -5659,7 +6093,8 @@ function updateNearestCommuneDisplay(lat, lon) {
     const buildLabel = (commune, prefix = 'Commune') => {
         const displayCommune = enrichCommuneForDisplay(commune);
         if (!displayCommune) return '';
-        const depLabel = formatCommuneDepartment(displayCommune);
+        const departmentAtPoint = findDepartmentContainingPoint(lat, lon);
+        const depLabel = departmentAtPoint?.dep_code || formatCommuneDepartment(displayCommune);
         return `📍 ${prefix}: <b>${displayCommune.nom_standard || displayCommune.name || 'non déterminée'}${depLabel ? ` (${depLabel})` : ''}</b>`;
     };
 
@@ -5673,6 +6108,19 @@ function updateNearestCommuneDisplay(lat, lon) {
     const containedCommune = findCommuneContainingPoint(numericLat, numericLon);
     if (containedCommune) {
         showDisplay(buildLabel(containedCommune, 'Survolée'));
+
+        if (!hasLoadedDepartments) {
+            ensureDepartmentsLayerDataLoaded()
+                .then(() => {
+                    const display = document.getElementById('nearest-commune-display');
+                    if (!display) return;
+                    const refreshedCommune = findCommuneContainingPoint(numericLat, numericLon) || containedCommune;
+                    display.style.display = 'flex';
+                    display.className = 'nearest-commune-display';
+                    display.innerHTML = buildLabel(refreshedCommune, 'Survolée');
+                })
+                .catch((error) => console.warn('Chargement calque départements pour commune survolée impossible:', error));
+        }
         return;
     }
 
@@ -6268,6 +6716,10 @@ function updateUserPosition(pos) {
 
     if (typeof updateDeroutementGpsStatus === 'function') {
         updateDeroutementGpsStatus(isSimulationPosition ? 'GPS simulation' : 'GPS actualisé');
+    }
+
+    if (centerGpsFollowActive && Date.now() >= centerGpsFollowPausedUntil) {
+        recenterMapOnKnownGpsPosition('gps-update');
     }
 
     // Synchronise les calculs (dont GPS->Feu) dès qu'une position GPS est reçue.
@@ -10508,11 +10960,72 @@ function initializeCalculator() {
         });
     }
 
+    function normalizeHdvLimitLabel(value) {
+        const minutes = parseTime(value);
+        return minutes !== null ? (formatTime(minutes) || '00:00') : '';
+    }
+
+    function getLimitHdvWrappers() {
+        return [
+            document.getElementById('limite-hdv'),
+            document.getElementById('previ-limite-hdv')
+        ].filter(Boolean);
+    }
+
+    function setStoredGlobalLimitHdvLabel(value, options = {}) {
+        const { persistFirstFlight = true } = options;
+        const label = normalizeHdvLimitLabel(value);
+        if (!label) return '';
+
+        getLimitHdvWrappers().forEach(wrapper => {
+            wrapper.dataset.globalHdvLimit = label;
+            const display = wrapper.querySelector('.display-input');
+            const engine = wrapper.querySelector('.engine-input');
+            if (display) display.dataset.globalHdvLimit = label;
+            if (engine) engine.dataset.globalHdvLimit = label;
+        });
+
+        if (persistFirstFlight && dailyFlights[0]) {
+            dailyFlights[0].state = dailyFlights[0].state || {};
+            dailyFlights[0].state['limite-hdv'] = label;
+        }
+
+        return label;
+    }
+
+    function getStoredGlobalLimitHdvLabel() {
+        const firstFlightLabel = normalizeHdvLimitLabel(dailyFlights[0]?.state?.['limite-hdv']);
+        if (firstFlightLabel) return firstFlightLabel;
+
+        for (const wrapper of getLimitHdvWrappers()) {
+            const wrapperLabel = normalizeHdvLimitLabel(wrapper?.dataset?.globalHdvLimit);
+            if (wrapperLabel) return wrapperLabel;
+
+            const displayLabel = normalizeHdvLimitLabel(wrapper?.querySelector('.display-input')?.dataset?.globalHdvLimit);
+            if (displayLabel) return displayLabel;
+        }
+
+        const visibleLabel = normalizeHdvLimitLabel(document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '');
+        return visibleLabel || '08:00';
+    }
+
     function readCalculatorStateFromDom() {
         const state = {};
         document.querySelectorAll('#calculator-modal .input-wrapper').forEach(wrapper => {
             if (wrapper.id) {
-                state[wrapper.id] = wrapper.querySelector('.display-input')?.value || '';
+                let value = wrapper.querySelector('.display-input')?.value || '';
+
+                /*
+                 * v2026.54 — LIMITE HDV dynamique :
+                 * le champ affiché peut montrer le restant après les BLOC ARRIVÉE
+                 * saisis. En stockage, on conserve la limite journée de référence
+                 * pour éviter qu'elle baisse à chaque sauvegarde.
+                 */
+                if (wrapper.id === 'limite-hdv') {
+                    value = getStoredGlobalLimitHdvLabel() || value;
+                }
+
+                state[wrapper.id] = value;
             }
         });
 
@@ -10614,32 +11127,52 @@ function initializeCalculator() {
 
     function getGlobalLimitHdvMinutes() {
         /*
-         * v12.31 — Limite HDV multi-vols :
-         * la limite saisie du Vol n°1 devient la limite journée de référence.
-         * Les vols suivants affichent la limite restante avant le vol actif.
+         * v2026.54 — Limite HDV journée :
+         * la valeur stockée reste la limite journée de référence, même si le
+         * champ affiché montre le restant après les BLOC ARRIVÉE déjà saisis.
          */
-        const firstFlight = dailyFlights[0];
-        const firstLimit = parseTime(firstFlight?.state?.['limite-hdv']);
-        if (firstLimit !== null) return firstLimit;
-
-        const activeLimit = parseTime(document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '');
-        return activeLimit !== null ? activeLimit : parseTime('08:00');
+        const storedLimit = parseTime(getStoredGlobalLimitHdvLabel());
+        return storedLimit !== null ? storedLimit : parseTime('08:00');
     }
 
-    function getEffectiveLimitHdvForActiveFlight() {
-        const globalLimit = getGlobalLimitHdvMinutes();
-        let before = 0;
+    function getCurrentActiveFlightDurationFromDom() {
         try {
-            before = getCumulativeHdvBeforeActiveFlight();
+            const currentState = readCalculatorStateFromDom();
+            return getFlightDurationFromState(currentState);
         } catch (_) {
-            before = 0;
+            return 0;
         }
+    }
+
+    function getEffectiveLimitHdvForActiveFlight(options = {}) {
+        const includeCurrentFlight = !!options.includeCurrentFlight;
+        const globalLimit = getGlobalLimitHdvMinutes();
+        let used = 0;
+        try {
+            used = getCumulativeHdvBeforeActiveFlight();
+        } catch (_) {
+            used = 0;
+        }
+
+        if (includeCurrentFlight) {
+            used += getCurrentActiveFlightDurationFromDom();
+        }
+
         if (globalLimit === null) return null;
-        return Math.max(0, globalLimit - before);
+        return Math.max(0, globalLimit - used);
     }
 
     function updateDisplayedLimitHdvForActiveFlight() {
-        const effectiveLimit = getEffectiveLimitHdvForActiveFlight();
+        /*
+         * v2026.54 — affichage dynamique : dès qu'un BLOC ARRIVÉE est saisi,
+         * LIMITE HDV affiche le restant journée disponible.
+         * Les calculs du tableau BLOC/FUEL utilisent toujours la limite au
+         * début du vol actif afin de ne pas soustraire deux fois le vol courant.
+         */
+        const globalLabel = getStoredGlobalLimitHdvLabel();
+        setStoredGlobalLimitHdvLabel(globalLabel, { persistFirstFlight: false });
+
+        const effectiveLimit = getEffectiveLimitHdvForActiveFlight({ includeCurrentFlight: true });
         const effectiveLabel = formatTime(effectiveLimit) || '00:00';
 
         const mainWrapper = document.getElementById('limite-hdv');
@@ -10649,6 +11182,7 @@ function initializeCalculator() {
             const input = wrapper?.querySelector('.display-input');
             const engine = wrapper?.querySelector('.engine-input');
             if (!input) return;
+            wrapper.dataset.currentHdvRemaining = effectiveLabel;
             input.value = effectiveLabel;
             input.dataset.effectiveMultiflightLimit = effectiveLabel;
             if (engine) engine.value = effectiveLabel;
@@ -10972,7 +11506,7 @@ function initializeCalculator() {
             <h1>${safe(exportTitle)}</h1>
             <div>Total vols exportés : ${flightsForExport.length} · Total HDV : ${safe(formatDurationForFlightSummary(totalHdv))}</div>
         </div>
-        <div class="meta">Export : ${safe(exportDate)}<br>Vols exportés : ${flightsForExport.length}<br>Version : ${safe(window.APP_VERSION || 'v2026.53')}</div>
+        <div class="meta">Export : ${safe(exportDate)}<br>Vols exportés : ${flightsForExport.length}<br>Version : ${safe(window.APP_VERSION || 'v13.26')}</div>
     </div>
     ${flightSections}
     <script>
@@ -11493,6 +12027,10 @@ function initializeCalculator() {
         };
 
         const recalculateAndSave = () => {
+            if (wrapperRole === 'limite-hdv') {
+                setStoredGlobalLimitHdvLabel(displayInput.value);
+            }
+
             syncSharedHeaderFromWrapper(wrapper);
 
             if (wrapperRole === 'bloc-depart') {
