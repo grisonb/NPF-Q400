@@ -1,4 +1,4 @@
-const SW_VERSION = 'sw-v2026-53';
+const SW_VERSION = 'sw-v2026-54';
 
 const DB_NAME = 'OfflineTilesDB_v12_21';
 const DB_VERSION = 3;
