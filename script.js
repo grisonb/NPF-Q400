@@ -421,6 +421,8 @@ let centerGpsFollowPauseTimer = null;
 let centerGpsFollowPausedUntil = 0;
 let centerGpsFollowStartedLiveGps = false;
 let centerGpsFollowHandlersInstalled = false;
+let centerGpsFollowUserGestureActive = false;
+let centerGpsFollowLastUserGestureAt = 0;
 const CENTER_GPS_FOLLOW_RECENTER_DELAY_MS = 10000;
 let ownGpsVectorLayer = null, ownGpsVectorMarkers = [];
 let userToTargetLayer = null, lftwRouteLayer = null, fireHistoryLayer = null;
@@ -1159,8 +1161,10 @@ function displayFireHistory() {
     const titleButton = document.createElement('button');
     titleButton.type = 'button';
     titleButton.className = 'fire-history-toggle fire-history-title-toggle';
+    titleButton.setAttribute('aria-label', collapsed ? 'Afficher l’historique des feux' : 'Masquer l’historique des feux');
     titleButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    titleButton.innerHTML = '<span>Historique des feux</span>';
+    /* v13.34 — la flèche reste dans la zone du titre, loin de la colonne des X de suppression. */
+    titleButton.innerHTML = `<span>Historique des feux</span><span class="fire-history-arrow">${collapsed ? '▼' : '▲'}</span>`;
     titleButton.addEventListener('click', toggleHistory);
     header.appendChild(titleButton);
 
@@ -1175,15 +1179,6 @@ function displayFireHistory() {
         });
         header.appendChild(clearButton);
     }
-
-    const arrowButton = document.createElement('button');
-    arrowButton.type = 'button';
-    arrowButton.className = 'fire-history-arrow-button';
-    arrowButton.setAttribute('aria-label', collapsed ? 'Afficher l’historique des feux' : 'Masquer l’historique des feux');
-    arrowButton.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
-    arrowButton.innerHTML = `<span class="fire-history-arrow">${collapsed ? '▼' : '▲'}</span>`;
-    arrowButton.addEventListener('click', toggleHistory);
-    header.appendChild(arrowButton);
 
     resultsList.appendChild(header);
 
@@ -1200,8 +1195,20 @@ function displayFireHistory() {
 
         li.innerHTML = `
             <button type="button" class="fire-history-select" title="Reprendre ce feu">${name}</button>
+            <div class="fire-history-export-actions" aria-label="Exports du feu">
+                <button type="button" class="fire-history-export-btn fire-history-export-kml" title="Exporter ce feu vers ForeFlight">ForeFlight</button>
+                <button type="button" class="fire-history-export-btn fire-history-export-sdvfr" title="Exporter ce feu vers SDVFR Next">SDVFR</button>
+            </div>
             <button type="button" class="fire-history-delete" title="Supprimer ce feu">✕</button>
         `;
+
+        li.querySelector('.fire-history-export-kml')?.addEventListener('click', (event) => {
+            exportCurrentFireKml(event, item, event.currentTarget);
+        });
+
+        li.querySelector('.fire-history-export-sdvfr')?.addEventListener('click', (event) => {
+            exportCurrentFireSdvfrCsv(event, item, event.currentTarget);
+        });
 
         li.querySelector('.fire-history-select').addEventListener('click', () => {
             currentCommune = item;
@@ -1569,6 +1576,8 @@ async function initializeApp() {
     if (savedCommuneJSON) {
         currentCommune = JSON.parse(savedCommuneJSON);
         displayCommuneDetails(currentCommune, true);
+        setTimeout(() => fitMapToStartupFireContext({ reason: 'saved-fire-after-display' }), 350);
+        setTimeout(() => fitMapToStartupFireContext({ reason: 'saved-fire-after-gps' }), 1400);
     }
 
     setTimeout(() => {
@@ -2937,31 +2946,23 @@ function updateCommuneDisplay(commune) {
     const depLabel = formatCommuneDepartment(displayCommune);
     const depCode = depLabel ? ` (${depLabel})` : '';
     const communeNameHTML = `<span class="commune-name">${displayCommune.nom_standard || commune.nom_standard}${depCode}</span>`;
-    const exportButtonsHTML = `<span class="fire-export-buttons"><button id="export-kml-btn" class="export-kml-btn" type="button" title="Télécharger le fichier KML pour ForeFlight">ForeFlight</button><button id="export-sdvfr-csv-btn" class="export-sdvfr-csv-btn" type="button" title="Télécharger le fichier CSV pour SDVFR Next">SDVFR</button></span>`;
     const closeButtonHTML = `<span id="clear-commune-btn" class="clear-commune-btn" title="Effacer le feu">×</span>`;
+    const routeInfoHTML = `<div id="gps-feu-route-info" class="gps-feu-route-info" title="Route, distance et temps GPS vers le feu">---° / -- Nm / -- min</div><div id="gps-feu-rotation-info" class="gps-feu-rotation-info" title="Durée de rotation issue de l’onglet Suivi rotation">Rot. -- min</div>`;
     let sunsetHTML = '';
     if (typeof SunCalc !== 'undefined') {
         try {
             const now = new Date();
             const times = SunCalc.getTimes(now, commune.latitude_mairie, commune.longitude_mairie);
             const sunsetString = times.sunset.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Paris' });
-            sunsetHTML = `<div class="sunset-info">🌅&nbsp;CS&nbsp;<b>${sunsetString}</b></div><div id="gps-feu-route-info" class="gps-feu-route-info" title="Route et distance GPS vers le feu">---° / -- Nm</div>`;
+            sunsetHTML = `<div class="sunset-info">🌅&nbsp;CS&nbsp;<b>${sunsetString}</b></div>${routeInfoHTML}`;
         } catch (e) {
-            sunsetHTML = '<div class="sunset-info"></div><div id="gps-feu-route-info" class="gps-feu-route-info" title="Route et distance GPS vers le feu">---° / -- Nm</div>';
+            sunsetHTML = `<div class="sunset-info"></div>${routeInfoHTML}`;
         }
+    } else {
+        sunsetHTML = routeInfoHTML;
     }
-    communeDisplay.innerHTML = communeNameHTML + sunsetHTML + exportButtonsHTML + closeButtonHTML;
+    communeDisplay.innerHTML = communeNameHTML + sunsetHTML + closeButtonHTML;
     updateCommuneGpsRouteDisplay();
-
-    const exportKmlBtn = document.getElementById('export-kml-btn');
-    if (exportKmlBtn) {
-        exportKmlBtn.addEventListener('click', (event) => exportCurrentFireKml(event));
-    }
-
-    const exportSdvfrCsvBtn = document.getElementById('export-sdvfr-csv-btn');
-    if (exportSdvfrCsvBtn) {
-        exportSdvfrCsvBtn.addEventListener('click', (event) => exportCurrentFireSdvfrCsv(event));
-    }
 
     // On attache l'événement de clic au nouveau bouton
     const clearCommuneBtn = document.getElementById('clear-commune-btn');
@@ -3009,13 +3010,60 @@ function updateCommuneDisplay(commune) {
     }
 }
 
+function getCurrentGpsGroundSpeedKt() {
+    const speedMps = Number(lastPosition?.speedMps);
+    if (!Number.isFinite(speedMps) || speedMps <= 0) return null;
+    return speedMps * 1.9438444924406;
+}
+
+function formatGpsEtaMinutes(distanceNm) {
+    const speedKt = getCurrentGpsGroundSpeedKt();
+    if (!Number.isFinite(distanceNm) || distanceNm <= 0 || !Number.isFinite(speedKt) || speedKt < 30) {
+        return '-- min';
+    }
+    const minutes = Math.max(1, Math.round((distanceNm * 60) / speedKt));
+    return `${minutes} min`;
+}
+
+function getSuiviRotationDurationMinutesForMap() {
+    const suiviInput = document.querySelector('#suivi-duree-rotation-wrapper .display-input');
+    const suiviMinutes = parseTime(suiviInput?.value || '');
+    if (Number.isFinite(suiviMinutes) && suiviMinutes > 0) return suiviMinutes;
+
+    const previText = document.getElementById('duree-rotation')?.textContent || '';
+    const previMinutes = parseTime(previText);
+    if (Number.isFinite(previMinutes) && previMinutes > 0) return previMinutes;
+
+    if (Number.isFinite(CALCULATOR_DATA?.distPelicFeu) && CALCULATOR_DATA.distPelicFeu > 0) {
+        const computed = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
+        if (Number.isFinite(computed) && computed > 20) return computed;
+    }
+
+    return null;
+}
+
+function updateCommuneMapRotationInfo() {
+    const rotationInfo = document.getElementById('gps-feu-rotation-info');
+    if (!rotationInfo) return;
+
+    const minutes = getSuiviRotationDurationMinutesForMap();
+    rotationInfo.textContent = Number.isFinite(minutes) && minutes > 0
+        ? `Rot. ${Math.round(minutes)} min`
+        : 'Rot. -- min';
+    rotationInfo.classList.toggle('gps-feu-route-info-empty', !(Number.isFinite(minutes) && minutes > 0));
+}
+
 function updateCommuneGpsRouteDisplay() {
     const routeInfo = document.getElementById('gps-feu-route-info');
-    if (!routeInfo) return;
+    const rotationInfo = document.getElementById('gps-feu-rotation-info');
+    if (!routeInfo && !rotationInfo) return;
 
     if (!currentCommune || !userMarker || !userMarker.getLatLng) {
-        routeInfo.textContent = '---° / -- Nm';
-        routeInfo.classList.add('gps-feu-route-info-empty');
+        if (routeInfo) {
+            routeInfo.textContent = '---° / -- Nm / -- min';
+            routeInfo.classList.add('gps-feu-route-info-empty');
+        }
+        updateCommuneMapRotationInfo();
         return;
     }
 
@@ -3024,8 +3072,11 @@ function updateCommuneGpsRouteDisplay() {
     const userLatLng = userMarker.getLatLng();
 
     if (!Number.isFinite(targetLat) || !Number.isFinite(targetLon) || !userLatLng) {
-        routeInfo.textContent = '---° / -- Nm';
-        routeInfo.classList.add('gps-feu-route-info-empty');
+        if (routeInfo) {
+            routeInfo.textContent = '---° / -- Nm / -- min';
+            routeInfo.classList.add('gps-feu-route-info-empty');
+        }
+        updateCommuneMapRotationInfo();
         return;
     }
 
@@ -3033,8 +3084,11 @@ function updateCommuneGpsRouteDisplay() {
     const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, targetLat, targetLon);
     const magneticBearing = (trueBearingToTarget - MAGNETIC_DECLINATION + 360) % 360;
 
-    routeInfo.textContent = `${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm`;
-    routeInfo.classList.remove('gps-feu-route-info-empty');
+    if (routeInfo) {
+        routeInfo.textContent = `${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm / ${formatGpsEtaMinutes(distance)}`;
+        routeInfo.classList.remove('gps-feu-route-info-empty');
+    }
+    updateCommuneMapRotationInfo();
 }
 
 
@@ -4113,9 +4167,14 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
     updateCommuneDisplay(commune);
 
     const { latitude_mairie: lat, longitude_mairie: lon, nom_standard: name } = commune;
-    document.getElementById('search-input').value = name;
-    document.getElementById('results-list').style.display = 'none';
-    document.getElementById('clear-search').style.display = 'block';
+    // v2026.55 — après validation d'un feu, la barre de recherche est vidée.
+    // Le feu reste sélectionné via currentCommune + bandeau carte ; seul le texte de recherche est nettoyé.
+    const fireSearchInput = document.getElementById('search-input');
+    const fireResultsList = document.getElementById('results-list');
+    const fireClearSearchButton = document.getElementById('clear-search');
+    if (fireSearchInput) fireSearchInput.value = '';
+    if (fireResultsList) fireResultsList.style.display = 'none';
+    if (fireClearSearchButton) fireClearSearchButton.style.display = 'none';
 
     const allPoints = [[lat, lon]];
     const fireLabel = buildFireDisplayName(commune);
@@ -4892,7 +4951,7 @@ async function loadDepartmentsLayerData() {
     if (hasLoadedDepartments) return;
 
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
-    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-54';
+    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-55';
     let response = null;
 
     /*
@@ -5649,6 +5708,68 @@ function getStartupGpsCenterZoom() {
     );
 }
 
+
+function fitMapToStartupFireContext({ reason = 'startup-fire-context' } = {}) {
+    /*
+     * v13.41 — ouverture avec feu sélectionné : la carte doit afficher dans la
+     * même vue la position avion connue, le feu actif et les pélicandromes
+     * affichés/sélectionnés. On l'utilise uniquement comme cadrage de démarrage,
+     * sans activer le suivi GPS.
+     */
+    if (!map || !currentCommune) return false;
+
+    const fireLat = Number(currentCommune.latitude_mairie);
+    const fireLon = Number(currentCommune.longitude_mairie);
+    if (!Number.isFinite(fireLat) || !Number.isFinite(fireLon)) return false;
+
+    const points = [[fireLat, fireLon]];
+    const seen = new Set();
+    const addPoint = (lat, lon) => {
+        const numericLat = Number(lat);
+        const numericLon = Number(lon);
+        if (!Number.isFinite(numericLat) || !Number.isFinite(numericLon)) return;
+        const key = `${numericLat.toFixed(5)},${numericLon.toFixed(5)}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        points.push([numericLat, numericLon]);
+    };
+
+    const gpsPos = getKnownGpsLatLngForCentering();
+    if (gpsPos) addPoint(gpsPos.lat, gpsPos.lng);
+
+    try {
+        const countInput = document.getElementById('airport-count');
+        const count = Number.parseInt(countInput?.value || '0', 10);
+        const closest = Number.isFinite(count) && count > 0 ? getClosestAirports(fireLat, fireLon, count) : [];
+        closest.forEach(ap => addPoint(ap.lat, ap.lon));
+    } catch (_) {}
+
+    try {
+        const selectedPelic = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
+        if (selectedPelic) addPoint(selectedPelic.lat, selectedPelic.lon);
+    } catch (_) {}
+
+    if (!points.length) return false;
+
+    centerGpsFollowProgrammaticMove = true;
+    try {
+        if (points.length === 1) {
+            map.setView(points[0], Math.min(Math.max(getStartupGpsCenterZoom(), 9), 11), { animate: false });
+        } else {
+            map.fitBounds(L.latLngBounds(points).pad(0.25), {
+                animate: false,
+                padding: [34, 34],
+                maxZoom: 11
+            });
+        }
+    } finally {
+        setTimeout(() => {
+            centerGpsFollowProgrammaticMove = false;
+        }, 350);
+    }
+    return true;
+}
+
 function applyStartupGpsAutoCenter(lat, lng, { source = 'real', force = false } = {}) {
     /*
      * v12.54 — ouverture centrée GPS.
@@ -5672,6 +5793,10 @@ function applyStartupGpsAutoCenter(lat, lng, { source = 'real', force = false } 
         if (startupGpsAutoCenteredWithRealPosition) return false;
         if (startupGpsStoredCenterAppliedAt && !force) return false;
         startupGpsStoredCenterAppliedAt = Date.now();
+    }
+
+    if (currentCommune && fitMapToStartupFireContext({ reason: `startup-${source}` })) {
+        return true;
     }
 
     map.setView([numericLat, numericLng], getStartupGpsCenterZoom(), { animate: false });
@@ -5864,15 +5989,22 @@ function recenterMapOnKnownGpsPosition(reason = 'manual') {
     const pos = getKnownGpsLatLngForCentering();
     if (!pos) return false;
 
+    /*
+     * v13.40 — retour base v13.34 : le bouton Suivi ne doit plus provoquer
+     * de changement de zoom. Sur iPad/PWA, ce changement rechargeait les tuiles
+     * et pouvait faire disparaître la carte quelques secondes.
+     */
+    const currentZoom = Number.isFinite(map.getZoom()) ? map.getZoom() : 10;
     centerGpsFollowProgrammaticMove = true;
     try {
-        map.setView([pos.lat, pos.lng], Math.max(map.getZoom(), 11), {
-            animate: reason !== 'gps-update'
+        map.setView([pos.lat, pos.lng], currentZoom, {
+            animate: false,
+            noMoveStart: true
         });
     } finally {
         setTimeout(() => {
             centerGpsFollowProgrammaticMove = false;
-        }, 600);
+        }, 350);
     }
     return true;
 }
@@ -5899,27 +6031,90 @@ function installCenterGpsFollowHandlers() {
     if (!map || centerGpsFollowHandlersInstalled) return;
     centerGpsFollowHandlersInstalled = true;
 
+    const shouldIgnoreCenterFollowDomEvent = (event) => {
+        try {
+            const target = event && event.target;
+            if (!target || typeof target.closest !== 'function') return false;
+            return !!target.closest('.leaflet-control, .leaflet-popup, .leaflet-tooltip, button, input, textarea, select, a, #results-list, #commune-info-display, #nearest-commune-display');
+        } catch (_) {
+            return false;
+        }
+    };
+
+    const markUserMapGesture = (event, { active = true } = {}) => {
+        if (!centerGpsFollowActive) return;
+        if (event && shouldIgnoreCenterFollowDomEvent(event)) return;
+
+        centerGpsFollowUserGestureActive = active;
+        centerGpsFollowLastUserGestureAt = Date.now();
+
+        /*
+         * v13.34 — on arme la pause de 10 secondes dès le contact utilisateur
+         * sur la carte, avant les événements Leaflet. Sur iPad, le premier drag
+         * pouvait sinon arriver pendant le fanion de recentrage programmatique
+         * et être ignoré, ce qui provoquait un recentrage immédiat.
+         */
+        scheduleCenterGpsFollowRecentering();
+    };
+
+    const endUserMapGesture = (event) => {
+        if (!centerGpsFollowActive) {
+            centerGpsFollowUserGestureActive = false;
+            return;
+        }
+        if (event && shouldIgnoreCenterFollowDomEvent(event)) return;
+        markUserMapGesture(event, { active: false });
+        centerGpsFollowUserGestureActive = false;
+    };
+
+    const container = typeof map.getContainer === 'function' ? map.getContainer() : null;
+    if (container) {
+        ['pointerdown', 'touchstart', 'mousedown', 'wheel'].forEach((eventName) => {
+            container.addEventListener(eventName, (event) => markUserMapGesture(event, { active: true }), { passive: true, capture: true });
+        });
+
+        ['pointermove', 'touchmove'].forEach((eventName) => {
+            container.addEventListener(eventName, (event) => {
+                if (centerGpsFollowUserGestureActive) markUserMapGesture(event, { active: true });
+            }, { passive: true, capture: true });
+        });
+
+        ['pointerup', 'pointercancel', 'touchend', 'touchcancel', 'mouseup'].forEach((eventName) => {
+            container.addEventListener(eventName, endUserMapGesture, { passive: true, capture: true });
+        });
+    }
+
+    const forcePauseForMapGesture = () => {
+        if (!centerGpsFollowActive) return;
+        centerGpsFollowLastUserGestureAt = Date.now();
+        centerGpsFollowPausedUntil = Date.now() + CENTER_GPS_FOLLOW_RECENTER_DELAY_MS;
+        scheduleCenterGpsFollowRecentering();
+    };
+
     const onManualMapMove = (event) => {
         if (!centerGpsFollowActive) return;
 
-        /*
-         * v13.28 — correction suivi GPS : lors du premier déplacement manuel
-         * juste après l'activation, Leaflet peut encore être dans une séquence
-         * de recentrage programmatique. On ne doit ignorer que les mouvements
-         * réellement générés par le code, pas le drag/touch de l'utilisateur.
-         */
-        const isUserInteraction = !!(event && event.originalEvent);
+        const recentDomUserGesture = Date.now() - centerGpsFollowLastUserGestureAt < 1500;
+        const isUserInteraction = !!(
+            (event && event.originalEvent)
+            || centerGpsFollowUserGestureActive
+            || recentDomUserGesture
+        );
+
         if (centerGpsFollowProgrammaticMove && !isUserInteraction) return;
 
         scheduleCenterGpsFollowRecentering();
     };
 
-    map.on('dragstart zoomstart', onManualMapMove);
+    map.on('dragstart zoomstart', forcePauseForMapGesture);
+    map.on('drag moveend dragend zoomend', onManualMapMove);
     map.on('movestart', (event) => {
-        if (event && event.originalEvent) onManualMapMove(event);
+        if (event && event.originalEvent) {
+            forcePauseForMapGesture();
+            onManualMapMove(event);
+        }
     });
 }
-
 function enableCenterGpsFollow() {
     centerGpsFollowActive = true;
     centerGpsFollowPausedUntil = 0;
@@ -5960,6 +6155,8 @@ function enableCenterGpsFollow() {
 function disableCenterGpsFollow({ keepLiveGps = false } = {}) {
     centerGpsFollowActive = false;
     centerGpsFollowPausedUntil = 0;
+    centerGpsFollowUserGestureActive = false;
+    centerGpsFollowLastUserGestureAt = 0;
     if (centerGpsFollowPauseTimer) {
         clearTimeout(centerGpsFollowPauseTimer);
         centerGpsFollowPauseTimer = null;
@@ -6095,7 +6292,7 @@ function updateNearestCommuneDisplay(lat, lon) {
         if (!displayCommune) return '';
         const departmentAtPoint = findDepartmentContainingPoint(lat, lon);
         const depLabel = departmentAtPoint?.dep_code || formatCommuneDepartment(displayCommune);
-        return `📍 ${prefix}: <b>${displayCommune.nom_standard || displayCommune.name || 'non déterminée'}${depLabel ? ` (${depLabel})` : ''}</b>`;
+        return `<span class="nearest-commune-prefix">📍 ${prefix}:</span> <b class="nearest-commune-name">${displayCommune.nom_standard || displayCommune.name || 'non déterminée'}${depLabel ? ` (${depLabel})` : ''}</b>`;
     };
 
     const numericLat = Number(lat);
@@ -6292,7 +6489,7 @@ function escapeXml(value) {
 let exportKmlInProgress = false;
 let exportKmlLastActionTime = 0;
 
-async function exportCurrentFireKml(event = null) {
+async function exportCurrentFireKml(event = null, communeOverride = null, buttonOverride = null) {
     if (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -6306,20 +6503,21 @@ async function exportCurrentFireKml(event = null) {
     exportKmlInProgress = true;
     exportKmlLastActionTime = now;
 
-    const exportButton = document.getElementById('export-kml-btn');
+    const targetCommune = normalizeHistoryCommune(communeOverride) || currentCommune;
+    const exportButton = buttonOverride || document.getElementById('export-kml-btn');
     if (exportButton) {
         exportButton.disabled = true;
         exportButton.classList.add('busy');
     }
 
     try {
-        if (!currentCommune) {
+        if (!targetCommune) {
             alert('Aucun feu sélectionné.');
             return;
         }
 
-        const lat = Number(currentCommune.latitude_mairie);
-        const lon = Number(currentCommune.longitude_mairie);
+        const lat = Number(targetCommune.latitude_mairie);
+        const lon = Number(targetCommune.longitude_mairie);
 
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
             alert('Coordonnées du feu indisponibles.');
@@ -6332,7 +6530,7 @@ async function exportCurrentFireKml(event = null) {
          * et fournir un vrai fichier .kml à ouvrir/importer ensuite depuis Fichiers.
          * Coordonnées KML : longitude,latitude,altitude.
          */
-        const rawName = currentCommune.nom_standard || 'POINT_Q400';
+        const rawName = targetCommune.nom_standard || 'POINT_Q400';
         const safeName = rawName
             .toUpperCase()
             .normalize('NFD')
@@ -6403,7 +6601,7 @@ function buildSdvfrPointName(value) {
 let exportSdvfrCsvInProgress = false;
 let exportSdvfrCsvLastActionTime = 0;
 
-async function exportCurrentFireSdvfrCsv(event = null) {
+async function exportCurrentFireSdvfrCsv(event = null, communeOverride = null, buttonOverride = null) {
     if (event) {
         event.preventDefault();
         event.stopPropagation();
@@ -6417,20 +6615,21 @@ async function exportCurrentFireSdvfrCsv(event = null) {
     exportSdvfrCsvInProgress = true;
     exportSdvfrCsvLastActionTime = now;
 
-    const exportButton = document.getElementById('export-sdvfr-csv-btn');
+    const targetCommune = normalizeHistoryCommune(communeOverride) || currentCommune;
+    const exportButton = buttonOverride || document.getElementById('export-sdvfr-csv-btn');
     if (exportButton) {
         exportButton.disabled = true;
         exportButton.classList.add('busy');
     }
 
     try {
-        if (!currentCommune) {
+        if (!targetCommune) {
             alert('Aucun feu sélectionné.');
             return;
         }
 
-        const lat = Number(currentCommune.latitude_mairie);
-        const lon = Number(currentCommune.longitude_mairie);
+        const lat = Number(targetCommune.latitude_mairie);
+        const lon = Number(targetCommune.longitude_mairie);
 
         if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
             alert('Coordonnées du feu indisponibles.');
@@ -6443,8 +6642,8 @@ async function exportCurrentFireSdvfrCsv(event = null) {
          * name;description;type;latitude;longitude;shape;color
          * BELCODENE;Belcodene;FEU;43.427222;5.589444;diamond;yellow
          */
-        const pointName = buildSdvfrPointName(currentCommune.nom_standard || 'POINT_Q400');
-        const description = formatSdvfrCsvValue(currentCommune.nom_standard || pointName);
+        const pointName = buildSdvfrPointName(targetCommune.nom_standard || 'POINT_Q400');
+        const description = formatSdvfrCsvValue(targetCommune.nom_standard || pointName);
         const csv = [
             'name;description;type;latitude;longitude;shape;color',
             `${formatSdvfrCsvValue(pointName)};${description};FEU;${lat.toFixed(6)};${lon.toFixed(6)};diamond;yellow`
@@ -6677,13 +6876,27 @@ function updateUserPosition(pos) {
 
     if (isSimulationPosition) {
         clearOwnGpsVector();
-        lastPosition = { lat: latitude, lng: longitude, timestamp: gpsTimestampMs, simulation: true };
-    } else {
-        updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
         lastPosition = {
             lat: latitude,
             lng: longitude,
+            latitude,
+            longitude,
             timestamp: gpsTimestampMs,
+            speedMps: null,
+            speedKt: null,
+            simulation: true
+        };
+    } else {
+        updateOwnGpsVector(latitude, longitude, motionHeading, motionSpeed);
+        const storedSpeedMps = Number.isFinite(motionSpeed) ? motionSpeed : null;
+        lastPosition = {
+            lat: latitude,
+            lng: longitude,
+            latitude,
+            longitude,
+            timestamp: gpsTimestampMs,
+            speedMps: storedSpeedMps,
+            speedKt: storedSpeedMps !== null ? storedSpeedMps * 1.9438444924406 : null,
             altitudeFt: Number.isFinite(Number(pos.coords.altitude)) ? Math.round(Number(pos.coords.altitude) * 3.28084) : null,
             altitudeTimeMs: Number.isFinite(Number(pos.coords.altitude)) ? gpsTimestampMs : null
         };
@@ -6718,8 +6931,12 @@ function updateUserPosition(pos) {
         updateDeroutementGpsStatus(isSimulationPosition ? 'GPS simulation' : 'GPS actualisé');
     }
 
-    if (centerGpsFollowActive && Date.now() >= centerGpsFollowPausedUntil) {
-        recenterMapOnKnownGpsPosition('gps-update');
+    if (centerGpsFollowActive) {
+        const nowForFollow = Date.now();
+        const recentManualMapGesture = (nowForFollow - centerGpsFollowLastUserGestureAt) < CENTER_GPS_FOLLOW_RECENTER_DELAY_MS;
+        if (!centerGpsFollowUserGestureActive && !recentManualMapGesture && nowForFollow >= centerGpsFollowPausedUntil) {
+            recenterMapOnKnownGpsPosition('gps-update');
+        }
     }
 
     // Synchronise les calculs (dont GPS->Feu) dès qu'une position GPS est reçue.
@@ -10943,6 +11160,7 @@ function initializeCalculator() {
             || rowData.rltBottomVolume
             || rowData.rltBottomDensity
             || rowData.rltBottomMass
+            || rowData.rltRefracto
             || rowData.rltMode
             || rowData.rltFirstFull
             || rowData.rltFirstFullPending
@@ -11043,13 +11261,14 @@ function initializeCalculator() {
             const rltBottomVolume = rltWrapper?.dataset.bottomVolume || '';
             const rltBottomDensity = rltWrapper?.dataset.bottomDensity || '';
             const rltBottomMass = rltWrapper?.dataset.bottomMass || '';
+            const rltRefracto = rltWrapper?.dataset.refracto || '';
             const rltMode = rltWrapper?.dataset.rltMode || '';
             const rltFirstFull = rltWrapper?.dataset.rltFirstFull || '';
             const rltFirstFullPending = rltWrapper?.dataset.rltFirstFullPending || '';
             const rltFirstFullWanted = rltWrapper?.dataset.rltFirstFullWanted || '';
             const oaci = row.dataset.airportOaci || row.querySelector('.airport-oaci-cell')?.textContent?.replace('--', '').trim() || '';
-            if (time || fuel || oaci || rltMass || rltVolume || rltDensity || rltTopMass || rltTopDensity || rltTopVolume || rltBottomVolume || rltBottomDensity || rltBottomMass || rltMode || rltFirstFull || rltFirstFullPending || rltFirstFullWanted) {
-                tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity, rltTopMass, rltTopDensity, rltTopVolume, rltBottomVolume, rltBottomDensity, rltBottomMass, rltMode, rltFirstFull, rltFirstFullPending, rltFirstFullWanted });
+            if (time || fuel || oaci || rltMass || rltVolume || rltDensity || rltTopMass || rltTopDensity || rltTopVolume || rltBottomVolume || rltBottomDensity || rltBottomMass || rltRefracto || rltMode || rltFirstFull || rltFirstFullPending || rltFirstFullWanted) {
+                tableData.push({ time, fuel, oaci, rltMass, rltVolume, rltDensity, rltTopMass, rltTopDensity, rltTopVolume, rltBottomVolume, rltBottomDensity, rltBottomMass, rltRefracto, rltMode, rltFirstFull, rltFirstFullPending, rltFirstFullWanted });
             }
         });
         state.calculator_table_data = compactCalculatorTableData(tableData);
@@ -12590,12 +12809,70 @@ function initializeCalculator() {
         return `${Math.round(value)} kg`;
     }
 
+    function parseRltRefractoInput(value) {
+        const normalized = String(value || '').trim().replace(',', '.').replace(/[^0-9.]/g, '');
+        if (!normalized) return null;
+        let number = Number(normalized);
+        if (!Number.isFinite(number)) return null;
+        /* Tolérance iPad : 145 peut représenter 14,5. */
+        if (number > 30 && number <= 300) number = number / 10;
+        return Number.isFinite(number) ? number : null;
+    }
+
+    function getRltDensityFromRefracto(value) {
+        const refracto = parseRltRefractoInput(value);
+        if (refracto === null) return null;
+        if (refracto >= 11.5 && refracto <= 13.9) return 1.04;
+        if (refracto >= 14 && refracto <= 17.4) return 1.08;
+        if (refracto >= 17.5 && refracto <= 20.4) return 1.10;
+        if (refracto >= 20.5 && refracto <= 23.9) return 1.12;
+        if (refracto >= 24 && refracto <= 26.9) return 1.14;
+        if (refracto >= 27 && refracto <= 30) return 1.16;
+        return null;
+    }
+
+    function formatRltDensityForInput(value) {
+        if (!Number.isFinite(value)) return '';
+        return value.toFixed(2).replace(/0$/, '').replace(/\.$/, '');
+    }
+
+    function normalizeRltRefractoInputValue(value) {
+        return String(value || '').replace(',', '.').replace(/[^0-9.]/g, '');
+    }
+
+    function updateRltRefractoDensityOutput({ applyToDensityInputs = false } = {}) {
+        const {
+            refractoInput,
+            refractoDensityOutput,
+            massToVolumeDensityInput,
+            densityInput
+        } = getRltMassModalElements();
+
+        if (!refractoInput) return null;
+        const density = getRltDensityFromRefracto(refractoInput.value);
+        const densityLabel = density !== null ? formatRltDensityForInput(density) : '';
+
+        if (refractoDensityOutput) {
+            refractoDensityOutput.value = densityLabel;
+            refractoDensityOutput.classList.toggle('rlt-calculated-field', !!densityLabel);
+        }
+
+        if (applyToDensityInputs && densityLabel) {
+            if (massToVolumeDensityInput) massToVolumeDensityInput.value = densityLabel;
+            if (densityInput) densityInput.value = densityLabel;
+        }
+
+        return density;
+    }
+
     function getRltMassModalElements() {
         return {
             modal: document.getElementById('rlt-mass-modal'),
             massToVolumeMassInput: document.getElementById('rlt-mass-to-volume-mass-input'),
             massToVolumeDensityInput: document.getElementById('rlt-mass-to-volume-density-input'),
             massToVolumeVolumeInput: document.getElementById('rlt-mass-to-volume-volume-input'),
+            refractoInput: document.getElementById('rlt-refracto-input'),
+            refractoDensityOutput: document.getElementById('rlt-refracto-density-output'),
             volumeInput: document.getElementById('rlt-volume-input'),
             densityInput: document.getElementById('rlt-density-input'),
             massInput: document.getElementById('rlt-mass-input'),
@@ -12615,6 +12892,8 @@ function initializeCalculator() {
                 elements.massToVolumeMassInput,
                 elements.massToVolumeDensityInput,
                 elements.massToVolumeVolumeInput,
+                elements.refractoInput,
+                elements.refractoDensityOutput,
                 elements.volumeInput,
                 elements.densityInput,
                 elements.massInput
@@ -12753,6 +13032,7 @@ function initializeCalculator() {
         activeRltMassWrapper.dataset.bottomVolume = bottomVolume !== null ? formatDecimalValue(bottomVolume, 0) : '';
         activeRltMassWrapper.dataset.bottomDensity = bottomDensity !== null ? formatDecimalValue(bottomDensity, 3) : '';
         activeRltMassWrapper.dataset.bottomMass = bottomComputedMass !== null ? String(Math.round(bottomComputedMass)) : '';
+        activeRltMassWrapper.dataset.refracto = normalizeRltRefractoInputValue(getRltMassModalElements().refractoInput?.value || '');
         activeRltMassWrapper.dataset.volume = selectedVolume !== null ? formatDecimalValue(selectedVolume, 0) : '';
         activeRltMassWrapper.dataset.density = selectedDensity !== null ? formatDecimalValue(selectedDensity, 3) : '';
         activeRltMassWrapper.dataset.mass = String(Math.round(selectedMass));
@@ -12782,6 +13062,8 @@ function initializeCalculator() {
             massToVolumeMassInput,
             massToVolumeDensityInput,
             massToVolumeVolumeInput,
+            refractoInput,
+            refractoDensityOutput,
             volumeInput,
             densityInput,
             massInput,
@@ -12789,6 +13071,7 @@ function initializeCalculator() {
         } = getRltMassModalElements();
 
         ensureRltDensityDefaults();
+        updateRltRefractoDensityOutput({ applyToDensityInputs: false });
         markRltCalculatedField(null);
 
         const topMass = parseDecimalInput(massToVolumeMassInput?.value);
@@ -12843,6 +13126,8 @@ function initializeCalculator() {
             massToVolumeMassInput,
             massToVolumeDensityInput,
             massToVolumeVolumeInput,
+            refractoInput,
+            refractoDensityOutput,
             volumeInput,
             densityInput,
             massInput,
@@ -12874,7 +13159,7 @@ function initializeCalculator() {
             });
         }
 
-        [massToVolumeVolumeInput, massInput].filter(Boolean).forEach(input => {
+        [massToVolumeVolumeInput, refractoDensityOutput, massInput].filter(Boolean).forEach(input => {
             input.readOnly = true;
             input.setAttribute('readonly', 'readonly');
             input.setAttribute('aria-readonly', 'true');
@@ -12926,6 +13211,40 @@ function initializeCalculator() {
         bindInput(massToVolumeDensityInput, 'density', 'massToVolume');
         bindInput(volumeInput, 'volume', 'volumeToMass');
         bindInput(densityInput, 'density', 'volumeToMass');
+
+        if (refractoInput && refractoInput.dataset.rltRefractoBound !== '1') {
+            refractoInput.dataset.rltRefractoBound = '1';
+            refractoInput.addEventListener('focus', () => {
+                setTimeout(() => {
+                    try {
+                        const content = refractoInput.closest('.rlt-mass-modal-content');
+                        if (content && typeof content.scrollIntoView === 'function') {
+                            content.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'smooth' });
+                        }
+                    } catch (_) {}
+                }, 160);
+            });
+            refractoInput.addEventListener('input', () => {
+                refractoInput.value = normalizeRltRefractoInputValue(refractoInput.value);
+                try { refractoInput.setSelectionRange(refractoInput.value.length, refractoInput.value.length); } catch (_) {}
+                const density = updateRltRefractoDensityOutput({ applyToDensityInputs: true });
+                if (density !== null) {
+                    activeRltMassLastEdited = 'density';
+                    activeRltMassCalculationMode = 'refractoToDensity';
+                }
+                syncRltMassModalFromInputs();
+            });
+            refractoInput.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter') {
+                    event.preventDefault();
+                    volumeInput?.focus?.({ preventScroll: false });
+                }
+                if (event.key === 'Escape') {
+                    event.preventDefault();
+                    closeRltMassModal();
+                }
+            });
+        }
 
         if (firstFullBtn && firstFullBtn.dataset.rltFirstFullBound !== '1') {
             firstFullBtn.dataset.rltFirstFullBound = '1';
@@ -13005,6 +13324,7 @@ function initializeCalculator() {
             const topMass = parseDecimalInput(massToVolumeMassInput?.value);
             const topDensity = parseRltDensityInput(massToVolumeDensityInput?.value);
             const topVolume = parseDecimalInput(massToVolumeVolumeInput?.value);
+            const refractoValue = normalizeRltRefractoInputValue(refractoInput?.value || '');
             const bottomVolume = parseDecimalInput(volumeInput?.value);
             const bottomDensity = parseRltDensityInput(densityInput?.value);
             const bottomMass = parseDecimalInput(massInput?.value);
@@ -13061,6 +13381,7 @@ function initializeCalculator() {
             activeRltMassWrapper.dataset.bottomVolume = bottomVolume !== null ? formatDecimalValue(bottomVolume, 0) : '';
             activeRltMassWrapper.dataset.bottomDensity = bottomDensity !== null ? formatDecimalValue(bottomDensity, 3) : '';
             activeRltMassWrapper.dataset.bottomMass = bottomMass !== null ? String(Math.round(bottomMass)) : '';
+            activeRltMassWrapper.dataset.refracto = refractoValue;
             activeRltMassWrapper.dataset.rltMode = selectedMode;
             activeRltMassWrapper.dataset.rltFirstFull = selectedMode === 'firstFull' ? '1' : '';
             activeRltMassWrapper.dataset.rltFirstFullPending = selectedMode === 'firstFull' ? '1' : '';
@@ -13092,6 +13413,8 @@ function initializeCalculator() {
             if (massToVolumeMassInput) massToVolumeMassInput.value = '';
             if (massToVolumeDensityInput) massToVolumeDensityInput.value = '1.';
             if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = '';
+            if (refractoInput) refractoInput.value = '';
+            if (refractoDensityOutput) refractoDensityOutput.value = '';
             if (volumeInput) volumeInput.value = '';
             if (densityInput) densityInput.value = '1.';
             if (massInput) massInput.value = '';
@@ -13219,6 +13542,8 @@ function initializeCalculator() {
             massToVolumeMassInput,
             massToVolumeDensityInput,
             massToVolumeVolumeInput,
+            refractoInput,
+            refractoDensityOutput,
             volumeInput,
             densityInput,
             massInput
@@ -13240,6 +13565,7 @@ function initializeCalculator() {
         const storedBottomVolume = wrapper.dataset.bottomVolume || '';
         const storedBottomDensity = wrapper.dataset.bottomDensity || '';
         const storedBottomMass = wrapper.dataset.bottomMass || '';
+        const storedRefracto = wrapper.dataset.refracto || '';
         const storedMode = wrapper.dataset.rltMode || '';
         const storedFirstFull = wrapper.dataset.rltFirstFull || '';
 
@@ -13253,6 +13579,9 @@ function initializeCalculator() {
         if (massToVolumeMassInput) massToVolumeMassInput.value = hasDetailedRltData ? storedTopMass : '';
         if (massToVolumeDensityInput) massToVolumeDensityInput.value = hasDetailedRltData ? (storedTopDensity || '1.') : '1.';
         if (massToVolumeVolumeInput) massToVolumeVolumeInput.value = hasDetailedRltData ? storedTopVolume : '';
+        if (refractoInput) refractoInput.value = storedRefracto;
+        if (refractoDensityOutput) refractoDensityOutput.value = '';
+        updateRltRefractoDensityOutput({ applyToDensityInputs: false });
         if (volumeInput) volumeInput.value = hasDetailedRltData ? storedBottomVolume : storedVolume;
         if (densityInput) densityInput.value = hasDetailedRltData ? (storedBottomDensity || '1.') : (storedDensity || '1.');
         if (massInput) massInput.value = hasDetailedRltData ? storedBottomMass : storedMass;
@@ -13302,6 +13631,7 @@ function initializeCalculator() {
         wrapper.dataset.bottomVolume = data?.rltBottomVolume || '';
         wrapper.dataset.bottomDensity = data?.rltBottomDensity || '';
         wrapper.dataset.bottomMass = data?.rltBottomMass || '';
+        wrapper.dataset.refracto = data?.rltRefracto || '';
         wrapper.dataset.rltMode = data?.rltMode || '';
         wrapper.dataset.rltFirstFull = data?.rltFirstFull || '';
         wrapper.dataset.rltFirstFullPending = data?.rltFirstFullPending || data?.rltFirstFull || '';
@@ -13340,6 +13670,7 @@ function initializeCalculator() {
                 wrapper.dataset.bottomVolume = '';
                 wrapper.dataset.bottomDensity = '';
                 wrapper.dataset.bottomMass = '';
+                wrapper.dataset.refracto = '';
                 wrapper.dataset.rltMode = '';
                 wrapper.dataset.rltFirstFull = '';
                 wrapper.dataset.rltFirstFullPending = '';
@@ -13578,6 +13909,7 @@ function initializeCalculator() {
         recalculateBlocFuel();
         updatePreviTab();
         updateSuiviTab();
+        updateCommuneGpsRouteDisplay();
         updateDeroutementTab();
         if (typeof updateFlightDurationSummary === 'function') updateFlightDurationSummary();
     };
