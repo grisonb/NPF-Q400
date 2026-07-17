@@ -1,53 +1,26 @@
-NPF-Q400 — Version pérenne v2026.55
-Base : TEST v13.43
-Objet : validation pérenne des corrections TEST v13.33 à v13.43 sur base v2026.54
+NPF-Q400 — v2026.56 — suppression complète de la vue 3D online
 
-MODIFICATIONS INTÉGRÉES
+Base utilisée :
+- v2026.55 pérenne validée, équivalente à la branche TEST sans PMTiles ni 3D.
 
-1. Carte / suivi GPS / affichage au démarrage
-- Au démarrage, si un feu est déjà sélectionné, la carte recadre la vue pour afficher ensemble la position GPS connue, le feu, les pélicandromes affichés/sélectionnés et le pélicandrome actif si disponible.
-- Le bouton Suivi GPS recadre à zoom constant et sans animation afin d’éviter le rafraîchissement visible de la carte et la disparition temporaire des tuiles.
+Modifications :
+1. Suppression totale de la carte/vue 3D online.
+2. Aucun fichier vue-3d.html fourni.
+3. Aucune référence Cesium conservée.
+4. Aucun bouton 3D dans l’interface.
+5. Aucun cache service worker pour vue-3d.html.
+6. Conservation du système carte 2D Leaflet + ZIP raster.
+7. Conservation du système offline raster ZIP.
+8. Nom de cache service worker renouvelé : sw-v2026-56-sans-3d.
+9. Cache départements remis sur un nom cohérent : npf-q400-departments-v2026-56.
 
-2. Commune survolée
-- Le bandeau Survolée peut afficher le nom complet de commune et le département, y compris pour les noms très longs.
-- Le texte n’est plus tronqué par ellipse dans ce bandeau.
+Décision projet :
+- La carte 3D online est abandonnée.
+- Les prochaines versions TEST ne doivent pas réintroduire de vue 3D/Cesium, sauf demande explicite ultérieure.
 
-3. Bandeau feu sur la carte
-- Le bandeau du feu sélectionné affiche sur une seule ligne : nom du feu, CS, route, distance, temps vers le feu et durée de rotation.
-- Le CS est placé directement à côté du nom du feu.
-- La mention Rotations est raccourcie en Rot.
-- Le temps vers le feu est calculé à partir de la vitesse GPS sol lorsque disponible.
-- La durée de rotation affichée provient de l’onglet Suivi rotation.
-
-4. Historique des feux / exports
-- Les boutons ForeFlight et SDVFR sont placés sur chaque ligne de l’historique des feux.
-- Les boutons ForeFlight et SDVFR sont légèrement décalés vers la gauche pour les éloigner du bouton X de suppression.
-- L’historique des feux conserve son fonctionnement validé, sans reprise des essais ultérieurs de suppression/confirmation qui provoquaient des fermetures intempestives.
-
-5. Volume / Masse retardant
-- Ajout de la ligne Réfracto. = Densité.
-- La densité est calculée automatiquement selon les seuils suivants :
-  - 11.5 à 13.9 : densité 1.04
-  - 14 à 17.4 : densité 1.08
-  - 17.5 à 20.4 : densité 1.10
-  - 20.5 à 23.9 : densité 1.12
-  - 24 à 26.9 : densité 1.14
-  - 27 à 30 : densité 1.16
-- La ligne Réfracto./Densité est compactée pour rester utilisable avec le clavier iPad affiché.
-
-6. Recherche feu / commune
-- Après validation d’un feu depuis la recherche, la barre de recherche feu/commune est automatiquement vidée.
-- Le feu sélectionné reste actif sur la carte et dans le bandeau feu.
-- L’historique des feux n’est pas effacé.
-
-7. Version / cache
-- Passage APP_VERSION en v2026.55.
-- Mise à jour des paramètres appv dans index.html et manifest.json.
-- Mise à jour du service worker en sw-v2026-55.
-- Mise à jour du cache départements en npf-q400-departments-v2026-55.
-
-CONTRÔLES
-
-- Syntaxe script.js : OK.
-- Syntaxe sw.js : OK.
+Contrôles :
+- index.html : aucune référence 3D/Cesium.
+- script.js : aucune référence 3D/Cesium.
+- style.css : aucune référence 3D/Cesium.
+- sw.js : aucune référence 3D/Cesium.
 - manifest.json : OK.
