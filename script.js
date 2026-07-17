@@ -4167,7 +4167,7 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
     updateCommuneDisplay(commune);
 
     const { latitude_mairie: lat, longitude_mairie: lon, nom_standard: name } = commune;
-    // v2026.55 — après validation d'un feu, la barre de recherche est vidée.
+    // v2026.56 — après validation d'un feu, la barre de recherche est vidée.
     // Le feu reste sélectionné via currentCommune + bandeau carte ; seul le texte de recherche est nettoyé.
     const fireSearchInput = document.getElementById('search-input');
     const fireResultsList = document.getElementById('results-list');
@@ -4951,7 +4951,7 @@ async function loadDepartmentsLayerData() {
     if (hasLoadedDepartments) return;
 
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
-    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-55';
+    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-56';
     let response = null;
 
     /*
