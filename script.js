@@ -1,6 +1,150 @@
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.58';
+window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
+
 //  =========================================================================
 // INITIALISATION DE L'APPLICATION
 // =========================================================================
+
+/*
+ * v14.12 — blocage global du stylet.
+ *
+ * Apple Pencil et les autres stylets sont ignorés dans toute la PWA :
+ * carte, boutons, listes, fenêtres, recherche de communes et autres champs.
+ * Les interactions au doigt, à la souris et au clavier restent disponibles.
+ */
+function installGlobalStylusBlocker() {
+    if (window.__npfGlobalStylusBlockerInstalled) return;
+    window.__npfGlobalStylusBlockerInstalled = true;
+
+    let lastBlockedPenAt = 0;
+    let lastBlockedPenTarget = null;
+
+    const isPenEvent = (event) => (
+        String(event?.pointerType || '').toLowerCase() === 'pen'
+    );
+
+    const isEditableElement = (element) => {
+        if (!(element instanceof Element)) return false;
+        return Boolean(
+            element.closest(
+                'input, textarea, select, [contenteditable=""], '
+                + '[contenteditable="true"], [role="textbox"]'
+            )
+        );
+    };
+
+    const releaseTemporaryReadOnly = (element) => {
+        if (!element || !element.dataset?.npfPenTemporaryReadonly) return;
+
+        window.setTimeout(() => {
+            try {
+                element.readOnly = false;
+                delete element.dataset.npfPenTemporaryReadonly;
+                element.classList.remove('npf-global-stylus-blocked-field');
+            } catch (_) {}
+        }, 400);
+    };
+
+    const blurEditableTarget = (target) => {
+        if (!(target instanceof Element)) return;
+
+        const editable = target.closest(
+            'input, textarea, select, [contenteditable=""], '
+            + '[contenteditable="true"], [role="textbox"]'
+        );
+        if (!editable) return;
+
+        try {
+            /*
+             * readOnly empêche iPadOS Scribble d'activer le champ. Cette
+             * propriété est restaurée immédiatement pour l'utilisation au doigt.
+             */
+            if ('readOnly' in editable && editable.readOnly !== true) {
+                editable.readOnly = true;
+                editable.dataset.npfPenTemporaryReadonly = 'true';
+                editable.classList.add('npf-global-stylus-blocked-field');
+                releaseTemporaryReadOnly(editable);
+            }
+
+            editable.blur();
+        } catch (_) {}
+    };
+
+    const blockPenEvent = (event) => {
+        if (!isPenEvent(event)) return;
+
+        lastBlockedPenAt = performance.now();
+        lastBlockedPenTarget = event.target;
+
+        blurEditableTarget(event.target);
+
+        event.preventDefault();
+        event.stopPropagation();
+        event.stopImmediatePropagation();
+    };
+
+    /*
+     * Capture avant Leaflet et avant tous les gestionnaires de l'application.
+     */
+    ['pointerdown', 'pointerup', 'pointermove', 'pointercancel'].forEach((type) => {
+        document.addEventListener(type, blockPenEvent, {
+            capture: true,
+            passive: false
+        });
+    });
+
+    /*
+     * Certains Safari génèrent ensuite un clic ou un événement souris sans
+     * conserver pointerType. Le clic synthétique qui suit le stylet est donc
+     * supprimé lui aussi.
+     */
+    const blockSyntheticPenMouseEvent = (event) => {
+        const elapsed = performance.now() - lastBlockedPenAt;
+        const sameTarget = (
+            event.target === lastBlockedPenTarget
+            || (
+                lastBlockedPenTarget instanceof Element
+                && event.target instanceof Element
+                && (
+                    lastBlockedPenTarget.contains(event.target)
+                    || event.target.contains(lastBlockedPenTarget)
+                )
+            )
+        );
+
+        if (isPenEvent(event) || (elapsed >= 0 && elapsed < 700 && sameTarget)) {
+            blurEditableTarget(event.target);
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+        }
+    };
+
+    ['click', 'dblclick', 'mousedown', 'mouseup', 'contextmenu'].forEach((type) => {
+        document.addEventListener(type, blockSyntheticPenMouseEvent, {
+            capture: true,
+            passive: false
+        });
+    });
+
+    /*
+     * Dernier garde-fou : si Scribble a malgré tout tenté de focaliser un
+     * champ juste après un événement stylet, le focus est immédiatement retiré.
+     */
+    document.addEventListener('focusin', (event) => {
+        const elapsed = performance.now() - lastBlockedPenAt;
+        if (elapsed < 0 || elapsed >= 900 || !isEditableElement(event.target)) {
+            return;
+        }
+
+        blurEditableTarget(event.target);
+        event.preventDefault();
+        event.stopPropagation();
+    }, true);
+}
+
+installGlobalStylusBlocker();
+
 document.addEventListener('DOMContentLoaded', () => {
     const markAppReady = () => {
         if (document.body) {
@@ -35,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // =========================================================================
-// v2026.52 — version pérenne issue de v12.95 TEST
+// v2026.52 — version pérenne issue de v12.95 
 // Corrige le grand bandeau bas : Safari peut donner une hauteur CSS trop courte
 // avec -webkit-fill-available. On force une variable de hauteur réelle et on
 // redemande à Leaflet de recalculer sa taille.
@@ -409,9 +553,39 @@ document.addEventListener('DOMContentLoaded', () => {
 // =========================================================================
 // VARIABLES GLOBALES
 // =========================================================================
-let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, waterPointsLayer, currentCommune = null, selectedPelicanOACI = null;
+// v14.44 — filtre trafics au sol et zone centrée sur la carte.
+let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, waterPointsLayer, currentCommune = null, selectedPelicanOACI = null, selectedAirportDestination = null;
+let npfRunwayMapLayer = null;
+let npfRunwayRenderer = null;
 let communeAliases = [];
 let communesByCodeInsee = new Map();
+
+/*
+ * v14.40 — base nationale de localités intégralement offline.
+ *
+ * Une archive ZIP unique est pré-cachée par le service worker. Elle contient
+ * 179 402 villages, hameaux et lieux-dits répartis en petits fragments de
+ * recherche. Une saisie ne décompresse que le fragment utile : la base France
+ * reste disponible en mode avion sans charger 20 Mo de JSON en mémoire.
+ */
+const NAMED_PLACES_OFFLINE_ARCHIVE_URL =
+    './data/localites/localites-france-v14.56.zip?appv=v2026.58';
+const NAMED_PLACES_OFFLINE_RESULT_LIMIT = 5;
+const NAMED_PLACES_OFFLINE_SHARD_PREFIX_LENGTH = 3;
+// v2026.58 — la recherche phonétique charge tous les fragments partageant
+// les deux premières lettres, puis applique Soundex et Levenshtein.
+const NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH = 2;
+const NAMED_PLACES_OFFLINE_SHARD_CACHE_MAX = 64;
+
+let namedPlacesSearchSequence = 0;
+let namedPlacesOfflineArchive = null;
+let namedPlacesOfflineIndex = null;
+let namedPlacesOfflineLoadPromise = null;
+let namedPlacesOfflineLoadError = '';
+let namedPlacesOfflineLoadedCount = 0;
+let namedPlacesOfflineShardIdsByPrefix = new Map();
+const namedPlacesOfflineShardCache = new Map();
+const namedPlacesOfflineShardPromises = new Map();
 let disabledAirports = new Set(), waterAirports = new Set(), customPelicanAirports = new Set();
 const MAGNETIC_DECLINATION = 1.0;
 let userMarker = null, watchId = null, accuracyCircle = null, headingLayer = null, lastPosition = null;
@@ -423,7 +597,15 @@ let centerGpsFollowStartedLiveGps = false;
 let centerGpsFollowHandlersInstalled = false;
 let centerGpsFollowUserGestureActive = false;
 let centerGpsFollowLastUserGestureAt = 0;
+let centerGpsButtonLongPressTimer = null;
+let centerGpsButtonLongPressTriggered = false;
+let centerGpsButtonActivePointerId = null;
+let centerGpsButtonPressStartX = 0;
+let centerGpsButtonPressStartY = 0;
+let centerGpsButtonSuppressClickUntil = 0;
 const CENTER_GPS_FOLLOW_RECENTER_DELAY_MS = 10000;
+const CENTER_GPS_BUTTON_LONG_PRESS_MS = 650;
+const CENTER_GPS_BUTTON_MOVE_TOLERANCE_PX = 14;
 let ownGpsVectorLayer = null, ownGpsVectorMarkers = [];
 let userToTargetLayer = null, lftwRouteLayer = null, fireHistoryLayer = null;
 let showLftwRoute = true;
@@ -433,6 +615,18 @@ let departmentsPolygonData = [];
 let departmentsLayerLoadPromise = null;
 let highVoltageLinesLayer = null;
 let highVoltageLinesRenderer = null;
+
+/* v14.49 — calque routier vectoriel offline A / N / D / M. */
+let roadOverlayLayer = null;
+let roadOverlayCasingLayer = null;
+let roadOverlayLineLayer = null;
+let roadOverlayLabelsLayer = null;
+let roadOverlayCasingRenderer = null;
+let roadOverlayLineRenderer = null;
+let roadOverlayRefreshTimer = null;
+let roadOverlayRefreshToken = 0;
+let roadOverlayLoadedZoomTier = -1;
+const loadedRoadOverlayParts = new Map();
 let areDepartmentsVisible = false;
 let hasLoadedDepartments = false;
 let communesLayerGroup = null;
@@ -444,6 +638,17 @@ let communesViewportLayerData = [];
 let communesPolygonData = [];
 let communesLayerLoadController = null;
 let communesLayerLoadPromise = null;
+
+/*
+ * v13.93 — priorité des libellés de communes selon la population.
+ * La géométrie Etalab reste la source des contours. La population est chargée
+ * séparément depuis l'API officielle geo.api.gouv.fr et mise en cache localement.
+ */
+const COMMUNES_POPULATION_API_URL = 'https://geo.api.gouv.fr/communes?fields=nom,code,population&format=json';
+const COMMUNES_POPULATION_CACHE_KEY = 'npfCommunesPopulationV1';
+const COMMUNES_POPULATION_CACHE_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000;
+let communesPopulationByInsee = new Map();
+let communesPopulationLoadPromise = null;
 const DEFAULT_BASE_OACI = 'LFTW';
 let selectedBaseOACI = DEFAULT_BASE_OACI;
 let gaarCircuits = [];
@@ -452,7 +657,8 @@ let isDrawingMode = false;
 const manualCircuitColors = ['#ff00ff', '#00ffff', '#ff8c00', '#00ff00', '#ff1493'];
 let gaarLayer = null;
 let db; // Variable pour la connexion à la base de données IndexedDB
-const OFFLINE_DB_NAME = 'OfflineTilesDB_v12_21';
+let offlineDbOpenPromise = null;
+const OFFLINE_DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
 const DEFAULT_OFFLINE_TILES_ENABLED = true;
 const MAP_SOURCE_MODE_KEY = 'mapSourceMode';
@@ -462,11 +668,32 @@ const DEFAULT_OFFLINE_ONLINE_FALLBACK = true;
 const OFFLINE_TILES_MAX_ZOOM_KEY = 'offlineTilesMaxZoom';
 const OFFLINE_TILES_MIN_ZOOM_KEY = 'offlineTilesMinZoom';
 const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
+const OFFLINE_ACTIVE_PACK_DATABASES_KEY = 'offlineActivePackDatabases';
+const OFFLINE_ACTIVE_PACK_ALIASES_KEY = 'offlineActivePackAliases';
+const OFFLINE_MAP_DATABASE_PREFIX = 'OfflineMap_';
 const COMMUNES_CACHE_KEY = 'communesDataCacheV1';
 const COMMUNES_ALIASES_CACHE_KEY = 'communesAliasesCacheV2';
 const AIRPORT_PDF_STORE_NAME = 'airportPdfs';
 const AIRPORT_PDF_DB_NAME = 'AirportPdfsDB';
 const AIRPORT_PDF_DB_VERSION = 1;
+const FDF_REDUCED_PDF_KEY = 'DOC_FDF_REDUITE';
+const FDF_REDUCED_PDF_FILENAME = 'Doc Fdf Réduite.pdf';
+const FDF_REDUCED_PDF_LABEL = 'Doc FDF réduite';
+const FDF_REDUCED_PDF_SERVER_CANDIDATES = [
+    './pdf/Doc%20Fdf%20R%C3%A9duite.pdf',
+    './pdf/Doc%20Fdf%20R%C3%A9duit%C3%A9.pdf',
+    './pdf/Doc Fdf Réduite.pdf',
+    './pdf/Doc Fdf Réduité.pdf'
+];
+const OPS_FREQUENCIES_PDF_KEY = 'CARTE_FREQUENCES_OPS';
+const OPS_FREQUENCIES_PDF_FILENAME = 'Carte Fréquences OPS.pdf';
+const OPS_FREQUENCIES_PDF_LABEL = 'Carte Fréquences OPS';
+const OPS_FREQUENCIES_PDF_SERVER_CANDIDATES = [
+    './pdf/Carte%20Fr%C3%A9quences%20OPS.pdf',
+    './pdf/Carte%20Frequences%20OPS.pdf',
+    './pdf/Carte Fréquences OPS.pdf',
+    './pdf/Carte Frequences OPS.pdf'
+];
 let airportPdfDb = null;
 const WATER_POINTS_LAYER_KEY = 'showWaterPointsLayer';
 let showWaterPointsLayer = localStorage.getItem(WATER_POINTS_LAYER_KEY) === 'true';
@@ -475,37 +702,175 @@ const HIGH_VOLTAGE_LINES_GEOJSON_URL = 'lignes_ht_rte_simplifiees.geojson';
 let showHighVoltageLinesLayer = localStorage.getItem(HIGH_VOLTAGE_LINES_LAYER_KEY) === 'true';
 let hasLoadedHighVoltageLines = false;
 let isHighVoltageLinesLoading = false;
+
+const ROAD_OVERLAY_LAYER_KEY = 'showRoadOverlayLayer';
+const ROAD_OVERLAY_CACHE_NAME = 'npf-road-overlay-data-v1';
+const ROAD_OVERLAY_MANIFEST_KEY = 'npfRoadOverlayManifestV1';
+const ROAD_OVERLAY_RESOURCE_PREFIX = './__npf_road_overlay__/';
+let showRoadOverlayLayer = localStorage.getItem(ROAD_OVERLAY_LAYER_KEY) === 'true';
+let isRoadOverlayLoading = false;
+
 const TRAFFIC_LAYER_KEY = 'showTrafficLayer';
-const TRAFFIC_PROVIDER_LABEL = 'adsb.fi v3 / adsb.lol / airplanes.live';
-const TRAFFIC_API_PROVIDERS = [
-    { label: 'adsb.fi v3', baseUrl: 'https://opendata.adsb.fi/api/v3', urlFormat: 'latlon' },
-    { label: 'adsb.lol v2', baseUrl: 'https://api.adsb.lol/v2', urlFormat: 'latlon' },
-    { label: 'airplanes.live v2', baseUrl: 'https://api.airplanes.live/v2', urlFormat: 'point' }
-];
+
+/*
+ * v14.24 — appel direct de SafeSky Production depuis NPF.
+ *
+ * La clé temporaire est volontairement intégrée dans le code à la demande de
+ * l'utilisateur. Elle sera visible dans GitHub, le navigateur et les requêtes.
+ */
+const SAFESKY_API_BASE_URL =
+    'https://public-api.safesky.app/v1/beacons/';
+const SAFESKY_API_KEY =
+    'd7a0b3c6d9d2d5d1d4b7e0c3a6c9d2f5';
+const SAFESKY_PROVIDER = Object.freeze({
+    label: 'SafeSky',
+    baseUrl: SAFESKY_API_BASE_URL,
+    urlFormat: 'viewport',
+    dataFormat: 'safesky'
+});
+const TRAFFIC_PROVIDER_LABEL = 'SafeSky';
+
+/*
+ * SafeSky est l'unique source afin d'éviter les doublons avec les sources ADS-B
+ * publiques déjà agrégées par SafeSky.
+ */
+const TRAFFIC_API_PROVIDERS = Object.freeze([SAFESKY_PROVIDER]);
 const TRAFFIC_RADIUS_NM = 50;
 const TRAFFIC_REFRESH_INTERVAL_MS = 5000;
-const TRAFFIC_MAX_AIRCRAFT = 80;
+const TRAFFIC_FETCH_TIMEOUT_MS = 7000;
 const TRAFFIC_MAX_SEEN_SECONDS = 90;
-const TRAFFIC_DISABLED_FOR_NOW = true;
+
+/*
+ * Le moteur trafic est actif. La requête est envoyée directement à SafeSky
+ * avec la clé intégrée dans l'en-tête x-api-key.
+ */
+const TRAFFIC_DISABLED_FOR_NOW = false;
 let trafficLayer = null;
-let showTrafficLayer = false;
-try { localStorage.setItem(TRAFFIC_LAYER_KEY, 'false'); } catch (_) {}
+let trafficAdvisoryLayer = null;
+let showTrafficLayer = localStorage.getItem(TRAFFIC_LAYER_KEY) === 'true';
 let isTrafficLoading = false;
 let trafficRefreshTimer = null;
 let lastTrafficRefreshAt = 0;
 let lastTrafficError = '';
 let lastTrafficDisplayedCount = 0;
+let lastTrafficAircraftSnapshot = [];
+let lastTrafficRenderMeta = null;
+
+/*
+ * v14.44 — déplacement fluide continu sur base v14.43.
+ * Les marqueurs sont conservés entre deux réponses SafeSky et raccordés
+ * progressivement aux nouvelles positions sans réintroduire les anciennes
+ * zones GPS / feu ni modifier le filtre explicite des trafics au sol.
+ */
+const TRAFFIC_TRACKED_IDENTIFIERS_STORAGE_KEY =
+    'safeSkyTrackedIdentifiersV1';
+
+/*
+ * v14.74 — indicatifs suivis permanents.
+ *
+ * Cette liste est intégrée au code de NPF : elle est donc automatiquement
+ * recréée après une réinstallation ou un effacement du stockage local. Elle
+ * est fusionnée avec les indicatifs ajoutés par l'utilisateur, sans doublon,
+ * et reste permanente même lorsqu'un indicatif est associé ultérieurement à
+ * son identifiant technique SafeSky.
+ */
+const TRAFFIC_PERMANENT_TRACKED_CALLSIGNS = Object.freeze([
+    'BENGA96',
+    'BENGA97',
+    'BENGA98',
+    'MILAN73',
+    'MILAN74',
+    'MILAN75',
+    'MILAN76',
+    'MILAN77',
+    'MILAN78',
+    'MILAN79',
+    'MILAN80',
+    'PELIC31',
+    'PELIC32',
+    'PELIC33',
+    'PELIC34',
+    'PELIC35',
+    'PELIC37',
+    'PELIC38',
+    'PELIC39',
+    'PELIC42',
+    'PELIC44',
+    'PELIC45',
+    'PELIC48'
+]);
+const TRAFFIC_PERMANENT_TRACKED_CALLSIGN_SET = new Set(
+    TRAFFIC_PERMANENT_TRACKED_CALLSIGNS
+);
+/*
+ * v14.48 — l'identifiant du propre avion est volontairement temporaire.
+ * sessionStorage le conserve pendant la session PWA courante, puis le navigateur
+ * le supprime lorsqu'une nouvelle session réelle est créée.
+ */
+const TRAFFIC_OWN_AIRCRAFT_SESSION_KEY =
+    'safeSkyOwnAircraftSessionV1';
+let ownTrafficAircraftSessionFallback = null;
+const TRAFFIC_PUBLISHED_BEACON_ID_STORAGE_KEY =
+    'safeSkyPublishedBeaconIdV1';
+/*
+ * v14.57 — la liste suivie n'est plus plafonnée à 20 entrées.
+ * La concurrence ne limite pas le nombre enregistré : elle évite seulement
+ * d'envoyer toutes les interrogations SafeSky individuelles simultanément.
+ */
+const TRAFFIC_TRACKED_FETCH_CONCURRENCY = 6;
+const TRAFFIC_VIEWPORT_IDENTIFIER_QUERY_LIMIT = 40;
+const TRAFFIC_TEMPORARY_SEARCH_RESULT_TTL_MS = 10 * 60 * 1000;
+const TRAFFIC_SMOOTH_FRAME_INTERVAL_MS = 50;
+/*
+ * v14.72 — l'âge déjà accumulé par un point SafeSky ne doit plus
+ * consommer la totalité de la période de mouvement local. Deux horizons sont
+ * désormais séparés :
+ * - rattrapage limité de l'horodatage source jusqu'à la réception par NPF ;
+ * - extrapolation continue après réception, suffisamment longue pour couvrir
+ *   le rafraîchissement SafeSky de 5 s et ses éventuels retards réseau.
+ */
+const TRAFFIC_SOURCE_CATCHUP_MAX_SECONDS = 20;
+const TRAFFIC_MAX_EXTRAPOLATION_SECONDS = 15;
+const TRAFFIC_RECONCILIATION_DURATION_MS = 900;
+const TRAFFIC_RECONCILIATION_MAX_DISTANCE_NM = 3;
+const TRAFFIC_MOTION_ESTIMATION_MIN_SECONDS = 0.8;
+const TRAFFIC_MOTION_ESTIMATION_MAX_SECONDS = 30;
+const TRAFFIC_MOTION_ESTIMATION_MAX_SPEED_KNOTS = 750;
+const SAFESKY_OWN_PUBLISH_INTERVAL_MS = 5000;
+
+let trafficMarkerRegistry = new Map();
+let trafficSmoothAnimationFrame = null;
+let trafficSmoothAnimationLastAt = 0;
+let temporaryGlobalTrafficResults = new Map();
+let safeSkyOwnPublishTimer = null;
+let safeSkyOwnPublishInProgress = false;
+let lastSafeSkyOwnPublishAt = 0;
+let lastSafeSkyOwnPublishError = '';
+let ownPublicationMotionState = null;
+
 const TRAFFIC_SETTINGS_STORAGE_KEY = 'trafficLayerSettingsV1';
 const DEFAULT_TRAFFIC_SETTINGS = Object.freeze({
     radiusNm: TRAFFIC_RADIUS_NM,
-    maxAircraft: TRAFFIC_MAX_AIRCRAFT,
     minAltitudeFt: 0,
     maxAltitudeFt: null,
     showAltitudeLabel: false,
+    altitudeFilterMode: 'absolute',
     relativeAltitudeEnabled: false,
     relativeAltitudeBandFt: 1500,
-    trafficAroundOwnPosition: true,
-    trafficAroundFire: true
+    groundToAboveBandFt: 1500,
+    /*
+     * v14.44 — la zone trafic est toujours centrée sur la carte.
+     * Les deux anciennes options GPS / feu restent neutralisées pour assurer
+     * la migration des réglages déjà stockés.
+     */
+    trafficAroundOwnPosition: false,
+    trafficAroundFire: false,
+    showGroundTraffic: false,
+    showDroneAdvisories: false,
+    onlyTrackedIdentifiers: false,
+    publishOwnPosition: false,
+    publicationCallsign: '',
+    publicationBeaconType: 'MOTORPLANE'
 });
 let trafficSettings = loadTrafficSettings();
 const FIRE_HISTORY_STORAGE_KEY = 'fireHistoryV1';
@@ -519,6 +884,21 @@ const COMMUNES_DISPLAY_MIN_ZOOM = 10.5;
 const ONLINE_MAX_NATIVE_ZOOM = 18;
 const OFFLINE_FALLBACK_NATIVE_ZOOM = 14;
 const OFFLINE_HARD_MAX_NATIVE_ZOOM = 13;
+// v13.58 — iPad : démarrage offline séquencé, sans scan IndexedDB lourd au lancement.
+// Buffer augmenté modérément pour réduire les flashes blancs furtifs sur la carte NPF sans revenir au keepBuffer 32.
+const OFFLINE_TILE_KEEP_BUFFER = 6;
+const OFFLINE_TILE_UPDATE_INTERVAL_MS = 80;
+// Tuile neutre opaque : évite l'effet page blanche si une tuile manque brièvement.
+const OFFLINE_TILE_PLACEHOLDER_DATA_URL = 'data:image/svg+xml;charset=UTF-8,%3Csvg%20xmlns%3D%22http%3A//www.w3.org/2000/svg%22%20width%3D%22256%22%20height%3D%22256%22%3E%3Crect%20width%3D%22256%22%20height%3D%22256%22%20fill%3D%22%23d8e2e8%22/%3E%3C/svg%3E';
+// Carte OACI/IGN : plafond plus strict pour éviter de demander des tuiles inexistantes.
+const OACI_OFFLINE_MAX_NATIVE_ZOOM = 10;
+const OFFLINE_TILE_WAKE_DELAYS_MS = [250, 900, 1800, 3500, 6500, 10000];
+const OFFLINE_AUX_LAYER_START_DELAY_MS = 6500;
+const OFFLINE_DISABLE_STARTUP_FORCE_SCAN = true;
+let offlineTileWakeToken = 0;
+let offlineStartupLayerRecoveryToken = 0;
+let offlineMapSwitchToken = 0;
+let highVoltageLinesRetryToken = 0;
 const GLOBAL_MAX_ZOOM = 18;
 const GLOBAL_MIN_ZOOM = 0;
 let baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
@@ -527,6 +907,8 @@ let offlineTilesMode = DEFAULT_OFFLINE_TILES_ENABLED;
 let mapSourceMode = DEFAULT_MAP_SOURCE_MODE;
 let offlineOnlineFallbackMode = DEFAULT_OFFLINE_ONLINE_FALLBACK;
 let activeOfflinePacks = [];
+let activeOfflinePackDatabases = [];
+let activeOfflinePackAliases = [];
 let isMapSourceSwitching = false;
 let isZipImportRunning = false;
 const STARTUP_GPS_CENTER_ZOOM = 10;
@@ -539,6 +921,26 @@ let simulationMapClickHandler = null;
 let simulationSuppressNextClickUntil = 0;
 let simulationActionPopup = null;
 let simulationWasLiveGpsActiveBeforeSimulation = false;
+
+const SIMULATION_SPEED_STORAGE_KEY = 'npfSimulationSpeedKt';
+const SIMULATION_ROUTE_STORAGE_KEY = 'npfSimulationRouteDeg';
+const SIMULATION_ALTITUDE_STORAGE_KEY = 'npfSimulationAltitudeFt';
+const storedSimulationSpeedKt = Number(localStorage.getItem(SIMULATION_SPEED_STORAGE_KEY));
+const storedSimulationRouteDeg = Number(localStorage.getItem(SIMULATION_ROUTE_STORAGE_KEY));
+const storedSimulationAltitudeFt = Number(localStorage.getItem(SIMULATION_ALTITUDE_STORAGE_KEY));
+
+let simulationSpeedKt = Number.isFinite(storedSimulationSpeedKt)
+    ? Math.min(700, Math.max(0, storedSimulationSpeedKt))
+    : 0;
+let simulationRouteDeg = Number.isFinite(storedSimulationRouteDeg)
+    ? ((storedSimulationRouteDeg % 360) + 360) % 360
+    : 0;
+let simulationAltitudeFt = Number.isFinite(storedSimulationAltitudeFt)
+    ? Math.min(60000, Math.max(-1000, storedSimulationAltitudeFt))
+    : 0;
+let simulationMotionTimer = null;
+let simulationMotionLastTickMs = 0;
+let simulationAircraftPositionReady = false;
 
 // v12.22 — sécurité : un import interrompu ne doit pas bloquer les suppressions suivantes.
 try {
@@ -565,8 +967,15 @@ const CHAT_PUSH_API_URL = 'https://grisonb.synology.me:8443';
 const CHAT_PUSH_VAPID_PUBLIC_KEY = 'BAB6UkrM0OzfJPCKYux_BdLfQJbMo7qKoXPhIoTB99J93yCS69c5qk2VWYBz0aftsKwdpVrVm0JMmkdwrNRfBpY';
 let mqttLoaderPromise = null;
 
+/*
+ * v14.79 — repositionnement des repères des pélicandromes permanents.
+ *
+ * Les coordonnées ci-dessous ont été relevées et transmises par l’utilisateur
+ * pour placer le rond / symbole cliquable au point opérationnel souhaité.
+ * Elles ne modifient pas les seuils ni la géométrie des pistes.
+ */
 const pelicanAirports = [
-    { oaci: "LFLU", name: "Valence-Chabeuil", lat: 44.920, lon: 4.968 }, { oaci: "LFMU", name: "Béziers-Vias", lat: 43.323, lon: 3.354 }, { oaci: "LFJR", name: "Angers-Marcé", lat: 47.560, lon: -0.312 }, { oaci: "LFHO", name: "Aubenas-Ardèche Méridionale", lat: 44.545, lon: 4.385 }, { oaci: "LFLX", name: "Châteauroux-Déols", lat: 46.861, lon: 1.720 }, { oaci: "LFBM", name: "Mont-de-Marsan", lat: 43.894, lon: -0.509 }, { oaci: "LFBL", name: "Limoges-Bellegarde", lat: 45.862, lon: 1.180 }, { oaci: "LFAQ", name: "Albert-Bray", lat: 49.972, lon: 2.698 }, { oaci: "LFBP", name: "Pau-Pyrénées", lat: 43.380, lon: -0.418 }, { oaci: "LFTH", name: "Toulon-Hyères", lat: 43.097, lon: 6.146 }, { oaci: "LFSG", name: "Épinal-Mirecourt", lat: 48.325, lon: 6.068 }, { oaci: "LFKC", name: "Calvi-Sainte-Catherine", lat: 42.530, lon: 8.793 }, { oaci: "LFMD", name: "Cannes-Mandelieu", lat: 43.542, lon: 6.956 }, { oaci: "LFKB", name: "Bastia-Poretta", lat: 42.552, lon: 9.483 }, { oaci: "LFMH", name: "Saint-Étienne-Bouthéon", lat: 45.541, lon: 4.296 }, { oaci: "LFKF", name: "Figari-Sud-Corse", lat: 41.500, lon: 9.097 }, { oaci: "LFCC", name: "Cahors-Lalbenque", lat: 44.351, lon: 1.475 }, { oaci: "LFML", name: "Marseille-Provence", lat: 43.436, lon: 5.215 }, { oaci: "LFKJ", name: "Ajaccio-Napoléon-Bonaparte", lat: 41.923, lon: 8.802 }, { oaci: "LFMK", name: "Carcassonne-Salvaza", lat: 43.215, lon: 2.306 }, { oaci: "LFRV", name: "Vannes-Meucon", lat: 47.720, lon: -2.721 }, { oaci: "LFTW", name: "Nîmes-Garons", lat: 43.757, lon: 4.416 }, { oaci: "LFMP", name: "Perpignan-Rivesaltes", lat: 42.740, lon: 2.870 }, { oaci: "LFBD", name: "Bordeaux-Mérignac", lat: 44.828, lon: -0.691 }, { oaci: "LFCR", name: "Rodez-Aveyron", lat: 44.4079, lon: 2.4827 }, { oaci: "LFBN", name: "Niort-Souché", lat: 46.3135, lon: -0.3945 }, { oaci: "LFSJ", name: "Dole-Tavaux", lat: 47.039, lon: 5.428 }
+    { oaci: "LFLU", name: "Valence-Chabeuil", lat: 44.91247778, lon: 4.96578056 }, { oaci: "LFMU", name: "Béziers-Vias", lat: 43.32189444, lon: 3.35176667 }, { oaci: "LFJR", name: "Angers-Marcé", lat: 47.560, lon: -0.312 }, { oaci: "LFHO", name: "Aubenas-Ardèche Méridionale", lat: 44.545, lon: 4.385 }, { oaci: "LFLX", name: "Châteauroux-Déols", lat: 46.85165833, lon: 1.71544444 }, { oaci: "LFBM", name: "Mont-de-Marsan", lat: 43.91028611, lon: -0.50519722 }, { oaci: "LFBL", name: "Limoges-Bellegarde", lat: 45.86016944, lon: 1.17707222 }, { oaci: "LFAQ", name: "Albert-Bray", lat: 49.972, lon: 2.698 }, { oaci: "LFBP", name: "Pau-Pyrénées", lat: 43.38329444, lon: -0.41828611 }, { oaci: "LFTH", name: "Toulon-Hyères", lat: 43.09991111, lon: 6.14021111 }, { oaci: "LFSG", name: "Épinal-Mirecourt", lat: 48.32211667, lon: 6.06405833 }, { oaci: "LFKC", name: "Calvi-Sainte-Catherine", lat: 42.52093889, lon: 8.79163889 }, { oaci: "LFMD", name: "Cannes-Mandelieu", lat: 43.55473889, lon: 6.95103333 }, { oaci: "LFKB", name: "Bastia-Poretta", lat: 42.55261389, lon: 9.48029444 }, { oaci: "LFMH", name: "Saint-Étienne-Bouthéon", lat: 45.53076944, lon: 4.29550556 }, { oaci: "LFKF", name: "Figari-Sud-Corse", lat: 41.50246667, lon: 9.09424444 }, { oaci: "LFCC", name: "Cahors-Lalbenque", lat: 44.34998611, lon: 1.47577778 }, { oaci: "LFML", name: "Marseille-Provence", lat: 43.43285833, lon: 5.20693889 }, { oaci: "LFKJ", name: "Ajaccio-Napoléon-Bonaparte", lat: 41.92130278, lon: 8.80351944 }, { oaci: "LFMK", name: "Carcassonne-Salvaza", lat: 43.21362500, lon: 2.31550278 }, { oaci: "LFRV", name: "Vannes-Meucon", lat: 47.71971667, lon: -2.72451111 }, { oaci: "LFTW", name: "Nîmes-Garons", lat: 43.74950833, lon: 4.41295000 }, { oaci: "LFMP", name: "Perpignan-Rivesaltes", lat: 42.73623611, lon: 2.87433333 }, { oaci: "LFBD", name: "Bordeaux-Mérignac", lat: 44.82121944, lon: -0.71088333 }, { oaci: "LFCR", name: "Rodez-Aveyron", lat: 44.4079, lon: 2.4827 }, { oaci: "LFBN", name: "Niort-Souché", lat: 46.3135, lon: -0.3945 }, { oaci: "LFSJ", name: "Dole-Tavaux", lat: 47.039, lon: 5.428 }
 ];
 
 
@@ -574,7 +983,7 @@ const waterPoints = [{"id":"AIGUEBLETTE","name":"Aigueblette","countryCode":"FR"
 
 
 const otherAirports = [
-    { oaci: "LFBC", name: "Cazaux", lat: 44.534, lon: -1.155 }, { oaci: "LFBH", name: "La Rochelle-Île de Ré", lat: 46.179, lon: -1.195 }, { oaci: "LFBF", name: "Toulouse-Francazal", lat: 43.546, lon: 1.365 }, { oaci: "LFBG", name: "Cognac-Châteaubernard", lat: 45.660, lon: -0.354 }, { oaci: "LFBI", name: "Poitiers-Biard", lat: 46.587, lon: 0.309 }, { oaci: "LFBK", name: "Saint-Brieuc-Armor", lat: 48.538, lon: -2.852 }, { oaci: "LFBO", name: "Toulouse-Blagnac", lat: 43.635, lon: 1.363 }, { oaci: "LFBS", name: "Chambéry-Savoie", lat: 45.640, lon: 5.881 }, { oaci: "LFBT", name: "Tarbes-Lourdes-Pyrénées", lat: 43.185, lon: -0.003 }, { oaci: "LFBU", name: "Angoulême-Cognac", lat: 45.729, lon: 0.220 }, { oaci: "LFBV", name: "Brive-Souillac", lat: 45.040, lon: 1.484 }, { oaci: "LFCU", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFLA", name: "Auxerre-Branches", lat: 47.848, lon: 3.497 }, { oaci: "LFLC", name: "Clermont-Ferrand-Auvergne", lat: 45.786, lon: 3.169 }, { oaci: "LFLD", name: "Bourges", lat: 47.059, lon: 2.370 }, { oaci: "LFLL", name: "Lyon-Saint Exupéry", lat: 45.725, lon: 5.081 }, { oaci: "LFLN", name: "Saint-Yan", lat: 46.409, lon: 4.013 }, { oaci: "LFLS", name: "Grenoble-Isère", lat: 45.363, lon: 5.331 }, { oaci: "LFLV", name: "Vichy-Charmeil", lat: 46.167, lon: 3.403 }, { oaci: "LFLW", name: "Aurillac", lat: 44.887, lon: 2.418 }, { oaci: "LFLY", name: "Lyon-Bron", lat: 45.729, lon: 4.945 }, { oaci: "LFLZ", name: "Le Puy-Loudes", lat: 45.079, lon: 3.762 }, { oaci: "LFMC", name: "Le Luc-Le Cannet", lat: 43.385, lon: 6.368 }, { oaci: "LFMI", name: "Istres-Le Tubé", lat: 43.524, lon: 4.944 }, { oaci: "LFMN", name: "Nice-Côte d'Azur", lat: 43.665, lon: 7.215 }, { oaci: "LFMQ", name: "Le Castellet", lat: 43.253, lon: 5.786 }, { oaci: "LFMV", name: "Avignon-Provence", lat: 43.906, lon: 4.902 }, { oaci: "LFMY", name: "Salon-de-Provence", lat: 43.606, lon: 5.110 }, { oaci: "LFOA", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFOB", name: "Paris-Le Bourget", lat: 48.969, lon: 2.441 }, { oaci: "LFOC", name: "Châteaudun", lat: 48.058, lon: 1.378 }, { oaci: "LFOE", name: "Évreux-Fauville", lat: 49.028, lon: 1.218 }, { oaci: "LFOK", name: "Châlons-Vatry", lat: 48.776, lon: 4.185 }, { oaci: "LFOJ", name: "Orléans-Bricy", lat: 47.989, lon: 1.758 }, { oaci: "LFOP", name: "Rouen-Vallée de Seine", lat: 49.385, lon: 1.182 }, { oaci: "LFOQ", name: "Blois-Le Breuil", lat: 47.678, lon: 1.217 }, { oaci: "LFOR", name: "Chartres-Métropole", lat: 48.455, lon: 1.530 }, { oaci: "LFOT", name: "Tours-Val de Loire", lat: 47.432, lon: 0.722 }, { oaci: "LFOU", name: "Cholet-Le Pontreau", lat: 47.081, lon: -0.871 }, { oaci: "LFOV", name: "Laval-Entrammes", lat: 48.033, lon: -0.749 }, { oaci: "LFPB", name: "Paris-Le Bourget", lat: 48.969, lon: 2.441 }, { oaci: "LFPC", name: "Creil", lat: 49.253, lon: 2.520 }, { oaci: "LFPG", name: "Paris-Charles-de-Gaulle", lat: 49.009, lon: 2.547 }, { oaci: "LFPO", name: "Paris-Orly", lat: 48.723, lon: 2.379 }, { oaci: "LFPV", name: "Villacoublay-Vélizy", lat: 48.773, lon: 2.203 }, { oaci: "LFRB", name: "Brest-Bretagne", lat: 48.447, lon: -4.418 }, { oaci: "LFRC", name: "Cherbourg-Manche", lat: 49.650, lon: -1.478 }, { oaci: "LFRD", name: "Dinard-Pleurtuit-Saint-Malo", lat: 48.587, lon: -2.080 }, { oaci: "LFRE", name: "La Baule-Escoublac", lat: 47.289, lon: -2.348 }, { oaci: "LFRF", name: "Granville-Mont-Saint-Michel", lat: 48.887, lon: -1.564 }, { oaci: "LFRG", name: "Deauville-Normandie", lat: 49.365, lon: 0.154 }, { oaci: "LFRH", name: "Lorient-Bretagne-Sud", lat: 47.760, lon: -3.440 }, { oaci: "LFRI", name: "La Roche-sur-Yon-Les Ajoncs", lat: 46.702, lon: -1.381 }, { oaci: "LFRJ", name: "Landivisiau", lat: 48.527, lon: -4.156 }, { oaci: "LFRK", name: "Caen-Carpiquet", lat: 49.173, lon: -0.450 }, { oaci: "LFRL", name: "Lanvéoc-Poulmic", lat: 48.278, lon: -4.437 }, { oaci: "LFRM", name: "Le Mans-Arnage", lat: 47.949, lon: 0.203 }, { oaci: "LFRN", name: "Rennes-Saint-Jacques", lat: 48.070, lon: -1.732 }, { oaci: "LFRO", name: "Lannion-Côte de Granit Rose", lat: 48.755, lon: -3.472 }, { oaci: "LFRQ", name: "Quimper-Pluguffan", lat: 47.975, lon: -4.167 }, { oaci: "LFRS", name: "Nantes-Atlantique", lat: 47.153, lon: -1.607 }, { oaci: "LFRT", name: "Saint-Nazaire-Montoir", lat: 47.312, lon: -2.152 }, { oaci: "LFRU", name: "Morlaix-Ploujean", lat: 48.604, lon: -3.818 }, { oaci: "LFSD", name: "Dijon-Longvic", lat: 47.268, lon: 5.088 }, { oaci: "LFSF", name: "Metz-Nancy-Lorraine", lat: 48.981, lon: 6.251 }, { oaci: "LFSH", name: "Haguenau", lat: 48.790, lon: 7.820 }, { oaci: "LFSK", name: "Colmar-Houssen", lat: 48.110, lon: 7.359 }, { oaci: "LFSO", name: "Nancy-Ochey", lat: 48.577, lon: 5.955 }, { oaci: "LFSQ", name: "Luxeuil-Saint-Sauveur", lat: 47.779, lon: 6.353 }, { oaci: "LFSR", name: "Reims-Prunay", lat: 49.207, lon: 4.148 }, { oaci: "LFST", name: "Strasbourg-Entzheim", lat: 48.542, lon: 7.628 }, { oaci: "LFSX", name: "Montbéliard-Courcelles", lat: 47.487, lon: 6.852 }, { oaci: "LFYR", name: "Romorantin-Pruniers", lat: 47.352, lon: 1.670 }, { oaci: "LFYD", name: "Dinard", lat: 48.587, lon: -2.080 }, { oaci: "LFXI", name: "Reims-Champagne", lat: 49.308, lon: 4.045 }, { oaci: "LFYL", name: "Lille-Lesquin", lat: 50.563, lon: 3.086 }, { oaci: "LFXM", name: "Melun-Villaroche", lat: 48.608, lon: 2.671 }, { oaci: "LFXO", name: "Beauvais-Tillé", lat: 49.454, lon: 2.112 }, { oaci: "LFXQ", name: "Saint-Omer-Wizernes", lat: 50.725, lon: 2.220 }, { oaci: "LFKS", name: "Solenzara", lat: 41.924, lon: 9.405 },
+    { oaci: "LFBC", name: "Cazaux", lat: 44.534, lon: -1.155 }, { oaci: "LFBH", name: "La Rochelle-Île de Ré", lat: 46.179, lon: -1.195 }, { oaci: "LFBF", name: "Toulouse-Francazal", lat: 43.546, lon: 1.365 }, { oaci: "LFBG", name: "Cognac-Châteaubernard", lat: 45.660, lon: -0.354 }, { oaci: "LFBI", name: "Poitiers-Biard", lat: 46.587, lon: 0.309 }, { oaci: "LFBK", name: "Saint-Brieuc-Armor", lat: 48.538, lon: -2.852 }, { oaci: "LFBO", name: "Toulouse-Blagnac", lat: 43.635, lon: 1.363 }, { oaci: "LFBS", name: "Chambéry-Savoie", lat: 45.640, lon: 5.881 }, { oaci: "LFBT", name: "Tarbes-Lourdes-Pyrénées", lat: 43.185, lon: -0.003 }, { oaci: "LFBU", name: "Angoulême-Cognac", lat: 45.729, lon: 0.220 }, { oaci: "LFCU", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFLA", name: "Auxerre-Branches", lat: 47.848, lon: 3.497 }, { oaci: "LFLC", name: "Clermont-Ferrand-Auvergne", lat: 45.786, lon: 3.169 }, { oaci: "LFLD", name: "Bourges", lat: 47.059, lon: 2.370 }, { oaci: "LFLL", name: "Lyon-Saint Exupéry", lat: 45.725, lon: 5.081 }, { oaci: "LFLN", name: "Saint-Yan", lat: 46.409, lon: 4.013 }, { oaci: "LFLS", name: "Grenoble-Isère", lat: 45.363, lon: 5.331 }, { oaci: "LFLV", name: "Vichy-Charmeil", lat: 46.167, lon: 3.403 }, { oaci: "LFLW", name: "Aurillac", lat: 44.887, lon: 2.418 }, { oaci: "LFLY", name: "Lyon-Bron", lat: 45.729, lon: 4.945 }, { oaci: "LFLZ", name: "Le Puy-Loudes", lat: 45.079, lon: 3.762 }, { oaci: "LFMC", name: "Le Luc-Le Cannet", lat: 43.385, lon: 6.368 }, { oaci: "LFMI", name: "Istres-Le Tubé", lat: 43.524, lon: 4.944 }, { oaci: "LFMN", name: "Nice-Côte d'Azur", lat: 43.665, lon: 7.215 }, { oaci: "LFMQ", name: "Le Castellet", lat: 43.253, lon: 5.786 }, { oaci: "LFMV", name: "Avignon-Provence", lat: 43.906, lon: 4.902 }, { oaci: "LFMY", name: "Salon-de-Provence", lat: 43.606, lon: 5.110 }, { oaci: "LFOA", name: "Avord", lat: 47.056, lon: 2.637 }, { oaci: "LFOC", name: "Châteaudun", lat: 48.058, lon: 1.378 }, { oaci: "LFOE", name: "Évreux-Fauville", lat: 49.028, lon: 1.218 }, { oaci: "LFOK", name: "Châlons-Vatry", lat: 48.776, lon: 4.185 }, { oaci: "LFOJ", name: "Orléans-Bricy", lat: 47.989, lon: 1.758 }, { oaci: "LFOP", name: "Rouen-Vallée de Seine", lat: 49.385, lon: 1.182 }, { oaci: "LFOQ", name: "Blois-Le Breuil", lat: 47.678, lon: 1.217 }, { oaci: "LFOR", name: "Chartres-Métropole", lat: 48.455, lon: 1.530 }, { oaci: "LFOT", name: "Tours-Val de Loire", lat: 47.432, lon: 0.722 }, { oaci: "LFOU", name: "Cholet-Le Pontreau", lat: 47.081, lon: -0.871 }, { oaci: "LFOV", name: "Laval-Entrammes", lat: 48.033, lon: -0.749 }, { oaci: "LFPB", name: "Paris-Le Bourget", lat: 48.969, lon: 2.441 }, { oaci: "LFPC", name: "Creil", lat: 49.253, lon: 2.520 }, { oaci: "LFPG", name: "Paris-Charles-de-Gaulle", lat: 49.009, lon: 2.547 }, { oaci: "LFPO", name: "Paris-Orly", lat: 48.723, lon: 2.379 }, { oaci: "LFPV", name: "Villacoublay-Vélizy", lat: 48.773, lon: 2.203 }, { oaci: "LFRB", name: "Brest-Bretagne", lat: 48.447, lon: -4.418 }, { oaci: "LFRC", name: "Cherbourg-Manche", lat: 49.650, lon: -1.478 }, { oaci: "LFRD", name: "Dinard-Pleurtuit-Saint-Malo", lat: 48.587, lon: -2.080 }, { oaci: "LFRE", name: "La Baule-Escoublac", lat: 47.289, lon: -2.348 }, { oaci: "LFRF", name: "Granville-Mont-Saint-Michel", lat: 48.887, lon: -1.564 }, { oaci: "LFRG", name: "Deauville-Normandie", lat: 49.365, lon: 0.154 }, { oaci: "LFRH", name: "Lorient-Bretagne-Sud", lat: 47.760, lon: -3.440 }, { oaci: "LFRI", name: "La Roche-sur-Yon-Les Ajoncs", lat: 46.702, lon: -1.381 }, { oaci: "LFRJ", name: "Landivisiau", lat: 48.527, lon: -4.156 }, { oaci: "LFRK", name: "Caen-Carpiquet", lat: 49.173, lon: -0.450 }, { oaci: "LFRL", name: "Lanvéoc-Poulmic", lat: 48.278, lon: -4.437 }, { oaci: "LFRM", name: "Le Mans-Arnage", lat: 47.949, lon: 0.203 }, { oaci: "LFRN", name: "Rennes-Saint-Jacques", lat: 48.070, lon: -1.732 }, { oaci: "LFRO", name: "Lannion-Côte de Granit Rose", lat: 48.755, lon: -3.472 }, { oaci: "LFRQ", name: "Quimper-Pluguffan", lat: 47.975, lon: -4.167 }, { oaci: "LFRS", name: "Nantes-Atlantique", lat: 47.153, lon: -1.607 }, { oaci: "LFRT", name: "Saint-Nazaire-Montoir", lat: 47.312, lon: -2.152 }, { oaci: "LFRU", name: "Morlaix-Ploujean", lat: 48.604, lon: -3.818 }, { oaci: "LFSD", name: "Dijon-Longvic", lat: 47.268, lon: 5.088 }, { oaci: "LFSF", name: "Metz-Nancy-Lorraine", lat: 48.981, lon: 6.251 }, { oaci: "LFSH", name: "Haguenau", lat: 48.790, lon: 7.820 }, { oaci: "LFSK", name: "Colmar-Houssen", lat: 48.110, lon: 7.359 }, { oaci: "LFSO", name: "Nancy-Ochey", lat: 48.577, lon: 5.955 }, { oaci: "LFSQ", name: "Luxeuil-Saint-Sauveur", lat: 47.779, lon: 6.353 }, { oaci: "LFQA", name: "Reims-Prunay", lat: 49.207, lon: 4.148 }, { oaci: "LFST", name: "Strasbourg-Entzheim", lat: 48.542, lon: 7.628 }, { oaci: "LFSX", name: "Montbéliard-Courcelles", lat: 47.487, lon: 6.852 }, { oaci: "LFYR", name: "Romorantin-Pruniers", lat: 47.352, lon: 1.670 }, { oaci: "LFYD", name: "Dinard", lat: 48.587, lon: -2.080 }, { oaci: "LFSR", name: "Reims-Champagne", lat: 49.308, lon: 4.045 }, { oaci: "LFPM", name: "Melun-Villaroche", lat: 48.604, lon: 2.676 }, { oaci: "LFOB", name: "Beauvais-Tillé", lat: 49.454, lon: 2.112 }, { oaci: "LFQN", name: "Saint-Omer-Wizernes", lat: 50.727, lon: 2.233 }, { oaci: "LFKS", name: "Solenzara", lat: 41.924, lon: 9.405 },
 
     // Terrains ajoutés depuis le PDF "piste revêtue > 1500 m"
     { oaci: "LFBA", name: "Agen-La Garenne", lat: 44.1747, lon: 0.5906 },
@@ -597,6 +1006,1228 @@ const otherAirports = [
     { oaci: "LFQQ", name: "Lille-Lesquin", lat: 50.5633, lon: 3.0869 },
     { oaci: "LFRZ", name: "Saint-Nazaire-Montoir", lat: 47.3122, lon: -2.1492 }
 ];
+
+/*
+ * v14.71 — aérodromes complémentaires PIAF.
+ *
+ * La liste embarquée ci-dessous reprend les aérodromes métropolitains et corses
+ * disposant d'un code OACI à quatre lettres LFxx dans la table PIAF de la DGAC.
+ * Les codes déjà présents dans pelicanAirports ou otherAirports sont exclus au
+ * chargement afin de conserver leur symbole et leur comportement existants.
+ * Les aérodromes restants sont purement informatifs : point noir simple et
+ * popup limitée au code OACI et au nom.
+ */
+const piafMetropolitanAerodromesData = `
+LFBP|PAU PYRENEES|43.37990|-0.41851
+LFLS|GRENOBLE ISERE|45.36294|5.33266
+LFRQ|QUIMPER PLUGUFFAN|47.97495|-4.16788
+LFOT|TOURS VAL DE LOIRE|47.43184|0.72318
+LFPG|PARIS CHARLES DE GAULLE|49.00975|2.54782
+LFPO|PARIS ORLY|48.72328|2.37958
+LFRC|CHERBOURG MAUPERTUS|49.65078|-1.47530
+LFRH|LORIENT LANN BIHOUE|47.76053|-3.43995
+LFTW|NIMES GARONS|43.75743|4.41634
+LFBE|BERGERAC ROUMANIERE|44.82443|0.52053
+LFBO|TOULOUSE BLAGNAC|43.63513|1.36786
+LFBZ|BIARRITZ BAYONNE ANGLET|43.46831|-1.53116
+LFKB|BASTIA PORETTA|42.55000|9.48485
+LFLL|LYON SAINT EXUPERY|45.72564|5.08111
+LFLX|CHATEAUROUX DEOLS|46.86031|1.72113
+LFML|MARSEILLE PROVENCE|43.43663|5.21512
+LFOH|LE HAVRE OCTEVILLE|49.53385|0.08812
+LFPB|PARIS LE BOURGET|48.96952|2.44149
+LFRD|DINARD PLEURTUIT SAINT MALO|48.58771|-2.07995
+LFRK|CAEN CARPIQUET|49.17328|-0.44988
+LFRN|RENNES SAINT JACQUES|48.07193|-1.73223
+LFSD|DIJON-LONGVIC|47.26582|5.09498
+LFBD|BORDEAUX MERIGNAC|44.82865|-0.71534
+LFRB|BREST BRETAGNE|48.44713|-4.42175
+LFGJ|DOLE TAVAUX|47.04269|5.43493
+LFLB|CHAMBERY AIX LES BAINS|45.63927|5.88012
+LFLC|CLERMONT FERRAND AUVERGNE|45.78597|3.16245
+LFMV|AVIGNON CAUMONT|43.90658|4.90203
+LFOP|ROUEN VALLEE DE SEINE|49.39095|1.18394
+LFBF|TOULOUSE FRANCAZAL|43.54906|1.35726
+LFMT|MONTPELLIER MEDITERRANEE|43.58326|3.96138
+LFMU|BEZIERS VIAS|43.32343|3.35340
+LFQQ|LILLE LESQUIN|50.56343|3.08682
+LFRS|NANTES ATLANTIQUE|47.15702|-1.60781
+LFAB|DIEPPE SAINT AUBIN|49.88263|1.08533
+LFAI|NANGIS LES LOGES|48.59694|3.00806
+LFAK|DUNKERQUE LES MOERES|51.04056|2.55028
+LFAL|LA FLECHE THOREE LES PINS|47.69278|-0.00194
+LFAM|BERCK SUR MER|50.42306|1.59194
+LFAU|VAUVILLE|49.62278|-1.83000
+LFBG|COGNAC CHATEAUBERNARD|45.65833|-0.31750
+LFBN|NIORT SOUCHE|46.31342|-0.39443
+LFBR|MURET LHERM|43.44916|1.26369
+LFBS|BISCARROSSE PARENTIS|44.36806|-1.13222
+LFCD|ANDERNOS LES BAINS|44.75500|-1.06500
+LFCH|ARCACHON LA TESTE DE BUCH|44.59694|-1.11389
+LFCJ|JONZAC NEULLES|45.48306|-0.42306
+LFCN|NOGARO|43.76889|-0.03472
+LFCO|OLORON HERRERE|43.16472|-0.56028
+LFCP|PONS AVY|45.56583|-0.51361
+LFCQ|GRAULHET MONTDRAGON|43.76861|2.00778
+LFCS|BORDEAUX LEOGNAN SAUCATS|44.69917|-0.59722
+LFCT|THOUARS|46.96194|-0.15278
+LFCX|CASTELSARRASIN MOISSAC|44.08583|1.12694
+LFCY|ROYAN MEDIS|45.63116|-0.97549
+LFDA|AIRE SUR L'ADOUR|43.70861|-0.24722
+LFDC|MONTENDRE MARCILLAC|45.27361|-0.45333
+LFDF|SAINTE FOY LA GRANDE|44.85250|0.17556
+LFDG|GAILLAC LISLE SUR TARN|43.88306|1.87417
+LFDH|AUCH LAMOTHE|43.68684|0.60005
+LFDI|LIBOURNE ARTIGUES DE LUSSAC|44.98500|-0.13611
+LFDL|LOUDUN|47.03611|0.10083
+LFDM|MARMANDE VIRAZEIL|44.49917|0.20028
+LFDN|ROCHEFORT CHARENTE MARITIME|45.88953|-0.98239
+LFDP|SAINT PIERRE D'OLERON|45.95778|-1.31139
+LFDQ|CASTELNAU MAGNOAC|43.27750|0.51944
+LFDR|LA REOLE FLOUDES|44.56695|-0.05725
+LFDT|TARBES LALOUBERE|43.21500|0.07750
+LFDU|LESPARRE SAINT LAURENT MEDOC|45.19778|-0.88222
+LFDW|CHAUVIGNY|46.58333|0.64222
+LFDY|BORDEAUX YVRAC|44.87722|-0.47917
+LFEF|AMBOISE DIERRE|47.34056|0.94111
+LFEJ|CHATEAUROUX VILLERS|46.84083|1.62000
+LFEK|ISSOUDUN LE FAY|46.88861|2.04139
+LFEL|LE BLANC|46.62000|1.08583
+LFEN|TOURS SORIGNY|47.26667|0.69944
+LFEV|GRAY SAINT ADRIEN|47.43222|5.62139
+LFEY|ILE D'YEU|46.71750|-2.39250
+LFFC|MANTES CHERENCE|49.07889|1.68972
+LFFD|SAINT ANDRE DE L'EURE|48.89750|1.25083
+LFFE|ENGHIEN MOISSELLES|49.04556|2.35194
+LFFK|FONTENAY LE COMTE|46.44083|-0.79389
+LFFQ|LA FERTE ALAIS|48.49953|2.32996
+LFFU|CHATEAUNEUF SUR CHER|46.87111|2.37694
+LFFV|VIERZON MEREAU|47.19472|2.06667
+LFFW|MONTAIGU SAINT GEORGES|46.93222|-1.32722
+LFFX|TOURNUS CUISERY|46.56139|4.97528
+LFFY|ETREPAGNY|49.30611|1.63861
+LFGB|MULHOUSE HABSHEIM|47.73722|7.42972
+LFGF|BEAUNE CHALLANGES|47.01028|4.89639
+LFGG|BELFORT CHAUX|47.70097|6.83083
+LFGI|DIJON DAROIS|47.38528|4.94694
+LFGL|LONS LE SAUNIER COURLAOUX|46.67500|5.46917
+LFGO|PONT SUR YONNE|48.28944|3.24889
+LFGZ|NUITS SAINT GEORGES|47.14222|4.96833
+LFHC|PEROUGES MEXIMIEUX|45.86861|5.18611
+LFHD|PIERRELATTE|44.39778|4.71694
+LFHE|ROMANS SAINT PAUL|45.06472|5.10139
+LFHF|RUOMS|44.44472|4.33278
+LFHG|SAINT CHAMOND L'HORME|45.49194|4.53444
+LFHH|VIENNE REVENTIN|45.46278|4.82778
+LFHI|MORESTEL|45.68694|5.45250
+LFHJ|LYON CORBAS|45.65278|4.91222
+LFHV|VILLEFRANCHE TARARE|45.91998|4.63493
+LFHW|BELLEVILLE VILLIE MORGON|46.14111|4.71389
+LFHY|MOULINS MONTBEUGNY|46.53438|3.42161
+LFIB|BELVES SAINT PARDOUX|44.78250|0.95889
+LFIH|CHALAIS|45.26806|0.01694
+LFIL|RION DES LANDES|43.91583|-0.94917
+LFIM|SAINT GAUDENS MONTREJEAU|43.10750|0.61917
+LFIT|TOULOUSE BOURG SAINT BERNARD|43.61111|1.72417
+LFIX|ITXASSOU|43.33750|-1.42222
+LFIY|SAINT JEAN D'ANGELY SAINT DENIS DU PIN|45.96520|-0.52436
+LFJD|CORLIER|46.03972|5.49667
+LFJE|LA MOTTE CHALANCON|44.49667|5.40333
+LFJF|AUBENASSON|44.69528|5.15389
+LFJI|MARENNES|45.82389|-1.07722
+LFJR|ANGERS MARCE|47.56021|-0.31213
+LFJT|TOURS LE LOUROUX|47.15000|0.71278
+LFJU|LURCY LEVIS|46.71222|2.94472
+LFJV|LASCLAVERIES|43.42528|-0.28694
+LFKE|SAINT JEAN EN ROYANS|45.02639|5.30917
+LFKH|SAINT JEAN D'AVELANNE|45.51583|5.67944
+LFKK|MONTMEILLEUR|44.79361|5.76167
+LFKL|LYON BRINDAS|45.71065|4.69665
+LFKP|LA TOUR DU PIN CESSIEU|45.55889|5.38389
+LFKY|BELLEY-PEYRIEU|45.69389|5.69167
+LFLD|BOURGES|47.06079|2.37008
+LFLE|CHAMBERY CHALLES LES EAUX|45.56056|5.97583
+LFLG|GRENOBLE LE VERSOUD|45.21806|5.84861
+LFLH|CHALON CHAMPFORGEUIL|46.82827|4.81706
+LFLN|SAINT YAN|46.40649|4.02110
+LFLO|ROANNE RENAISON|46.05278|3.99972
+LFLP|ANNECY MEYTHET|45.93077|6.10629
+LFLQ|MONTELIMAR ANCONE|44.58028|4.73917
+LFLR|SAINT RAMBERT D'ALBON|45.25500|4.82472
+LFLU|VALENCE CHABEUIL|44.91556|4.96874
+LFLZ|FEURS CHAMBEON|45.70667|4.19694
+LFME|NIMES COURBESSAC|43.85306|4.41444
+LFMX|CHATEAU ARNOUX SAINT AUBAN|44.05861|5.99083
+LFMZ|LEZIGNAN CORBIERES|43.17500|2.73278
+LFNA|GAP TALLARD|44.45389|6.03667
+LFNE|SALON EYGUIERES|43.65750|5.01278
+LFNF|VINON|43.73639|5.78306
+LFNH|CARPENTRAS|44.02250|5.09000
+LFNJ|ASPRES SUR BUECH|44.51778|5.73611
+LFNL|SAINT MARTIN DE LONDRES|43.80028|3.78167
+LFNN|NARBONNE|43.19417|3.05167
+LFNP|PEZENAS NIZAS|43.50472|3.41194
+LFNR|BERRE LA FARE|43.53667|5.17750
+LFNS|SISTERON THEZE|44.28667|5.92917
+LFNT|AVIGNON PUJAUT|43.99611|4.75444
+LFNU|UZES|44.08347|4.39383
+LFNV|VALREAS VISAN|44.33583|4.90694
+LFNZ|LE MAZET DE ROMANIN|43.77083|4.89444
+LFOI|ABBEVILLE|50.14306|1.83250
+LFOM|LESSAY|49.20333|-1.50472
+LFOO|LES SABLES D'OLONNE TALMONT|46.47556|-1.72500
+LFOQ|BLOIS LE BREUIL|47.67983|1.20578
+LFOU|CHOLET LE PONTREAU|47.08191|-0.87722
+LFOV|LAVAL ENTRAMMES|48.03225|-0.74278
+LFOY|LE HAVRE SAINT ROMAIN|49.54389|0.35972
+LFOZ|ORLEANS SAINT DENIS DE L'HOTEL|47.89762|2.16421
+LFPD|BERNAY SAINT MARTIN|49.10250|0.56556
+LFPF|BEYNES THIVERVAL|48.84361|1.90889
+LFPH|CHELLES LE PIN|48.89667|2.60611
+LFPL|LOGNES EMERAINVILLE|48.82194|2.62278
+LFPQ|FONTENAY TRESIGNY|48.70611|2.90278
+LFPU|MORET EPISY|48.34194|2.79944
+LFPX|CHAVENAY VILLEPREUX|48.84222|1.98028
+LFPZ|SAINT CYR L'ECOLE|48.81028|2.07333
+LFQG|NEVERS FOURCHAMBAULT|47.00373|3.11074
+LFQN|SAINT OMER WIZERNES|50.72944|2.23583
+LFQO|LILLE MARCQ EN BAROEUL|50.68722|3.07556
+LFQT|MERVILLE CALONNE|50.61660|2.64009
+LFRI|LA ROCHE SUR YON LES AJONCS|46.70238|-1.38176
+LFRM|LE MANS ARNAGE|47.94849|0.20165
+LFRP|PLOERMEL LOYAT|48.00186|-2.37872
+LFRU|MORLAIX PLOUJEAN|48.60075|-3.81667
+LFRV|VANNES MEUCON|47.71924|-2.72338
+LFRW|AVRANCHES LE VAL SAINT PERE|48.66083|-1.40583
+LFSA|BESANCON THISE|47.27361|6.08306
+LFSM|MONTBELIARD COURCELLES|47.48666|6.79147
+LFSS|SAINT SULPICE DES LANDES|47.79167|-1.64361
+LFTM|SERRES LA BATIE MONTSALEON|44.45722|5.72722
+LFTN|LA GRAND'COMBE|44.24306|4.01111
+LFTQ|CHATEAUBRIANT POUANCE|47.74056|-1.18806
+LFXA|AMBERIEU|45.97972|5.33778
+LFXB|SAINTES THENAC|45.70194|-0.63611
+LFXU|LES MUREAUX|48.99861|1.94167
+LFYR|ROMORANTIN PRUNIERS|47.32083|1.68889
+LFAC|CALAIS DUNKERQUE|50.96093|1.95143
+LFAE|EU MERS LE TREPORT|50.06917|1.42667
+LFAT|LE TOUQUET PARIS PLAGE|50.51485|1.62758
+LFBC|CAZAUX|44.53488|-1.13145
+LFBH|LA ROCHELLE ILE DE RE|46.17921|-1.19524
+LFBM|MONT DE MARSAN|43.91139|-0.51000
+LFBY|DAX SEYRESSE|43.68917|-1.06889
+LFCA|CHATELLERAULT TARGE|46.78028|0.55056
+LFCI|ALBI LE SEQUESTRE|43.91328|2.11675
+LFCK|CASTRES MAZAMET|43.55496|2.29059
+LFCL|TOULOUSE LASBORDES|43.58778|1.49861
+LFCW|VILLENEUVE SUR LOT|44.40028|0.76111
+LFCZ|MIMIZAN|44.14583|-1.16472
+LFDB|MONTAUBAN|44.02667|1.37694
+LFDK|SOULAC SUR MER|45.49389|-1.08389
+LFDX|FUMEL MONTAYRAL|44.45917|1.00722
+LFEA|BELLE ILE|47.32611|-3.19889
+LFEB|DINAN TRELIVAN|48.44333|-2.10333
+LFEC|OUESSANT|48.46321|-5.06358
+LFED|PONTIVY|48.05694|-2.92333
+LFEH|AUBIGNY SUR NERE|47.48056|2.39417
+LFEQ|QUIBERON|47.48139|-3.10167
+LFER|REDON BAINS SUR OUST|47.69861|-2.03806
+LFES|GUISCRIFF SCAER|48.05374|-3.66404
+LFFI|ANCENIS|47.40722|-1.17889
+LFGH|COSNE SUR LOIRE|47.36028|2.91833
+LFHO|AUBENAS ARDECHE MERIDIONALE|44.53942|4.37173
+LFHU|L'ALPE D'HUEZ|45.08750|6.08361
+LFHX|LAPALISSE PERIGNY|46.25306|3.58750
+LFIR|REVEL MONTGEY|43.48028|1.97889
+LFIS|SAINT INGLEVERT LES DEUX CAPS|50.88250|1.73611
+LFIV|VENDAYS MONTALIVET|45.38056|-1.11583
+LFJB|MAULEON|46.90306|-0.69750
+LFLM|MACON CHARNAY|46.29592|4.79586
+LFLV|VICHY CHARMEIL|46.17178|3.40403
+LFLY|LYON BRON|45.72952|4.93884
+LFMA|AIX LES MILLES|43.50528|5.36722
+LFMG|MONTAGNE NOIRE|43.40639|1.98917
+LFMI|ISTRES LE TUBE|43.52239|4.92424
+LFMO|ORANGE CARITAT|44.14009|4.86858
+LFMQ|LE CASTELLET|43.25222|5.78611
+LFMS|ALES CEVENNES|44.07273|4.14292
+LFMW|CASTELNAUDARY VILLENEUVE|43.31111|1.92000
+LFMY|SALON DE PROVENCE|43.60291|5.10817
+LFNG|MONTPELLIER CANDILLARGUES|43.61017|4.07016
+LFOA|AVORD|47.05694|2.63889
+LFOD|SAUMUR SAINT FLORENT|47.25673|-0.11355
+LFOE|EVREUX FAUVILLE|49.02861|1.22000
+LFPM|MELUN VILLAROCHE|48.60528|2.67078
+LFPN|TOUSSUS LE NOBLE|48.74976|2.11118
+LFPT|PONTOISE CORMEILLES EN VEXIN|49.09663|2.04072
+LFPV|VILLACOUBLAY VELIZY|48.77417|2.19169
+LFPY|BRETIGNY SUR ORGE|48.59611|2.33222
+LFQM|BESANCON LA VEZE|47.20531|6.08055
+LFRE|LA BAULE ESCOUBLAC|47.28833|-2.34694
+LFRF|GRANVILLE-MONT SAINT MICHEL|48.88287|-1.56383
+LFRJ|LANDIVISIAU|48.53026|-4.15164
+LFRL|LANVEOC POULMIC|48.28253|-4.44369
+LFRO|LANNION|48.75444|-3.47194
+LFRT|SAINT BRIEUC ARMOR|48.53749|-2.85654
+LFRZ|SAINT NAZAIRE MONTOIR|47.31065|-2.15680
+LFSC|COLMAR-MEYENHEIM|47.92194|7.39972
+LFSQ|BELFORT FONTAINE|47.65556|7.01167
+LFTH|HYERES LE PALYVESTRE|43.09734|6.14603
+LFXI|SAINT CHRISTOL|44.05250|5.49389
+LFXQ|COETQUIDAN|47.94389|-2.18194
+LFYH|BROYE LES PESMES|47.31667|5.51667
+LFBT|TARBES LOURDES PYRENEES|43.18545|-0.00289
+LFMP|PERPIGNAN RIVESALTES|42.74083|2.86972
+LFRG|DEAUVILLE NORMANDIE|49.36339|0.16000
+LFBI|POITIERS BIARD|46.58740|0.30679
+LFSB|BALE-MULHOUSE|47.58988|7.52922
+LFBL|LIMOGES BELLEGARDE|45.86076|1.18031
+LFCR|RODEZ MARCILLAC|44.40749|2.48331
+LFJL|METZ NANCY LORRAINE|48.97828|6.24653
+LFMK|CARCASSONNE SALVAZA|43.21582|2.30854
+LFOK|CHALONS VATRY|48.77332|4.20616
+LFST|STRASBOURG ENTZHEIM|48.54194|7.63444
+LFMH|SAINT ETIENNE BOUTHEON|45.53405|4.29731
+LFBU|ANGOULEME BRIE CHAMPNIERS|45.72948|0.21915
+LFJY|CHAMBLEY|49.02547|5.87609
+LFOB|BEAUVAIS TILLE|49.45442|2.11281
+LFAD|COMPIEGNE MARGNY|49.43361|2.80472
+LFAF|LAON CHAMBRY|49.59583|3.63167
+LFAJ|ARGENTAN|48.70944|0.00278
+LFAP|RETHEL PERTHES|49.48111|4.36333
+LFAQ|ALBERT BRAY|49.97006|2.69262
+LFAR|MONTDIDIER|49.67306|2.56917
+LFAS|FALAISE MONTS D'ERAINES|48.92694|-0.14472
+LFAV|VALENCIENNES DENAIN|50.32479|3.46544
+LFAW|VILLERUPT|49.41056|5.88917
+LFAY|AMIENS-GLISY|49.87310|2.38699
+LFBK|MONTLUCON GUERET|46.22609|2.36282
+LFBX|PERIGUEUX BASSILLAC|45.19749|0.81522
+LFCB|BAGNERES DE LUCHON|42.80056|0.60111
+LFCC|CAHORS LALBENQUE|44.35054|1.47859
+LFCG|SAINT GIRONS ANTICHAN|43.00778|1.10306
+LFCU|USSEL THALAMY|45.53583|2.42472
+LFCV|VILLEFRANCHE DE ROUERGUE|44.36889|2.02694
+LFDE|EGLETONS|45.42056|2.06778
+LFDS|SARLAT DOMME|44.79222|1.24361
+LFDV|COUHE VERAC|46.27056|0.18833
+LFEG|ARGENTON SUR CREUSE|46.59583|1.60111
+LFEI|BRIARE CHATILLON|47.61458|2.78185
+LFEM|MONTARGIS VIMORY|47.96056|2.68583
+LFEP|POUILLY MACONGE|47.22056|4.56028
+LFET|TIL CHATEL|47.54639|5.21083
+LFEU|BAR LE DUC LES HAUTS DE CHEE|48.86778|5.18417
+LFEX|NANCY AZELOT|48.59194|6.23972
+LFEZ|NANCY MALZEVILLE|48.72361|6.20639
+LFFB|BUNO BONNEVAUX|48.35028|2.42444
+LFFG|LA FERTE GAUCHER|48.75750|3.27889
+LFFH|CHATEAU THIERRY BELLEAU|49.06667|3.35556
+LFFJ|JOINVILLE MUSSEY|48.38528|5.14333
+LFFL|BAILLEAU ARMENONVILLE|48.51472|1.63861
+LFFN|BRIENNE LE CHATEAU|48.42972|4.48222
+LFFP|PITHIVIERS|48.15639|2.19111
+LFFR|BAR SUR SEINE|48.06611|4.41250
+LFFT|NEUFCHATEAU|48.36167|5.72028
+LFFZ|SEZANNE SAINT REMY|48.70944|3.76278
+LFGA|COLMAR HOUSSEN|48.11035|7.35915
+LFGC|STRASBOURG NEUHOF|48.55361|7.77750
+LFGE|AVALLON|47.50194|3.89833
+LFGK|JOIGNY|47.99444|3.39083
+LFGN|PARAY LE MONIAL|46.46667|4.13306
+LFGP|SAINT FLORENTIN CHEU|47.98139|3.77694
+LFGQ|SEMUR EN AUXOIS|47.48111|4.34306
+LFGR|DONCOURT LES CONFLANS|49.15194|5.93139
+LFGS|LONGUYON VILLETTE|49.48361|5.57194
+LFGT|SARREBOURG BUHL|48.71833|7.08000
+LFGU|SARREGUEMINES NEUNKIRCH|49.12750|7.10667
+LFGV|THIONVILLE YUTZ|49.35361|6.19972
+LFGW|VERDUN SOMMEDIEUE|49.12218|5.47085
+LFGX|CHAMPAGNOLE CROTENAY|46.76389|5.81972
+LFHA|ISSOIRE LE BROC|45.51389|3.26611
+LFHL|LANGOGNE LESPERON|44.70556|3.88722
+LFHN|BELLEGARDE VOUVRAY|46.12333|5.80472
+LFHP|LE PUY LOUDES|45.07966|3.76344
+LFHR|BRIOUDE BEAUMONT|45.32389|3.35833
+LFHS|BOURG CEYZERIAT|46.20562|5.29179
+LFID|CONDOM VALENCE SUR BAISE|43.90917|0.38611
+LFIF|SAINT AFFRIQUE BELMONT|43.82278|2.74722
+LFIG|CASSAGNES BEGONHES|44.17833|2.51778
+LFIK|RIBERAC SAINT AULAYE|45.23944|0.26583
+LFJC|CLAMECY|47.43750|3.50750
+LFJH|CAZERES PALAMINY|43.20083|1.05000
+LFJS|SOISSONS COURMELLES|49.34500|3.28306
+LFKM|SAINT GALMIER|45.60639|4.30500
+LFLK|OYONNAX ARBENT|46.27861|5.66639
+LFNO|FLORAC SAINTE ENIMIE|44.28556|3.46556
+LFNQ|MONT LOUIS LA QUILLANE|42.54346|2.12002
+LFNW|PUIVERT|42.91028|2.05472
+LFNX|BEDARIEUX LA TOUR SUR ORB|43.63972|3.14472
+LFOF|ALENCON VALFRAMBERT|48.44667|0.10833
+LFON|DREUX VERNOUILLET|48.70583|1.36139
+LFOR|CHARTRES METROPOLE|48.45889|1.52389
+LFOS|SAINT VALERY VITTEFLEUR|49.83528|0.65556
+LFOW|SAINT QUENTIN ROUPY|49.81694|3.20667
+LFOX|ETAMPES MONDESIR|48.38111|2.07389
+LFPA|PERSAN BEAUMONT|49.16500|2.31167
+LFPE|MEAUX ESBLY|48.92694|2.83389
+LFPK|COULOMMIERS VOISINS|48.83750|3.01444
+LFPP|LE PLESSIS BELLEVILLE|49.10917|2.73694
+LFQA|REIMS PRUNAY|49.20869|4.15658
+LFQB|TROYES BARBEREY|48.32162|4.01662
+LFQC|LUNEVILLE CROISMARE|48.59361|6.54222
+LFQD|ARRAS ROCLINCOURT|50.32389|2.80278
+LFQF|AUTUN BELLEVUE|46.97111|4.26111
+LFQH|CHATILLON SUR SEINE|47.84528|4.57944
+LFQJ|MAUBEUGE ELESMES|50.30833|4.03000
+LFQK|CHALONS ECURY SUR COOLE|48.90556|4.35278
+LFQL|LENS BENIFONTAINE|50.46639|2.81972
+LFQS|VITRY EN ARTOIS|50.33833|2.99333
+LFQU|SARRE UNION|48.95083|7.07639
+LFQW|VESOUL FROTEY|47.63861|6.20417
+LFQX|JUVANCOURT|48.11389|4.81944
+LFQY|SAVERNE STEINBOURG|48.75333|7.42583
+LFQZ|DIEUZE GUEBLANGE|48.77444|6.71417
+LFSE|EPINAL DOGNEVILLE|48.21139|6.44833
+LFSH|HAGUENAU|48.79694|7.81917
+LFSJ|SEDAN DOUZY|49.65889|5.03667
+LFSK|VITRY LE FRANCOIS VAUCLERC|48.70222|4.68333
+LFSN|NANCY ESSEY|48.69209|6.22605
+LFSP|PONTARLIER|46.90833|6.32917
+LFSU|LANGRES ROLAMPONT|47.96417|5.29361
+LFSV|PONT SAINT VINCENT|48.60000|6.05639
+LFSW|EPERNAY PLIVOT|49.00444|4.08528
+LFTP|PUIMOISSON|43.86889|6.16278
+LFXG|BITCHE|49.06667|7.45000
+LFXH|LE VALDAHON|47.16667|6.35000
+LFYG|CAMBRAI NIERGNIES|50.14250|3.26500
+LFYS|SAINTE LEOCADIE|42.44722|2.01083
+LFYV|YVETOT-BAONS LE COMTE|49.63861|0.73250
+LFAG|PERONNE SAINT QUENTIN|49.86886|3.02960
+LFAO|BAGNOLES DE L'ORNE COUTERNE|48.54472|-0.38500
+LFAX|MORTAGNE AU PERCHE|48.53972|0.53417
+LFBA|AGEN LA GARENNE|44.17471|0.59062
+LFBJ|SAINT JUNIEN|45.90250|0.91889
+LFCE|GUERET SAINT LAURENT|46.17556|1.95306
+LFCF|FIGEAC LIVERNON|44.67250|1.78806
+LFCM|MILLAU LARZAC|43.98906|3.18330
+LFDJ|PAMIERS LES PUJOLS|43.09068|1.69585
+LFEW|SAULIEU LIERNAIS|47.23861|4.26444
+LFGM|MONTCEAU LES MINES POUILLOUX|46.60333|4.33278
+LFGY|SAINT DIE REMOMEIX|48.26639|7.00750
+LFHQ|SAINT FLOUR COLTINES|45.07492|2.99264
+LFHT|AMBERT LE POYET|45.51556|3.74500
+LFHZ|SALLANCHES MONT BLANC|45.95000|6.63889
+LFIP|PEYRESOURDE BALESTAS|42.79667|0.43556
+LFJA|CHAUMONT SEMOUTIERS|48.09167|5.05000
+LFKA|ALBERTVILLE|45.62722|6.32972
+LFLA|AUXERRE BRANCHES|47.84633|3.49658
+LFLI|ANNEMASSE|46.19194|6.26833
+LFLT|MONTLUCON DOMERAT|46.35278|2.57056
+LFLW|AURILLAC|44.89758|2.41672
+LFNB|MENDE BRENOUX|44.50408|3.52763
+LFOC|CHATEAUDUN|48.05788|1.37944
+LFOG|FLERS SAINT PAUL|48.74972|-0.59472
+LFOJ|ORLEANS BRICY|47.98778|1.76056
+LFOL|L'AIGLE SAINT MICHEL|48.75889|0.65778
+LFPC|CREIL|49.25361|2.51917
+LFQE|ETAIN ROUVRES|49.22909|5.67605
+LFQI|CAMBRAI EPINOY|50.21917|3.15222
+LFQP|PHALSBOURG BOURSCHEID|48.76815|7.20513
+LFQV|CHARLEVILLE MEZIERES|49.78505|4.64281
+LFSF|METZ FRESCATY|49.07639|6.13389
+LFSG|EPINAL MIRECOURT|48.32501|6.06674
+LFSI|SAINT DIZIER ROBINSON|48.63354|4.90819
+LFSL|BRIVE SOUILLAC|45.03964|1.48567
+LFSO|NANCY OCHEY|48.58319|5.95453
+LFSX|LUXEUIL SAINT SAUVEUR|47.78722|6.36500
+LFSY|CESSEY BAIGNEUX LES JUIFS|47.60972|4.61750
+LFTF|CUERS PIERREFEU|43.24759|6.12729
+LFYD|DAMBLAIN|48.08611|5.66389
+LFYM|MARIGNY LE GRAND|48.66000|3.83389
+LFSR|REIMS CHAMPAGNE|49.31028|4.05083
+LFMD|CANNES MANDELIEU|43.54639|6.95417
+LFMF|FAYENCE|43.60806|6.70167
+LFMC|LE LUC LE CANNET|43.38472|6.38694
+LFTZ|LA MOLE|43.20639|6.48250
+LFKC|CALVI SAINTE CATHERINE|42.52436|8.79301
+LFKG|GHISONACCIA ALZITONE|42.05444|9.40028
+LFKS|SOLENZARA|41.92639|9.40528
+LFKF|FIGARI SUD CORSE|41.50211|9.09675
+LFKJ|AJACCIO NAPOLEON BONAPARTE|41.92390|8.80244
+LFMN|NICE COTE D'AZUR|43.66541|7.21498
+LFKD|SOLLIERES SARDIERES|45.25389|6.80111
+LFKR|SAINT REMY DE MAURIENNE|45.37503|6.27781
+LFNC|MONT DAUPHIN SAINT CREPIN|44.70056|6.59917
+LFHM|MEGEVE|45.82361|6.64917
+LFKO|PROPRIANO|41.66028|8.89389
+LFKT|CORTE|42.29028|9.19250
+LFKX|MERIBEL|45.40750|6.57750
+LFLJ|COURCHEVEL|45.39583|6.63250
+LFMR|BARCELONNETTE SAINT PONS|44.38722|6.60917
+`;
+
+const existingAirportCodesForAdditionalDisplay = new Set(
+    [...pelicanAirports, ...otherAirports]
+        .map(airport => String(airport?.oaci || '').trim().toUpperCase())
+        .filter(Boolean)
+);
+
+const additionalAerodromes = piafMetropolitanAerodromesData
+    .trim()
+    .split('\n')
+    .map(line => {
+        const [oaci, name, latText, lonText] = line.split('|');
+        return {
+            oaci: String(oaci || '').trim().toUpperCase(),
+            name: String(name || '').trim(),
+            lat: Number(latText),
+            lon: Number(lonText)
+        };
+    })
+    .filter(airport => (
+        /^[A-Z]{4}$/.test(airport.oaci)
+        && airport.oaci.startsWith('LF')
+        && airport.name
+        && Number.isFinite(airport.lat)
+        && Number.isFinite(airport.lon)
+        && !existingAirportCodesForAdditionalDisplay.has(airport.oaci)
+    ));
+
+
+/*
+ * v14.76 — pistes intégrées à la carte NPF, indépendamment des symboles.
+ *
+ * Les données de la v14.75 restent entièrement embarquées dans script.js.
+ * Les extrémités géographiques permettent à Leaflet d'afficher chaque piste
+ * selon sa vraie orientation et sa vraie longueur à tous les niveaux de zoom.
+ * Les pistes constituent désormais une couche cartographique non interactive,
+ * placée sous les ronds d'aérodrome restaurés depuis la v14.74.
+ *
+ * Format :
+ * OACI|QFU|lat1|lon1|lat2|lon2|longueur_m|largeur_m|surface|géométrie_estimée
+ */
+const additionalAerodromeRunwaysData = `
+LFAB|13/31|49.885000|1.080946|49.880260|1.089713|820|0|UNK|1
+LFAC|06/24|50.958801|1.945210|50.965401|1.964310|1535|45|ASP|0
+LFAD|05/23|49.431009|2.799953|49.436211|2.809487|900|0|UNK|1
+LFAE|05/23|50.066569|1.421840|50.071771|1.431500|900|18|PAVED|1
+LFAF|17/35|49.600192|3.630483|49.591468|3.632856|985|0|UNK|1
+LFAG|09/27|49.868698|3.019900|49.868401|3.039260|1390|30|ASP|0
+LFAI|05/23|48.593899|3.001920|48.598999|3.012280|955|20|ASP|0
+LFAJ|04/22|48.705995|-0.001600|48.712885|0.007160|1000|0|UNK|1
+LFAL|08/26|47.692105|-0.011474|47.693454|0.007594|1435|80|GRASS|1
+LFAM|06/24|50.420821|1.586530|50.425298|1.597350|914|46|GRASS|1
+LFAO|12/30|48.548199|-0.393664|48.543400|-0.381225|1060|20|ASP|0
+LFAP|06/24|49.479401|4.358775|49.482819|4.367885|760|60|GRS|1
+LFAS|06/24|48.925029|-0.149758|48.928851|-0.139682|850|0|UNK|1
+LFAT|13/31|50.523998|1.612470|50.512501|1.631390|1850|40|ASP|0
+LFAV|06/24|50.327641|3.455589|50.330322|3.463281|625|50|GRS|0
+LFAV|11/29|50.328541|3.450050|50.323074|3.472504|1708|45|ASP|0
+LFAV|11L/29R|50.327705|3.457589|50.325737|3.465714|620|50|GRASS|0
+LFAY|12/30|49.875500|2.379230|49.870499|2.394920|1300|25|ASP|0
+LFBR|12/30|43.451401|1.257620|43.446899|1.269760|1100|30|ASP|0
+LFBX|11/29|45.200401|0.805769|45.194099|0.826186|1750|30|ASP|0
+LFBY|07/25|43.687940|-1.073565|43.690400|-1.064215|800|0|UNK|1
+LFCA|18/36|46.783877|0.550560|46.776683|0.550560|800|0|UNK|1
+LFCB|01/19|42.797239|0.600312|42.803881|0.601908|750|0|GRS|1
+LFCD|13/31|44.758584|-1.071015|44.751416|-1.058986|1240|60|GRASS|1
+LFCE|05/23|46.173609|1.949702|46.177511|1.956418|675|20|ASP|1
+LFCF|11/29|44.673950|1.782747|44.671050|1.793373|900|30|PAVED|1
+LFCG|15/33|43.012199|1.100070|43.003300|1.106230|1100|30|ASP|0
+LFCH|07L/25R|44.595299|-1.118060|44.599400|-1.101110|1346|23|ASP|0
+LFCH|07R/25L|44.594501|-1.118570|44.596401|-1.109520|1284|60|GRS|0
+LFCI|09/27|43.913101|2.100940|43.913300|2.120380|1560|30|ASP|0
+LFCJ|14L/32R|45.487779|-0.428708|45.478341|-0.417413|1370|0|UNK|1
+LFCJ|14R/32L|45.487779|-0.428708|45.478341|-0.417413|1370|0|UNK|1
+LFCK|14/32|43.562698|2.282100|43.549801|2.296260|1825|30|CON|0
+LFCL|15/33|43.591145|1.496450|43.583382|1.501358|950|23|ASP|0
+LFCM|14/32|43.995399|3.176530|43.983299|3.189460|1700|30|ASP|0
+LFCN|14L/32R|43.772335|-0.038723|43.765445|-0.030718|1000|23|PAVED|1
+LFCN|14R/32L|43.772162|-0.038523|43.765618|-0.030918|950|0|G|1
+LFCO|07L/25R|43.163059|-0.566536|43.166381|-0.554023|1080|50|GRS|1
+LFCO|07R/25L|43.163136|-0.566247|43.166304|-0.554313|1030|50|GRS|1
+LFCP|13/31|45.569443|-0.519761|45.562217|-0.507460|1250|80|GRASS|1
+LFCQ|09/27|43.770302|2.005800|43.769199|2.017700|965|20|ASP|0
+LFCS|03/21|44.696055|-0.599750|44.702285|-0.594689|800|20|PAVED|1
+LFCT|12/30|46.964301|-0.158771|46.959579|-0.146789|1050|100|G|1
+LFCV|13/31|44.371853|2.022001|44.365927|2.031879|1025|0|UNK|1
+LFCW|10/28|44.398998|0.753894|44.397099|0.766661|1040|18|ASP|0
+LFCX|10/28|44.086533|1.121391|44.085127|1.132488|900|0|UNK|1
+LFCY|10/28|45.631802|-0.980097|45.629601|-0.964328|1255|30|ASP|0
+LFCZ|08/26|44.145500|-1.180880|44.146702|-1.168000|1040|20|ASP|0
+LFDA|12/30|43.711899|-0.252222|43.708302|-0.240833|1000|30|ASP|0
+LFDB|13/31|44.028801|1.373700|44.022598|1.382420|980|20|ASP|0
+LFDC|15/33|45.276775|-0.455622|45.270445|-0.451038|790|60|SAND|1
+LFDE|07/25|45.419306|2.062874|45.421813|2.072686|815|0|UNK|1
+LFDF|10/28|44.853437|0.168064|44.851563|0.183056|1200|0|UNK|1
+LFDG|07/25|43.881337|1.867604|43.884782|1.880736|1120|0|GRASS|1
+LFDH|18/36|43.695363|0.600874|43.678317|0.599226|1900|30|CONCRETE|1
+LFDH|36/18|43.676998|0.599197|43.690399|0.600358|1900|30|ASP|0
+LFDI|04/22|44.978600|-0.138778|44.986599|-0.130722|1100|20|ASP|0
+LFDJ|09/27|43.090801|1.689970|43.090401|1.705920|1300|30|ASP|0
+LFDK|14/32|45.496381|-1.087321|45.491399|-1.080459|770|18|PAVED|1
+LFDL|08/26|47.035550|0.095740|47.036440|0.106030|790|60|GRS|0
+LFDM|11/29|44.500599|0.193328|44.497299|0.207697|1200|30|ASP|0
+LFDP|10/28|45.958561|-1.317760|45.956999|-1.305020|1000|0|UNK|1
+LFDR|08/26|44.566208|-0.063155|44.567692|-0.051345|950|0|UNK|1
+LFDT|08/26|43.214352|0.072457|43.215648|0.082543|830|0|UNK|1
+LFDU|06/24|45.195756|-0.887193|45.199803|-0.877246|900|60|GRASS|1
+LFDV|02/20|46.266060|0.185961|46.275060|0.190700|1065|0|UNK|1
+LFDX|17/35|44.462358|1.006432|44.455982|1.008008|720|0|GRASS|1
+LFEA|06/24|47.323830|-3.205019|47.326771|-3.197414|660|25|ASP|0
+LFEB|07/25|48.442053|-2.108617|48.444606|-2.098043|830|30|ASP|1
+LFEC|05/23|48.460999|-5.067640|48.464699|-5.060830|833|24|PAVED|0
+LFED|10/28|48.058899|-2.929330|48.058201|-2.914290|1120|30|ASP|0
+LFEF|10/28|47.341106|0.936536|47.340013|0.945684|700|25|CONCRETE|1
+LFEF|10L/28R|47.341106|0.936536|47.340013|0.945684|700|60|GRASS|1
+LFEG|03L/21R|46.593377|1.599049|46.598283|1.603171|630|18|ASP|1
+LFEG|03R/21L|46.592598|1.598394|46.599062|1.603826|830|65|GRS|1
+LFEH|06/24|47.478500|2.388900|47.483101|2.400560|1015|20|ASP|0
+LFEI|14/32|47.617508|2.778205|47.611652|2.785494|850|0|UNK|1
+LFEJ|04/22|46.838074|1.616620|46.843586|1.623381|800|0|UNK|1
+LFEK|11/29|46.890025|2.035702|46.887195|2.047078|920|0|UNK|1
+LFEK|18/36|46.892882|2.041390|46.884338|2.041390|950|0|UNK|1
+LFEL|04/22|46.617244|1.082464|46.622756|1.089197|800|0|UNK|1
+LFEM|05/23|47.957091|2.679658|47.964028|2.692003|1200|50|GRASS|1
+LFEM|05C/23C|47.957959|2.681201|47.963161|2.690460|900|80|GRS|1
+LFEM|05L/23R|47.959693|2.684287|47.961427|2.687373|300|40|GRS|1
+LFEN|04/22|47.264092|0.696780|47.269248|0.702101|700|18|HARD|1
+LFEN|04R/22L|47.265454|0.698186|47.267886|0.700694|330|20|UNPAVED|1
+LFEP|03/21|47.217250|4.557466|47.223870|4.563094|850|0|UNK|1
+LFEQ|11/29|47.482695|-3.106451|47.480084|-3.096889|775|25|PAVED|1
+LFER|05/23|47.696182|-2.042359|47.701038|-2.033761|840|0|UNK|1
+LFES|02/20|48.046299|-3.668650|48.058800|-3.660910|1500|30|ASP|0
+LFET|01/19|47.541790|5.209257|47.550990|5.212404|1050|100|TURF|1
+LFET|11/29|47.547757|5.204204|47.545023|5.217455|1040|60|TURF|1
+LFEU|06/24|48.865666|5.178605|48.869893|5.189735|940|0|UNK|1
+LFEV|07L/25R|47.431219|5.615868|47.433221|5.626912|860|80|GRASS|1
+LFEV|07R/25L|47.431289|5.616254|47.433151|5.626527|800|18|PAVED|1
+LFEW|05/23|47.236681|4.260529|47.240539|4.268352|730|20|ASPHALT|1
+LFEX|18/36|48.596347|6.239720|48.587533|6.239720|980|0|UNK|1
+LFEY|04/22|46.715225|-2.394931|46.719498|-2.390639|575|50|GRS|0
+LFEY|14/32|46.721321|-2.396814|46.712685|-2.386903|1220|25|ASP|0
+LFEZ|04/22|48.720372|6.202272|48.726848|6.210509|940|0|UNK|1
+LFEZ|09/27|48.723610|6.199983|48.723610|6.212797|940|0|UNK|1
+LFEZ|14/32|48.727055|6.202008|48.720165|6.210771|1000|0|UNK|1
+LFFB|10/28|48.350905|2.419109|48.349655|2.429771|800|0|UNK|1
+LFFC|04/22|49.075790|1.685749|49.081990|1.693692|900|0|UNK|1
+LFFC|12/30|49.080913|1.684369|49.076866|1.695070|900|0|UNK|1
+LFFD|05/23|48.894320|1.245067|48.900679|1.256594|1100|0|UNK|1
+LFFG|04/22|48.754226|3.273918|48.760097|3.282562|850|50|GRS|0
+LFFH|04/22|49.063466|3.351458|49.069873|3.359663|930|0|UNK|1
+LFFI|07/25|47.406601|-1.185170|47.409801|-1.169960|1200|25|ASP|0
+LFFJ|09/27|48.385435|5.138867|48.385125|5.147793|660|60|GRASS|1
+LFFK|08/26|46.440080|-0.800059|46.441579|-0.787721|960|0|UNK|1
+LFFL|08/26|48.514111|1.633396|48.515329|1.643824|780|0|UNK|1
+LFFL|18/36|48.518227|1.638610|48.511213|1.638610|780|0|UNK|1
+LFFN|10/28|48.431499|4.464880|48.428101|4.497580|2450|45|CON|0
+LFFP|07/25|48.154637|2.183889|48.158143|2.198331|1140|0|UNK|1
+LFFQ|10/28|48.499527|2.329964|48.497787|2.343697|1033|90|UNK|0
+LFFR|12/30|48.067909|4.407838|48.064311|4.417162|800|0|UNK|1
+LFFT|01/19|48.358216|5.719363|48.365124|5.721197|780|0|UNK|1
+LFFU|08/26|46.870485|2.371758|46.871735|2.382122|800|60|GRASS|1
+LFFV|04/22|47.192378|2.063778|47.197062|2.069563|680|60|GRS|1
+LFFW|07/25|46.930836|-1.332789|46.933604|-1.321651|900|0|UNK|1
+LFFZ|06L/24R|48.707113|3.757351|48.711766|3.768209|950|50|UNPAVED|1
+LFGB|02/20|47.737202|7.429690|47.745499|7.434730|1000|20|ASP|0
+LFGB|02R/20L|47.736435|7.430345|47.745708|7.435896|965|80|GRASS|0
+LFGB|16/34|47.739333|7.428577|47.735107|7.430863|500|50|GRASS|1
+LFGC|17/35|48.557407|7.777069|48.550053|7.777832|820|60|ASPH|0
+LFGF|03/21|47.001701|4.890310|47.010300|4.896430|910|30|ASP|0
+LFGG|18L/36R|47.705107|6.830830|47.696833|6.830830|920|80|GRASS|1
+LFGG|18R/36L|47.705107|6.830830|47.696833|6.830830|920|50|GRASS|1
+LFGH|12/30|47.362101|2.913673|47.358459|2.922986|810|0|UNK|1
+LFGI|02/20|47.382206|4.945345|47.388602|4.948511|750|20|ASPHALT|0
+LFGI|02R/20L|47.381639|4.945760|47.388289|4.949053|780|80|TURF|0
+LFGJ|05/23|47.033100|5.415340|47.044800|5.439190|2231|45|ASP|0
+LFGK|08/26|47.991501|3.385220|47.993198|3.399610|1054|30|ASP|0
+LFGK|08R/26L|47.993839|3.386213|47.995041|3.395447|700|80|TURF|1
+LFGL|08/26|46.674141|5.462071|46.675859|5.476269|1100|0|UNK|1
+LFGM|09/27|46.603330|4.326890|46.603330|4.338670|900|0|UNK|1
+LFGN|13/31|46.468466|4.130164|46.464874|4.135956|597|101|TURF|1
+LFGO|14L/32R|48.292885|3.244546|48.285995|3.253234|1000|0|UNK|1
+LFGO|14R/32L|48.292885|3.244546|48.285995|3.253234|1000|0|UNK|1
+LFGP|07C/25C|47.979729|3.770123|47.983051|3.783758|1080|0|UNK|1
+LFGP|07L/25R|47.979667|3.769870|47.983112|3.784010|1120|0|UNK|1
+LFGQ|04/22|47.478664|4.339801|47.483556|4.346319|732|25|ASPHALT|1
+LFGQ|04L/22R|47.479038|4.340300|47.483182|4.345820|620|60|GRASS|1
+LFGR|08/26|49.151237|5.925297|49.152643|5.937484|900|0|UNK|1
+LFGS|09/27|49.483610|5.565711|49.483610|5.578169|900|50|GRS|1
+LFGU|05L/23R|49.125436|7.102912|49.129564|7.110429|714|150|GRASS|1
+LFGU|05R/23L|49.125436|7.102912|49.129564|7.110429|714|150|GRASS|1
+LFGW|10/28|49.123199|5.461480|49.121498|5.476570|1120|20|ASP|0
+LFGY|07/25|48.265052|7.001978|48.267728|7.013023|870|18|PAVED|1
+LFGZ|11/29|47.143595|4.962776|47.140845|4.973884|894|60|TURF|1
+LFHA|18L/36R|45.517725|3.265727|45.510055|3.266493|855|70|GRASS-HERBEP|1
+LFHA|18R/36L|45.517725|3.265727|45.510055|3.266493|855|70|GRASS-HERBEA|1
+LFHD|18R/36L|44.403176|4.716940|44.392384|4.716940|1200|0|UNK|1
+LFHE|06/24|45.062618|5.096235|45.066822|5.106545|935|0|UNK|1
+LFHF|18/36|44.447674|4.333136|44.442036|4.332519|630|50|GRASS|0
+LFHH|01/19|45.459871|4.827049|45.465689|4.828511|657|47|GRASS|1
+LFHI|13/31|45.689252|5.448555|45.684628|5.456445|800|0|UNK|1
+LFHJ|18/36|45.656759|4.912220|45.648801|4.912220|885|0|UNK|1
+LFHL|04/22|44.702348|3.883937|44.708772|3.890504|883|50|GRASS|1
+LFHM|15/33|45.824501|6.648420|45.820000|6.651410|548|18|ASP|0
+LFHN|01/19|46.120359|5.803964|46.126301|5.805476|671|18|PAVED|1
+LFHQ|01/19|45.069901|2.991490|45.081501|2.994130|1310|30|ASP|0
+LFHR|15L/33R|45.327406|3.355891|45.320374|3.360769|870|50|GRASS-HERBE-|1
+LFHS|18/36|46.206001|5.292010|46.195801|5.292060|1139|30|ASP|0
+LFHS|18R/36L|46.208925|5.291790|46.202315|5.291790|735|80|GRS|1
+LFHT|02/20|45.512379|3.743698|45.518741|3.746302|736|18|PAVED|1
+LFHU|06/24|45.086493|6.081139|45.088507|6.086081|448|30|ASP|1
+LFHV|18/36|45.923302|4.635000|45.913898|4.634810|1040|30|ASP|0
+LFHV|18L/36R|45.923500|4.636040|45.913799|4.635580|1100|80|GRS|0
+LFHX|05/23|46.249664|3.581436|46.256456|3.593565|1200|23|PAVED|1
+LFHY|08/26|46.533798|3.415330|46.535400|3.432120|1300|30|ASP|0
+LFHY|08L/26R|46.534122|3.419486|46.534638|3.423734|330|30|GRS|1
+LFHY|08R/26L|46.533722|3.416183|46.535038|3.427037|843|40|GRS|1
+LFIB|11/29|44.783730|0.954127|44.781270|0.963652|800|0|UNK|1
+LFID|11/29|43.910477|0.381125|43.907863|0.391095|850|0|UNK|1
+LFIF|12/30|43.827900|2.739060|43.822300|2.753310|1300|20|ASP|0
+LFIG|10/28|44.179798|2.512060|44.179100|2.525160|1050|20|CON|0
+LFIH|07/25|45.266768|0.011897|45.269352|0.021983|840|0|UNK|1
+LFIK|05/23|45.236954|0.261623|45.241926|0.270037|860|0|UNK|1
+LFIL|05/23|43.912723|-0.954310|43.918937|-0.944029|1075|0|UNK|1
+LFIP|09/27|42.796670|0.432680|42.796670|0.438440|470|20|ASP|1
+LFIS|03/21|50.880128|1.734027|50.884871|1.738194|603|40|PAVED|1
+LFIV|09/27|45.380560|-1.120951|45.380560|-1.110709|800|0|UNK|1
+LFIY|10/28|45.965864|-0.529775|45.964536|-0.518945|850|50|GRASS|1
+LFJA|01/19|48.079601|5.048100|48.093102|5.050000|1500|45|ASP|0
+LFJB|04/22|46.899200|-0.701403|46.908600|-0.691374|1300|20|ASP|0
+LFJC|18/36|47.441052|3.507500|47.433948|3.507500|790|0|UNK|1
+LFJE|03/21|44.494591|5.401647|44.498749|5.405013|534|40|GRS|1
+LFJF|08/26|44.694679|5.149093|44.695881|5.158687|770|0|UNK|1
+LFJH|10/28|43.201525|1.044593|43.200135|1.055407|890|0|UNK|1
+LFJS|07/25|49.343654|3.277385|49.346346|3.288735|875|55|GRASS|1
+LFJT|03/21|47.146495|0.709805|47.153505|0.715756|900|90|GRASS|1
+LFJU|06/24|46.709801|2.937650|46.717300|2.954140|1512|17|ASP|0
+LFJU|06R/24L|46.709400|2.939530|46.712601|2.946850|661|38|GRS|0
+LFJY|05/23|49.018600|5.863420|49.032299|5.888720|2400|45|ASP|0
+LFKA|05/23|45.624956|6.325723|45.629484|6.333718|800|21|ASP|1
+LFKG|18/36|42.058037|9.400280|42.050843|9.400280|800|0|UNK|1
+LFKH|02/20|45.514110|5.678547|45.517550|5.680333|407|35|G|1
+LFKM|16/34|45.609132|4.303573|45.603648|4.306427|649|10|GRASS|1
+LFKO|09/27|41.661190|8.881392|41.659988|8.898122|1400|30|ASP|0
+LFKT|12/30|42.296101|9.188610|42.291100|9.197780|940|20|ASP|0
+LFKX|15/33|45.409081|6.576200|45.405919|6.578800|406|15|ASP|1
+LFKY|18/36|45.696759|5.691670|45.691021|5.691670|638|60|G|1
+LFLE|14/32|45.564602|5.972060|45.557499|5.979460|1000|20|ASP|0
+LFLG|04/22|45.214960|5.844917|45.221160|5.852303|900|0|UNK|1
+LFLH|17/35|46.832500|4.816120|46.819698|4.819160|1440|30|ASP|0
+LFLI|12/30|46.194698|6.260850|46.189301|6.275930|1300|30|ASP|0
+LFLJ|04/22|45.394036|6.630199|45.397624|6.634801|537|40|ASPHALT|1
+LFLM|17/35|46.299718|4.795286|46.290011|4.796780|1230|24|ASP|0
+LFLQ|02/20|44.575209|4.736579|44.585350|4.741761|1200|80|UNPAVED|1
+LFLR|01L/19R|45.250983|4.824019|45.259017|4.825421|900|100|UNPAVED|1
+LFLR|01R/19L|45.250983|4.824019|45.259017|4.825421|900|100|UNPAVED|1
+LFLT|11/29|46.354099|2.564380|46.351002|2.576590|1000|30|ASP|0
+LFMA|14/32|43.511600|5.362360|43.499699|5.373500|1504|30|ASP|0
+LFME|18L/36R|43.857152|4.414440|43.848968|4.414440|910|60|UNK|1
+LFME|18R/36L|43.857287|4.414440|43.848833|4.414440|940|60|GRASS|1
+LFMF|10L/28R|43.608685|6.696777|43.607435|6.706563|800|0|UNK|1
+LFMF|10R/28L|43.608708|6.696594|43.607412|6.706746|830|0|UNK|1
+LFMR|09/27|44.387220|6.604136|44.387220|6.614204|800|0|UNK|1
+LFMS|01/19|44.063499|4.140220|44.075802|4.144000|1395|30|ASP|0
+LFMW|11/29|43.312356|1.915296|43.309864|1.924704|810|30|PAVED|1
+LFMZ|08/26|43.174702|2.728440|43.176498|2.740560|1000|30|ASP|0
+LFNA|02L/20R|44.449718|6.033910|44.457359|6.039140|945|30|ASP|0
+LFNA|02R/20L|44.451302|6.035770|44.457001|6.039640|700|80|GRS|0
+LFNB|12/30|44.505501|3.526190|44.498699|3.539520|1300|30|ASP|0
+LFNC|16/34|44.704176|6.597439|44.696984|6.600945|847|30|ASPH|0
+LFNC|16G/34G|44.704068|6.598241|44.698714|6.600829|630|79|GRASS|0
+LFNE|09/27|43.657500|5.004700|43.657500|5.020860|1300|0|UNK|1
+LFNE|15/33|43.662251|5.008988|43.652749|5.016571|1220|0|UNK|1
+LFNF|02/20|43.731024|5.780357|43.741756|5.785763|1270|0|UNK|1
+LFNF|10/28|43.737213|5.776600|43.735567|5.789520|1054|0|UNK|1
+LFNG|14/32|43.613270|4.066567|43.607070|4.073753|900|30|PAVED|1
+LFNH|13/31|44.033501|5.072500|44.026199|5.083790|1200|20|ASP|0
+LFNJ|18/36|44.521827|5.736110|44.513733|5.736110|900|0|UNK|1
+LFNL|12/30|43.801517|3.778702|43.799043|3.784637|550|70|GRASS|1
+LFNO|09/27|44.285560|3.460598|44.285560|3.470522|790|0|UNK|1
+LFNQ|14/32|42.546905|2.116097|42.540015|2.123943|1000|0|UNK|1
+LFNR|08/26|43.536153|5.170714|43.537187|5.184286|1100|0|UNK|1
+LFNR|16/34|43.540631|5.175292|43.532709|5.179707|950|0|UNK|1
+LFNS|17/35|44.291851|5.927894|44.281489|5.930446|1170|0|UNK|1
+LFNT|13/31|43.999492|4.748837|43.992728|4.760042|1170|0|UNK|1
+LFNT|17R/35L|44.002088|4.752975|43.990132|4.755905|1350|0|UNK|1
+LFNU|17/35|44.088164|4.392678|44.078776|4.394982|1060|0|UNK|1
+LFNV|02/20|44.331520|4.904747|44.340140|4.909133|1020|50|GRASS|1
+LFNX|18/36|43.644104|3.144720|43.635336|3.144720|975|0|UNK|1
+LFOD|10/28|47.257401|-0.124586|47.256302|-0.105514|1450|30|ASP|0
+LFOF|07/25|48.445478|0.103393|48.447862|0.113267|775|0|UNK|1
+LFOG|05/23|48.747636|-0.598487|48.751804|-0.590953|721|25|PAVED|1
+LFOL|07/25|48.757713|0.652877|48.760066|0.662683|765|0|UNK|1
+LFOM|06/24|49.200519|-1.512170|49.206140|-1.497269|1250|80|GRASS|1
+LFON|04/22|48.703213|1.358408|48.708477|1.364105|720|80|GRASS|0
+LFOS|07/25|49.833896|0.649664|49.836664|0.661456|900|0|UNK|1
+LFOX|06/24|48.379009|2.072597|48.382477|2.080508|700|23||0
+LFOX|06L/24R|48.377964|2.066833|48.384041|2.080719|1230|50|ASPH|0
+LFOY|01/19|49.539949|0.358649|49.547831|0.360791|890|0|UNK|1
+LFOY|06/24|49.542001|0.354679|49.545778|0.364761|840|0|UNK|1
+LFOZ|05/23|47.894100|2.157340|47.901699|2.172210|1600|30|ASP|0
+LFPA|05/23|49.162361|2.306316|49.167638|2.317025|975|100|UNPAVED|1
+LFPA|10L/28R|49.165648|2.306049|49.164352|2.317291|830|0|UNK|1
+LFPA|10R/28L|49.165687|2.305710|49.164313|2.317630|880|0|UNK|1
+LFPD|10/28|49.103195|0.557404|49.101715|0.573708|1200|80|GRASS|0
+LFPE|07L/25R|48.926392|2.827178|48.930481|2.841522|1145|100|GRASS|0
+LFPE|07R/25L|48.925407|2.828867|48.929241|2.842346|1075|100|GRASS|0
+LFPE|16L/34R|48.930229|2.832833|48.921810|2.838348|1020|100|GRASS|0
+LFPE|16R/34L|48.928970|2.831451|48.920547|2.836975|1020|100|GRASS|0
+LFPF|12/30|48.845858|1.902973|48.841362|1.914807|1000|0|UNK|1
+LFPH|04/22|48.894515|2.603640|48.898825|2.608580|600|50|GRASS|1
+LFPH|11/29|48.897524|2.601858|48.895815|2.610362|650|50|GRASS|1
+LFPK|09/27|48.837601|3.006270|48.837502|3.025330|1400|20|PEM|0
+LFPK|09C/27C|48.837639|3.003639|48.837502|3.025306|1590|20|PAVED|0
+LFPK|09L/27R|48.838699|3.014950|48.838600|3.023820|650|50|GRS|0
+LFPK|09R/27L|48.835201|3.001140|48.835098|3.010160|660|80|GRS|0
+LFPL|08/26|48.820591|2.621320|48.821510|2.630755|700|20|PAVED|0
+LFPL|08R/26L|48.821251|2.615341|48.822628|2.630220|1100|100|GRASS|1
+LFPN|07L/25R|48.751202|2.098730|48.754398|2.112900|1100|30|ASP|0
+LFPN|07R/25L|48.749500|2.099740|48.752602|2.113180|1050|30|ASP|0
+LFPP|07/25|49.107574|2.731686|49.110085|2.740461|698|19|ASPH|0
+LFPP|07R/25L|49.106170|2.732170|49.109170|2.742330|823|50|GRASS|0
+LFPQ|12L/30R|48.707636|2.898608|48.704584|2.906952|700|18|PAVED|1
+LFPQ|12R/30L|48.707680|2.898489|48.704540|2.907071|720|50|GRASS|1
+LFPT|04/22|49.087799|2.027400|49.098598|2.043650|1689|47|ASP|0
+LFPT|12/30|49.101910|2.025665|49.095348|2.044373|1548|45|ASP|0
+LFPU|06/24|48.340085|2.794607|48.343795|2.804274|825|0|GRASS|1
+LFPX|05/23|48.839835|1.975962|48.844604|1.984598|825|60|GRASS|1
+LFPX|10/28|48.842774|1.975503|48.841666|1.985057|710|100|GRASS|1
+LFPZ|11L/29R|48.814682|2.062061|48.811562|2.073102|890|100|GRS|0
+LFPZ|11R/29L|48.813400|2.062402|48.810387|2.073173|865|60|GRS|0
+LFQB|05/23|48.317444|4.008744|48.321091|4.015575|734|100|GRS|0
+LFQB|17/35|48.329498|4.015330|48.314701|4.017750|1650|30|ASP|0
+LFQB|17R/35L|48.325600|4.012490|48.317501|4.013820|900|100|GRS|0
+LFQC|09/27|48.593399|6.536410|48.593102|6.550500|1039|20|ASP|0
+LFQC|09R/27L|48.593669|6.537122|48.593551|6.547318|750|75|GRASS|1
+LFQE|01/19|49.216400|5.668340|49.237400|5.676070|2400|45|ASP|0
+LFQF|18/36|46.971901|4.260570|46.962700|4.260460|1021|30|ASP|0
+LFQF|18L/36R|46.971500|4.261090|46.965801|4.261090|636|50|GRS|0
+LFQG|12/30|47.006500|3.104250|46.998699|3.122420|1630|30|ASP|0
+LFQH|02/20|47.841173|4.577569|47.849387|4.581311|955|100|TURF|1
+LFQJ|05L/23R|50.306018|4.025685|50.310642|4.034315|800|80|GRS|1
+LFQJ|05R/23L|50.306400|4.026580|50.314201|4.040170|1300|30|ASP|0
+LFQK|04L/22R|48.900393|4.346185|48.910727|4.359377|1500|70|GRASS|1
+LFQK|04R/22L|48.900393|4.346185|48.910727|4.359377|1500|80|GRASS|1
+LFQM|05/23|47.202801|6.076260|47.210300|6.091100|1400|23|ASP|0
+LFQO|07L/25R|50.685931|3.069971|50.688509|3.081149|838|80|GRASS|1
+LFQO|07R/25L|50.685931|3.069971|50.688509|3.081149|838|50|GRASS|1
+LFQO|17L/35R|50.690984|3.074512|50.683456|3.076608|850|80|GRASS|1
+LFQO|17R/35L|50.690984|3.074512|50.683456|3.076608|850|50|GRASS|1
+LFQP|06/24|48.760899|7.187990|48.771500|7.213120|2196|45|ASP|0
+LFQS|12/30|50.340353|2.987839|50.336306|2.998821|900|100|G|1
+LFQT|04/22|50.611801|2.634340|50.624901|2.650150|1840|30|ASP|0
+LFQU|09/27|48.950830|7.070433|48.950830|7.082347|870|0|UNK|1
+LFQV|11/29|49.786499|4.637430|49.781399|4.656710|1500|30|ASP|0
+LFQW|08/26|47.637699|6.194750|47.639500|6.213770|1442|20|ASP|0
+LFQX|07/25|48.112506|4.813744|48.115274|4.825136|900|50|GRS|1
+LFQZ|05/23|48.772055|6.709858|48.776824|6.718482|825|0|UNK|1
+LFRP|10/28|48.002527|-2.384379|48.001192|-2.373062|855|0|UNK|1
+LFSA|07/25|47.272118|6.077019|47.275102|6.089101|970|0|UNK|1
+LFSE|02/20|48.208394|6.446694|48.214386|6.449966|709|99|GRASS|1
+LFSM|08/26|47.485600|6.779460|47.488400|6.801610|1700|20|ASP|0
+LFSN|03/21|48.686344|6.226664|48.699028|6.236978|1600|40|ASP|0
+LFSP|02/20|46.900101|6.324620|46.908501|6.329270|1000|30|ASP|0
+LFSU|18/36|47.968306|5.293718|47.960034|5.293502|920|60|TURF|1
+LFSV|06/24|48.597302|6.049324|48.602698|6.063457|1200|0|UNK|1
+LFSV|13/31|48.603324|6.050400|48.596676|6.062380|1150|0|UNK|1
+LFSW|04/22|49.000306|4.079993|49.008573|4.090568|1200|50|GRASS|1
+LFSW|10/28|49.005189|4.078799|49.003690|4.091760|960|50|GRASS|1
+LFTF|11/29|43.250900|6.115300|43.244701|6.138090|1972|30|ASP|0
+LFTP|08/26|43.868250|6.157743|43.869530|6.167817|820|0|UNK|1
+LFTZ|06/24|43.202900|6.475590|43.207901|6.488410|1071|30|ASP|0
+LFXA|01/19|45.978401|5.326780|45.996300|5.330110|2000|30|ASP|0
+LFXA|02/20|45.976501|5.335350|45.983501|5.337940|800|100|GRS|0
+LFXB|06/24|45.699916|-0.641128|45.703963|-0.631091|900|0|UNK|1
+LFXB|06L/24R|45.699916|-0.641128|45.703963|-0.631091|900|0|UNK|1
+LFXB|06R/24L|45.699916|-0.641128|45.703963|-0.631091|900|0|UNK|1
+LFXB|12/30|45.703739|-0.640571|45.700141|-0.631649|800|0|UNK|1
+LFXU|10L/28R|48.999928|1.929596|48.996998|1.955902|1950|50|GRASS|0
+LFXU|10R/28L|48.999477|1.929474|48.996536|1.955780|1950|50|GRASS|0
+LFYG|08L/26R|50.141797|3.258781|50.143203|3.271219|900|18|ASP|1
+LFYG|08R/26L|50.141875|3.259472|50.143125|3.270528|800|100|GRS|1
+LFYS|07/25|42.445990|2.006249|42.448450|2.015411|800|0|UNK|1
+`;
+
+const additionalAerodromeRunwaysByOaci = (() => {
+    const byOaci = new Map();
+
+    additionalAerodromeRunwaysData
+        .trim()
+        .split('\n')
+        .forEach(line => {
+            const [
+                oaci,
+                ident,
+                leLatText,
+                leLonText,
+                heLatText,
+                heLonText,
+                lengthText,
+                widthText,
+                surface,
+                estimatedText
+            ] = line.split('|');
+
+            const runway = {
+                oaci: String(oaci || '').trim().toUpperCase(),
+                ident: String(ident || '').trim(),
+                leLat: Number(leLatText),
+                leLon: Number(leLonText),
+                heLat: Number(heLatText),
+                heLon: Number(heLonText),
+                lengthM: Number(lengthText),
+                widthM: Number(widthText),
+                surface: String(surface || '').trim(),
+                estimated: estimatedText === '1'
+            };
+
+            if (
+                !/^[A-Z]{4}$/.test(runway.oaci)
+                || !Number.isFinite(runway.leLat)
+                || !Number.isFinite(runway.leLon)
+                || !Number.isFinite(runway.heLat)
+                || !Number.isFinite(runway.heLon)
+                || !Number.isFinite(runway.lengthM)
+                || runway.lengthM <= 0
+            ) return;
+
+            if (!byOaci.has(runway.oaci)) byOaci.set(runway.oaci, []);
+            byOaci.get(runway.oaci).push(runway);
+        });
+
+    return byOaci;
+})();
+
+function getAdditionalAerodromeRunways(oaci) {
+    return additionalAerodromeRunwaysByOaci.get(
+        String(oaci || '').trim().toUpperCase()
+    ) || [];
+}
+
+
+/*
+ * v14.77 — pistes des aérodromes déclarés comme pélicandromes.
+ *
+ * Les 27 pélicandromes permanents de la liste `pelicanAirports` disposent
+ * désormais de leurs pistes dans la même représentation cartographique que
+ * les aérodromes complémentaires. Les coordonnées exactes sont utilisées
+ * lorsqu'elles sont disponibles. Quelques pistes secondaires sont reconstruites
+ * sommairement autour de l'ARP et marquées `estimated: true`.
+ *
+ * Format :
+ * OACI|QFU|lat1|lon1|lat2|lon2|longueur_m|largeur_m|surface|géométrie_estimée
+ */
+const declaredPelicanRunwaysData = `
+LFLU|01/19|44.912201|4.968100|44.931000|4.971700|2100|45|ASP|0
+LFLU|01L/19R|44.915600|4.969680|44.926201|4.971700|1193|50|GRASS|0
+LFLU|01R/19L|44.919281|4.971359|44.922869|4.972071|403|60|GRASS|1
+LFMU|09/27|43.324200|3.342750|43.322899|3.365060|1820|45|ASP|0
+LFJR|08/26|47.558894|-0.324012|47.561705|-0.300388|1800|45|PAVED|1
+LFJR|08L/26R|47.560535|-0.317133|47.561659|-0.307683|720|45|GRASS|1
+LFJR|08R/26L|47.558644|-0.319210|47.560362|-0.304773|1100|100|GRASS|1
+LFHO|18/36|44.550598|4.372800|44.537800|4.371580|1425|30|PAVED|0
+LFLX|03/21|46.850601|1.719170|46.876900|1.744170|3500|45|CON|0
+LFBM|09/27|43.910702|-0.531778|43.912300|-0.486964|3603|45|PEM|0
+LFBL|03/21|45.852501|1.172540|45.871300|1.190200|2500|45|ASP|0
+LFAQ|08/26|49.969330|2.678670|49.971001|2.709330|2200|45|PAVED|0
+LFAQ|08R/26L|49.967445|2.678942|49.968185|2.692833|1000|80|GRASS|0
+LFBP|13/31|43.387699|-0.433261|43.374500|-0.408242|2500|45|ASP|0
+LFTH|05/23|43.094501|6.141120|43.106400|6.161470|2120|45|ASP|0
+LFTH|13/31|43.101799|6.139940|43.089699|6.156430|1902|50|ASP|0
+LFSG|08/26|48.324100|6.051820|48.326199|6.088100|2700|45|CON|0
+LFKC|18/36|42.541100|8.792920|42.520302|8.793340|2310|40|CON|0
+LFMD|04/22|43.543900|6.954110|43.548500|6.960830|760|18|ASP|0
+LFMD|17/35|43.554501|6.950420|43.540298|6.952940|1540|45|ASP|0
+LFMD|17L/35R|43.549921|6.951760|43.545050|6.952945|550|50|GRASS|1
+LFKB|16/34|42.563499|9.479190|42.541801|9.488270|2520|45|ASP|0
+LFMH|17/35|45.551201|4.295140|45.530499|4.297760|2300|45|ASP|0
+LFKF|05/23|41.494701|9.086010|41.509800|9.107930|2480|45|ASP|0
+LFCC|13/31|44.355598|1.467500|44.347198|1.481940|1500|30|ASP|0
+LFML|13L/31R|43.449100|5.197310|43.427299|5.228460|3500|45|ASP|0
+LFML|13R/31L|43.441299|5.203020|43.425900|5.224350|2370|45|ASP|0
+LFKJ|02/20|41.911598|8.795420|41.931301|8.807690|2300|45|ASP|0
+LFMK|09/27|43.217098|2.293170|43.215000|2.318230|2050|45|ASP|0
+LFRV|08/26|47.723999|-2.731310|47.725201|-2.717780|1025|60|GRASS|0
+LFTW|18/36|43.768398|4.415560|43.746399|4.417140|2440|45|CON|0
+LFMP|15/33|42.754101|2.861710|42.735001|2.877750|2500|45|ASP|0
+LFBD|05/23|44.819099|-0.728983|44.838699|-0.701000|3100|45|ASP|0
+LFBD|11/29|44.831600|-0.729242|44.825401|-0.699897|2415|45|ASP|0
+LFCR|13/31|44.413672|2.472636|44.402094|2.492636|2048|45|ASP|0
+LFBN|07/25|46.308336|-0.412097|46.314492|-0.390731|1760|30|ASP|0
+LFBN|07G/25G|46.309487|-0.405214|46.311778|-0.397005|680|80|GRASS|1
+LFSJ|05/23|47.033086|5.415342|47.044781|5.439189|2231|45|ASP|0
+`;
+
+const declaredPelicanRunwaysByOaci = (() => {
+    const byOaci = new Map();
+
+    declaredPelicanRunwaysData
+        .trim()
+        .split('\n')
+        .forEach(line => {
+            const [
+                oaci,
+                ident,
+                leLatText,
+                leLonText,
+                heLatText,
+                heLonText,
+                lengthText,
+                widthText,
+                surface,
+                estimatedText
+            ] = line.split('|');
+
+            const runway = {
+                oaci: String(oaci || '').trim().toUpperCase(),
+                ident: String(ident || '').trim(),
+                leLat: Number(leLatText),
+                leLon: Number(leLonText),
+                heLat: Number(heLatText),
+                heLon: Number(heLonText),
+                lengthM: Number(lengthText),
+                widthM: Number(widthText),
+                surface: String(surface || '').trim(),
+                estimated: estimatedText === '1'
+            };
+
+            if (
+                !/^[A-Z]{4}$/.test(runway.oaci)
+                || !Number.isFinite(runway.leLat)
+                || !Number.isFinite(runway.leLon)
+                || !Number.isFinite(runway.heLat)
+                || !Number.isFinite(runway.heLon)
+                || !Number.isFinite(runway.lengthM)
+                || runway.lengthM <= 0
+            ) return;
+
+            if (!byOaci.has(runway.oaci)) byOaci.set(runway.oaci, []);
+            byOaci.get(runway.oaci).push(runway);
+        });
+
+    return byOaci;
+})();
+
+
+
+/*
+ * v14.78 — couverture des pistes de tous les aéroports pouvant être
+ * déclarés comme pélicandromes depuis l'interface.
+ *
+ * La v14.77 ne contenait que les 27 pélicandromes permanents. Les 97 terrains
+ * de `otherAirports`, dont Montpellier, Nice et Tarbes, peuvent eux aussi être
+ * enregistrés dans `customPelicanAirports`. Leurs géométries sont donc
+ * embarquées localement afin que toute sélection PÉLIC dispose de sa ou ses
+ * pistes à partir du zoom 1 NM.
+ *
+ * Les codes historiques conservés par NPF sont associés à la géométrie du
+ * terrain correspondant par proximité géographique. Trois terrains dont les
+ * seuils ne sont pas disponibles dans la base locale utilisent une géométrie
+ * sommaire marquée `estimated: true`.
+ *
+ * Format :
+ * OACI_NPF|QFU|lat1|lon1|lat2|lon2|longueur_m|largeur_m|surface|géométrie_estimée
+ */
+const otherAirportRunwaysData = `
+LFBC|06/24|44.528000|-1.138010|44.540001|-1.112730|2408|45|ASP|0
+LFBH|09/27|46.179699|-1.211010|46.178799|-1.181810|2255|45|ASP|0
+LFBF|12/30|43.549099|1.357200|43.542301|1.377410|1800|45|ASP|0
+LFBG|05/23|45.648411|-0.324381|45.662518|-0.300686|2423|45|PEM|0
+LFBG|08/26|45.661861|-0.324158|45.663662|-0.301008|1814|60|MAC|0
+LFBI|03/21|46.579601|0.300117|46.597900|0.315761|2350|45|ASP|0
+LFBK|06/24|48.533100|-2.867380|48.543400|-2.841840|2200|45|ASP|0
+LFBO|14L/32R|43.637402|1.357620|43.615601|1.380220|3000|45|ASP|0
+LFBO|14R/32L|43.644100|1.345930|43.618999|1.372100|3500|45|ASP|0
+LFBS|18/36|45.647099|5.879480|45.629002|5.880960|2020|45|ASP|0
+LFBT|02/20|43.166000|-0.012750|43.191299|0.000069|3000|45|ASP|0
+LFBU|10/28|45.730499|0.207131|45.728500|0.230214|1810|45|ASP|0
+LFCU|06/24|47.047901|2.611770|47.063499|2.651840|3503|45|ASP|0
+LFLA|18/36|47.857700|3.498210|47.842999|3.496100|1650|30|ASP|0
+LFLC|08/26|45.784801|3.150820|45.788601|3.189160|3013|45|ASP|0
+LFLD|06/24|47.056599|2.359880|47.063801|2.377330|1550|45|ASP|0
+LFLL|17L/35R|45.734901|5.091870|45.710999|5.094780|2670|45|ASP|0
+LFLL|17R/35L|45.746601|5.085940|45.710701|5.090300|4000|45|ASP|0
+LFLN|15L/33R|46.422001|4.007120|46.406502|4.021100|2030|45|CON|0
+LFLN|15R/33L|46.416500|4.007180|46.404999|4.017600|1500|30|CON|0
+LFLS|09/27|45.362999|5.309910|45.362900|5.348840|3050|45|ASP|0
+LFLV|01/19|46.159901|3.401720|46.179501|3.405750|2200|45|ASP|0
+LFLW|15/33|44.897900|2.416940|44.884998|2.427440|1700|30|ASP|0
+LFLY|16/34|45.735001|4.940930|45.719299|4.947610|1820|45|ASP|0
+LFLZ|15/33|45.086300|3.758240|45.074902|3.767160|1393|30|Paved|0
+LFLZ|15R/33L|45.083599|3.759090|45.077499|3.763680|940|80|Unpaved|0
+LFMC|09/27|43.384499|6.378570|43.384701|6.388490|800|30|ASP|0
+LFMC|13/31|43.388599|6.380470|43.380501|6.393670|1400|30|ASP|0
+LFMI|15/33|43.537800|4.913300|43.507801|4.934620|3750|60|ASP|0
+LFMN|04L/22R|43.651798|7.204040|43.669498|7.228510|2628|45|ASP|0
+LFMN|04R/22L|43.646702|7.202490|43.665600|7.228440|2963|45|ASP|0
+LFMQ|12/30|43.256802|5.777519|43.248466|5.792753|1545|30|ASP|0
+LFMV|17/35|43.915600|4.899560|43.898998|4.904080|1880|45|ASP|0
+LFMY|16/34|43.615700|5.104410|43.598801|5.113040|2001|45|CON|0
+LFOA|06/24|47.047901|2.611770|47.063499|2.651840|3503|45|ASP|0
+LFOC|10/28|48.059601|1.361340|48.056702|1.391910|2302|45|ASP|0
+LFOE|04/22|49.018299|1.206710|49.039001|1.233020|2995|45|ASP|0
+LFOK|10/28|48.779598|4.158410|48.772800|4.209930|3860|45|CON|0
+LFOJ|07/25|47.983898|1.745560|47.991501|1.775690|2404|45|ASP|0
+LFOP|04/22|49.379501|1.168450|49.390999|1.183940|1700|45|ASP|0
+LFOQ|12/30|47.681599|1.202310|47.675999|1.215860|1250|30|ASP|0
+LFOR|09/27|48.457165|1.514192|48.456787|1.525586|840|25|ASPH|0
+LFOT|02/20|47.421799|0.723408|47.442699|0.731800|2404|45|CON|0
+LFOU|03/21|47.076500|-0.880908|47.087799|-0.873217|1380|30|ASP|0
+LFOV|14/32|48.038506|-0.751112|48.026672|-0.737479|1662|30|ASP|0
+LFPB|03/21|48.948700|2.426860|48.970501|2.442150|2395|45|ASP|0
+LFPB|07/25|48.963799|2.420290|48.973999|2.458250|3000|45|PEM|0
+LFPB|09/27|48.963699|2.420400|48.965099|2.445630|1847|45|ASP|0
+LFPC|07/25|49.249001|2.504170|49.258099|2.534090|2399|50|CON|0
+LFPG|08H/26H|49.015769|2.558572|49.016089|2.564603|440|30|GRASS|0
+LFPG|08L/26R|48.995701|2.552740|48.998798|2.610180|4215|45|ASP|0
+LFPG|08R/26L|48.992901|2.565660|48.994900|2.602430|2700|60|CON|0
+LFPG|09L/27R|49.024700|2.524890|49.026699|2.561690|2700|60|ASP|0
+LFPG|09R/27L|49.020599|2.513060|49.023701|2.570290|4200|45|ASP|0
+LFPO|02/20|48.717499|2.376700|48.737999|2.386970|2400|60|CON|0
+LFPO|06/24|48.720001|2.316920|48.735500|2.360680|3650|45|ASP|0
+LFPO|07/25|48.719398|2.358590|48.727402|2.402070|3320|45|CON|0
+LFPV|09/27|48.774101|2.189280|48.774601|2.213930|1813|45|ASP|0
+LFRB|07L/25R|48.449799|-4.422420|48.451900|-4.413410|700|18|ASP|0
+LFRB|07R/25L|48.443401|-4.438350|48.452301|-4.398690|3100|45|ASP|0
+LFRC|10/28|49.652199|-1.486860|49.648102|-1.453660|2440|45|ASP|0
+LFRD|12/30|48.590500|-2.088880|48.584999|-2.071300|1435|45|ASP|0
+LFRD|17/35|48.598099|-2.082680|48.578602|-2.077560|2200|45|ASP|0
+LFRE|11/29|47.290100|-2.351840|47.287601|-2.339830|950|25|ASP|0
+LFRF|06/24|48.880501|-1.571490|48.884201|-1.559650|960|30|ASP|0
+LFRG|12/30|49.370499|0.138714|49.360100|0.169933|2550|45|ASP|0
+LFRH|02/20|47.756199|-3.441810|47.770599|-3.435610|1670|45|CON|0
+LFRH|07/25|47.756302|-3.459170|47.763000|-3.428730|2403|45|CON|0
+LFRI|10/28|46.703300|-1.388560|46.700600|-1.368690|1550|30|ASP|0
+LFRJ|07/25|48.526699|-4.169170|48.533600|-4.134170|2700|45|CON|0
+LFRK|12/30|49.181000|-0.466417|49.171101|-0.445169|1900|45|ASP|0
+LFRK|12L/30R|49.179722|-0.457825|49.175571|-0.448881|800|50|GRASS|0
+LFRL|05/23|48.278599|-4.450960|48.284901|-4.439210|1108|40|ASP|0
+LFRL|13/31|48.283901|-4.446270|48.280201|-4.439340|650|54|GRS|0
+LFRM|02/20|47.941898|0.197989|47.953800|0.204592|1420|30|ASP|0
+LFRN|10/28|48.073700|-1.746100|48.070202|-1.718390|2100|45|ASP|0
+LFRN|14/32|48.069901|-1.740500|48.063900|-1.733530|850|30|ASP|0
+LFRO|11/29|48.756599|-3.482710|48.751999|-3.460770|1700|45|ASP|0
+LFRQ|09/27|47.975700|-4.185340|47.974499|-4.156600|2150|45|ASP|0
+LFRS|03/21|47.141602|-1.619540|47.164799|-1.601900|2900|45|ASP|0
+LFRT|07/25|47.309101|-2.164430|47.315300|-2.133930|2400|45|ASP|0
+LFRU|04/22|48.597698|-3.822940|48.608799|-3.808830|1617|36|ASP|0
+LFSD|01/19|47.266302|5.082896|47.276722|5.087014|1200|23|ASP|0
+LFSD|17/35|47.276600|5.093590|47.255100|5.096370|2400|45|ASP|0
+LFSF|04/22|48.973400|6.240540|48.990799|6.262100|2500|45|ASP|0
+LFSH|03/21|48.790401|7.814320|48.798302|7.820840|995|18|ASP|0
+LFSH|03L/21R|48.791000|7.813160|48.798599|7.819510|963|80|Turf|0
+LFSK|01/19|48.102600|7.356890|48.116699|7.361020|1610|30|ASP|0
+LFSO|02/20|48.573002|5.949090|48.593399|5.959950|2401|45|CON|0
+LFSQ|04/22|47.777199|6.357160|47.793701|6.376220|2315|36|ASP|0
+LFSQ|11/29|47.791599|6.334540|47.783001|6.364410|2433|45|ASP|0
+LFQA|07/25|49.206699|4.149810|49.210899|4.164290|1150|30|ASP|0
+LFST|05/23|48.531200|7.616030|48.545399|7.640440|2400|45|ASP|0
+LFSX|08/26|47.485600|6.779460|47.488400|6.801610|1700|20|ASP|0
+LFYR|04L/22R|47.324797|1.693338|47.317681|1.683200|1100|100|GRASS|1
+LFYR|04R/22L|47.323500|1.693887|47.317354|1.685132|950|100|GRASS|1
+LFYD|12/30|48.590500|-2.088880|48.584999|-2.071300|1435|45|ASP|0
+LFYD|17/35|48.598099|-2.082680|48.578602|-2.077560|2200|45|ASP|0
+LFSR|07/25|49.313816|4.065809|49.306182|4.033637|2482|48|ASP|1
+LFPM|01/19|48.606098|2.670980|48.617500|2.674850|1300|30|ASP|0
+LFPM|10/28|48.606499|2.663290|48.602299|2.689290|1975|45|ASP|0
+LFOB|04/22|49.454601|2.113020|49.462101|2.123270|1105|30|ASP|0
+LFOB|12/30|49.458302|2.103850|49.446201|2.131740|2430|45|ASP|0
+LFQN|03/21|50.729778|2.234035|50.725222|2.230326|570|100|GRASS|1
+LFQN|09/27|50.727659|2.236399|50.727341|2.227961|595|20|ASP|1
+LFKS|18/36|41.936199|9.405060|41.912601|9.405640|2627|45|CON|0
+LFBA|11/29|44.177700|0.580428|44.170300|0.605494|2165|30|ASP|0
+LFBE|09/27|44.825298|0.504950|44.823799|0.532603|2205|45|ASP|0
+LFDN|12/30|45.896198|-0.997261|45.885101|-0.972519|2280|45|ASP|0
+LFBZ|09/27|43.468201|-1.537230|43.468498|-1.509420|2250|45|ASP|0
+LFSL|11/29|45.043999|1.472240|45.036201|1.496520|2100|45|asphalt|0
+LFJL|04/22|48.973400|6.240540|48.990799|6.262100|2500|45|ASP|0
+LFSB|07/25|47.587943|7.516868|47.591429|7.539109|1715|60|CON|0
+LFSB|15/33|47.617699|7.509862|47.585933|7.531962|3900|60|CON|0
+LFGA|01/19|48.102600|7.356890|48.116699|7.361020|1610|30|ASP|0
+LFSI|11/29|48.640301|4.884360|48.631802|4.914470|2412|45|ASP|0
+LFOH|04/22|49.526501|0.077586|49.541599|0.099325|2300|40|ASP|0
+LFOI|02/20|50.138302|1.828650|50.148701|1.835130|1250|23|CON|0
+LFMO|15/33|44.148899|4.859740|44.131302|4.877360|2411|60|CON|0
+LFLB|18/36|45.647099|5.879480|45.629002|5.880960|2020|45|ASP|0
+LFLP|04/22|45.923500|6.092160|45.935001|6.105340|1630|30|ASP|0
+LFLP|04R/22L|45.925535|6.096976|45.931488|6.103766|845|59|grass|0
+LFLO|02/20|46.049400|3.998230|46.062099|4.003560|1475|30|Paved|0
+LFHP|15/33|45.086300|3.758240|45.074902|3.767160|1393|30|Paved|0
+LFHP|15R/33L|45.083599|3.759090|45.077499|3.763680|940|80|Unpaved|0
+LFMT|12L/30R|43.586102|3.955730|43.572800|3.982220|2600|50|ASP|0
+LFMT|12R/30L|43.575802|3.951890|43.570202|3.963090|1100|30|ASP|0
+LFQQ|01/19|50.560101|3.085460|50.573799|3.091140|1580|30|ASP|0
+LFQQ|08/26|50.562901|3.083010|50.568501|3.122230|2825|45|ASP|0
+LFRZ|07/25|47.309101|-2.164430|47.315300|-2.133930|2400|45|ASP|0
+`;
+
+const otherAirportRunwaysByOaci = (() => {
+    const byOaci = new Map();
+
+    otherAirportRunwaysData
+        .trim()
+        .split('\n')
+        .forEach(line => {
+            const [
+                oaci,
+                ident,
+                leLatText,
+                leLonText,
+                heLatText,
+                heLonText,
+                lengthText,
+                widthText,
+                surface,
+                estimatedText
+            ] = line.split('|');
+
+            const runway = {
+                oaci: String(oaci || '').trim().toUpperCase(),
+                ident: String(ident || '').trim(),
+                leLat: Number(leLatText),
+                leLon: Number(leLonText),
+                heLat: Number(heLatText),
+                heLon: Number(heLonText),
+                lengthM: Number(lengthText),
+                widthM: Number(widthText),
+                surface: String(surface || '').trim(),
+                estimated: estimatedText === '1'
+            };
+
+            if (
+                !/^[A-Z]{4}$/.test(runway.oaci)
+                || !Number.isFinite(runway.leLat)
+                || !Number.isFinite(runway.leLon)
+                || !Number.isFinite(runway.heLat)
+                || !Number.isFinite(runway.heLon)
+                || !Number.isFinite(runway.lengthM)
+                || runway.lengthM <= 0
+            ) return;
+
+            if (!byOaci.has(runway.oaci)) byOaci.set(runway.oaci, []);
+            byOaci.get(runway.oaci).push(runway);
+        });
+
+    return byOaci;
+})();
+
+const runwayCoverageMissingAirportCodes = [...pelicanAirports, ...otherAirports]
+    .map(airport => airport.oaci)
+    .filter(oaci => (
+        !declaredPelicanRunwaysByOaci.has(oaci)
+        && !otherAirportRunwaysByOaci.has(oaci)
+    ));
+
+if (runwayCoverageMissingAirportCodes.length) {
+    console.warn(
+        '[NPF v14.80] Aéroports sélectionnables sans piste :',
+        runwayCoverageMissingAirportCodes.join(', ')
+    );
+}
+
+const NPF_RUNWAY_MIN_ZOOM = 12; // Échelle cartographique NPF d'environ 1 NM.
+
 
 // =========================================================================
 // FONCTIONS UTILITAIRES
@@ -686,8 +2317,9 @@ async function clearTileCaches() {
 
 async function refreshOfflineTilesRendering() {
     notifyServiceWorkerActivePacks(activeOfflinePacks);
-    if (map && baseTileLayer) {
+    if (map) {
         setupBaseTileLayer();
+        scheduleOfflineTileWake('refreshOfflineTilesRendering');
     }
 }
 
@@ -883,6 +2515,48 @@ function normalizeHistoryCommune(commune) {
     const lon = Number(commune.longitude_mairie);
     if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
 
+    /*
+     * v14.38 — une localité sélectionnée doit rester la localité exacte.
+     * Le polygone communal sert uniquement au rattachement administratif et
+     * ne doit pas remplacer « Blagon » par « Lanton » dans le feu actif.
+     */
+    if (commune.locality_match) {
+        const localityName = String(
+            commune.nom_standard
+            || commune.name
+            || 'Lieu nommé'
+        ).trim();
+
+        if (!localityName) return null;
+
+        return {
+            nom_standard: localityName,
+            dep_code:
+                commune.dep_code || null,
+            dep_nom:
+                commune.dep_nom || null,
+            code_insee:
+                commune.code_insee || null,
+            latitude_mairie: lat,
+            longitude_mairie: lon,
+            locality_match: true,
+            locality_commune_name: String(
+                commune.locality_commune_name
+                || ''
+            ).trim(),
+            locality_type: String(
+                commune.locality_type
+                || 'lieu nommé'
+            ).trim(),
+            locality_source: String(
+                commune.locality_source
+                || ''
+            ).trim(),
+            savedAt:
+                commune.savedAt || Date.now()
+        };
+    }
+
     const polygonCommune = findCommuneContainingPoint(lat, lon);
     const polygonDatabaseCommune = polygonCommune ? (getCommuneFromDatabaseByNameAndDepartment(polygonCommune) || polygonCommune) : null;
 
@@ -1028,6 +2702,7 @@ function buildActiveFireIcon(label = 'Feu') {
 }
 
 function selectFireFromHistoryMap(item) {
+    clearAirportDestination({ restoreFire: false, redraw: false });
     const normalized = normalizeHistoryCommune(item);
     if (!normalized) return;
 
@@ -1211,6 +2886,7 @@ function displayFireHistory() {
         });
 
         li.querySelector('.fire-history-select').addEventListener('click', () => {
+            clearAirportDestination({ restoreFire: false, redraw: false });
             currentCommune = item;
             localStorage.setItem('currentCommune', JSON.stringify(item));
             displayCommuneDetails(item);
@@ -1351,7 +3027,7 @@ function getRouteLabelNearAirportOptions(fireLatLng, airportLatLng, kind = 'defa
      * à l'opposé du trait, sans l'éloignement fort appliqué aux pélicandromes.
      */
     const length = Math.sqrt((dx * dx) + (dy * dy));
-    const distanceFromIcon = kind === 'base' ? 54 : 42;
+    const distanceFromIcon = kind === 'base' ? 86 : 42;
     let offsetX = Math.round((-dx / length) * distanceFromIcon);
     let offsetY = Math.round((-dy / length) * distanceFromIcon);
 
@@ -1447,6 +3123,20 @@ async function initializeApp() {
     if (!FORCE_DISPLAY_MODE) {
         activeOfflinePacks = JSON.parse(localStorage.getItem(OFFLINE_ACTIVE_PACKS_KEY) || '[]');
         if (!Array.isArray(activeOfflinePacks)) activeOfflinePacks = [];
+        activeOfflinePackDatabases = JSON.parse(localStorage.getItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY) || '[]');
+        if (!Array.isArray(activeOfflinePackDatabases) || !activeOfflinePackDatabases.length) {
+            activeOfflinePackDatabases = getOfflineActivePackDatabasesForPacks(activeOfflinePacks);
+        }
+
+        activeOfflinePackAliases = JSON.parse(
+            localStorage.getItem(OFFLINE_ACTIVE_PACK_ALIASES_KEY) || '[]'
+        );
+        if (!Array.isArray(activeOfflinePackAliases) || !activeOfflinePackAliases.length) {
+            activeOfflinePackAliases = getOfflineActivePackAliasesForPacks(
+                activeOfflinePacks
+            );
+        }
+
         const savedMapSourceMode = localStorage.getItem(MAP_SOURCE_MODE_KEY);
         mapSourceMode = savedMapSourceMode === 'offline' ? 'offline' : DEFAULT_MAP_SOURCE_MODE;
         offlineOnlineFallbackMode = localStorage.getItem(OFFLINE_ONLINE_FALLBACK_KEY) === null
@@ -1462,17 +3152,30 @@ async function initializeApp() {
             }, 0);
         }
 
-        await initializeOfflineTilePreference();
-        // Démarrage rapide: utilise d'abord les bornes de zoom déjà connues, puis lance un scan complet en arrière-plan.
-        await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
-        setTimeout(() => {
-            updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
-        }, 0);
+        /*
+         * v14.63 — l'interface ne doit jamais attendre IndexedDB ou le
+         * service worker avant de créer la carte et de lier les boutons.
+         */
+        initializeOfflineTilePreference().catch(error => {
+            console.warn('[Offline] Initialisation différée:', error);
+        });
+        // Le scan de zoom est utile mais non bloquant pour l'ouverture de l'interface.
+        withTimeout(
+            updateBaseTileNativeZoomFromAvailability({ forceScan: false }),
+            2200,
+            'Timeout analyse initiale des cartes offline'
+        ).then(() => {
+            if (map) rebuildBaseTileLayerAfterOfflineSwitch('startup-zoom-ready-v14.69');
+        }).catch(error => {
+            console.warn('[Offline] Plage de zoom initiale conservée:', error);
+        });
         displayInstalledMaps();
     } else {
         mapSourceMode = DEFAULT_MAP_SOURCE_MODE;
         offlineOnlineFallbackMode = DEFAULT_OFFLINE_ONLINE_FALLBACK;
         activeOfflinePacks = [];
+        activeOfflinePackDatabases = [];
+        activeOfflinePackAliases = [];
         displayInstalledMaps();
         setTimeout(() => {
             initDB()
@@ -1521,6 +3224,9 @@ async function initializeApp() {
     statusMessage.style.display = 'none';
     searchSection.style.display = 'block';
     initMap();
+    scheduleRememberedOfflineMapStartupRecovery(
+        'initializeApp-v14.69'
+    );
     initializeTeamChat();
     try {
         setupEventListeners();
@@ -1530,8 +3236,8 @@ async function initializeApp() {
     setTimeout(showPostUpdateRestartNoticeIfNeeded, 900);
     setTimeout(showUpdateReminderIfDue, 1700);
     setTimeout(() => {
-        updateBaseTileNativeZoomFromAvailability({ forceScan: true }).catch(() => {});
-    }, 0);
+        scheduleOfflineTileWake('startup-post-init');
+    }, 250);
     setupGpsResumeHandlers();
     setTimeout(() => {
         ensureCommunesLayerDataLoaded()
@@ -1548,6 +3254,35 @@ async function initializeApp() {
                 }
             });
     }, 500);
+    setTimeout(() => {
+        loadNamedPlacesOfflineDatabase()
+            .then(() => {
+                if (!namedPlacesOfflineIndex) return;
+                const noticeKey =
+                    'npfNamedPlacesFranceReadyNoticeVersion';
+                if (
+                    localStorage.getItem(noticeKey)
+                        !== 'v14.69'
+                ) {
+                    localStorage.setItem(
+                        noticeKey,
+                        'v14.69'
+                    );
+                    showNamedPlacesOfflineStatus(
+                        `Base localités France hors ligne prête — ${Number(
+                            namedPlacesOfflineIndex.total_count
+                        ).toLocaleString('fr-FR')} localités`
+                    );
+                }
+            })
+            .catch(() => {
+                showNamedPlacesOfflineStatus(
+                    'Base localités France hors ligne indisponible',
+                    { error: true, duration: 6500 }
+                );
+            });
+    }, 1000);
+
     setTimeout(() => {
         ensureDepartmentsLayerDataLoaded()
             .then(() => {
@@ -1799,7 +3534,18 @@ function shouldSearchCandidate(candidate, searchWords, searchCompact, department
     return soundexParts.includes(firstSoundex);
 }
 
-function scoreCommuneSearchCandidate(candidate, searchWords) {
+function buildFrenchConsonantSearchKey(value) {
+    return simplifyString(String(value || ''))
+        .replace(/ph/g, 'f')
+        .replace(/gn/g, 'n')
+        .replace(/qu/g, 'k')
+        .replace(/ck/g, 'k')
+        .replace(/y/g, 'i')
+        .replace(/[aeiou0-9\s]/g, '')
+        .replace(/(.)\1+/g, '$1');
+}
+
+function scoreCommuneSearchCandidate(candidate, searchWords, departmentFilter = null) {
     if (!candidate || !Array.isArray(searchWords) || !searchWords.length) return 999;
 
     const parts = Array.isArray(candidate.search_parts) && candidate.search_parts.length
@@ -1829,6 +3575,40 @@ function scoreCommuneSearchCandidate(candidate, searchWords) {
         const compactTolerance = Math.max(1, Math.floor(searchCompact.length / 4));
         if (compactDistance <= compactTolerance) {
             return 0.5 + compactDistance;
+        }
+
+        /*
+         * v14.45 — tolérance phonétique ciblée avec département.
+         * « essen 12 », « esen 12 » et « aissen 12 » doivent retrouver
+         * Ayssènes. La comparaison porte sur le nom compact complet afin que
+         * les mots très fréquents de noms composés (Saint, Sainte...) ne
+         * produisent pas une multitude de faux positifs.
+         */
+        const searchPhonetic = buildFrenchConsonantSearchKey(searchCompact);
+        const candidatePhonetic = buildFrenchConsonantSearchKey(candidateCompact);
+        if (
+            departmentFilter
+            && searchPhonetic.length >= 2
+            && candidatePhonetic.length >= 2
+        ) {
+            if (searchPhonetic === candidatePhonetic) {
+                return 1.75;
+            }
+
+            const phoneticDistance = levenshteinDistance(searchPhonetic, candidatePhonetic);
+            if (
+                phoneticDistance <= 1
+                && (
+                    searchPhonetic.startsWith(candidatePhonetic)
+                    || candidatePhonetic.startsWith(searchPhonetic)
+                )
+            ) {
+                return 2.3 + (phoneticDistance * 0.2);
+            }
+
+            if (phoneticDistance <= 1) {
+                return 3.4;
+            }
         }
     }
 
@@ -1893,7 +3673,7 @@ function searchAliasCommunes(searchWords, departmentFilter = null) {
 
     return candidates
         .map(alias => {
-            const score = scoreCommuneSearchCandidate(alias, searchWords);
+            const score = scoreCommuneSearchCandidate(alias, searchWords, departmentFilter);
             return { ...alias, score: score + 0.25 };
         })
         .filter(alias => alias.score < 999)
@@ -1902,8 +3682,667 @@ function searchAliasCommunes(searchWords, departmentFilter = null) {
 }
 
 
+function parseSearchDepartmentFilter(rawSearch) {
+    const value = String(rawSearch || '');
+    const match = value.match(
+        /\s(\d{1,3}|2A|2B)$/i
+    );
+
+    if (!match) {
+        return {
+            departmentFilter: null,
+            searchTerm: value.trim()
+        };
+    }
+
+    return {
+        departmentFilter:
+            match[1].length === 1
+                ? `0${match[1]}`
+                : match[1].toUpperCase(),
+        searchTerm: value
+            .substring(0, match.index)
+            .trim()
+    };
+}
+
+function buildOfflineNamedPlaceCandidate(record) {
+    if (!record || typeof record !== 'object') {
+        return null;
+    }
+
+    const name = String(record.n || '').trim();
+    const municipality = String(
+        record.c || ''
+    ).trim();
+    const departmentCode = String(
+        record.d || ''
+    ).trim().toUpperCase();
+    const latitude = Number(record.a);
+    const longitude = Number(record.o);
+    const normalizedName = String(
+        record.k || simplifyString(name)
+    )
+        .trim()
+        .toLowerCase();
+
+    if (
+        !name
+        || !normalizedName
+        || !Number.isFinite(latitude)
+        || !Number.isFinite(longitude)
+    ) {
+        return null;
+    }
+
+    const searchParts = normalizedName
+        .split(' ')
+        .filter(Boolean);
+    const commune = communesByCodeInsee.get(
+        String(record.i || '').trim()
+    );
+
+    return {
+        nom_standard: name,
+        nom_sans_pronom: name,
+        nom_sans_accent:
+            normalizedName.replace(/\s+/g, '-'),
+        normalized_name: normalizedName,
+        search_parts: searchParts,
+        search_compact: searchParts.join(''),
+        soundex_parts:
+            searchParts.map(part => soundex(part)),
+        latitude_mairie: latitude,
+        longitude_mairie: longitude,
+        dep_code: departmentCode,
+        dep_nom:
+            commune?.dep_nom
+            || (
+                departmentCode === '33'
+                    ? 'Gironde'
+                    : ''
+            ),
+        code_insee: String(
+            record.i || ''
+        ).trim(),
+        locality_match: true,
+        locality_commune_name: municipality,
+        locality_type:
+            'village, hameau ou lieu-dit',
+        locality_source:
+            'Base Adresse Nationale — base locale NPF',
+        locality_offline: true
+    };
+}
+
+function normalizeNamedPlacesShardSearchKey(value) {
+    const original = simplifyString(value);
+    const stripped = original.replace(
+        /^(?:(?:de la|de l|les|aux|des|le|la|au|du|en|de|l|a)\s+)+/,
+        ''
+    ).trim();
+    return stripped || original;
+}
+
+function encodeNamedPlacesShardPrefix(prefix) {
+    return Array.from(String(prefix || ''))
+        .map(character => character
+            .charCodeAt(0)
+            .toString(16)
+            .padStart(2, '0'))
+        .join('');
+}
+
+function getNamedPlacesShardId(searchTerm) {
+    const normalized = normalizeNamedPlacesShardSearchKey(searchTerm);
+    let prefix = normalized.slice(
+        0,
+        NAMED_PLACES_OFFLINE_SHARD_PREFIX_LENGTH
+    );
+    prefix = prefix.padEnd(
+        NAMED_PLACES_OFFLINE_SHARD_PREFIX_LENGTH,
+        '_'
+    );
+    return encodeNamedPlacesShardPrefix(prefix);
+}
+
+function buildNamedPlacesShardPrefixIndex(archive) {
+    const index = new Map();
+    if (!archive || !archive.files) return index;
+
+    Object.keys(archive.files).forEach(path => {
+        const match = String(path).match(
+            /^shards\/([0-9a-f]+)\.json$/i
+        );
+        if (!match) return;
+
+        const shardId = match[1].toLowerCase();
+        const prefixId = shardId.slice(
+            0,
+            NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH * 2
+        );
+        if (!prefixId) return;
+
+        if (!index.has(prefixId)) {
+            index.set(prefixId, []);
+        }
+        index.get(prefixId).push(shardId);
+    });
+
+    index.forEach(shardIds => shardIds.sort());
+    return index;
+}
+
+function getNamedPlacesShardIds(searchTerm) {
+    const normalized = normalizeNamedPlacesShardSearchKey(searchTerm);
+    if (
+        normalized.length
+            < NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH
+    ) {
+        return [getNamedPlacesShardId(searchTerm)];
+    }
+
+    const broadPrefix = normalized.slice(
+        0,
+        NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH
+    );
+    const broadPrefixId = encodeNamedPlacesShardPrefix(
+        broadPrefix
+    );
+    const shardIds = namedPlacesOfflineShardIdsByPrefix.get(
+        broadPrefixId
+    );
+
+    if (Array.isArray(shardIds) && shardIds.length) {
+        return shardIds;
+    }
+
+    return [getNamedPlacesShardId(searchTerm)];
+}
+
+function showNamedPlacesOfflineStatus(
+    message,
+    {
+        error = false,
+        duration = 4200
+    } = {}
+) {
+    let element = document.getElementById(
+        'named-places-offline-status'
+    );
+    if (!element) {
+        element = document.createElement('div');
+        element.id = 'named-places-offline-status';
+        document.body.appendChild(element);
+    }
+    element.textContent = String(message || '');
+    element.classList.toggle('error', Boolean(error));
+    requestAnimationFrame(() => {
+        element.classList.add('visible');
+    });
+    window.clearTimeout(
+        showNamedPlacesOfflineStatus.hideTimer
+    );
+    showNamedPlacesOfflineStatus.hideTimer =
+        window.setTimeout(() => {
+            element.classList.remove('visible');
+        }, Math.max(1200, Number(duration) || 4200));
+}
+
+async function loadNamedPlacesOfflineDatabase({
+    force = false,
+    searchTerm = ''
+} = {}) {
+    if (force) {
+        namedPlacesOfflineArchive = null;
+        namedPlacesOfflineIndex = null;
+        namedPlacesOfflineShardIdsByPrefix = new Map();
+        namedPlacesOfflineShardCache.clear();
+        namedPlacesOfflineShardPromises.clear();
+        namedPlacesOfflineLoadedCount = 0;
+    }
+
+    if (!namedPlacesOfflineArchive) {
+        if (!namedPlacesOfflineLoadPromise) {
+            namedPlacesOfflineLoadError = '';
+            namedPlacesOfflineLoadPromise = (async () => {
+                if (typeof JSZip === 'undefined') {
+                    throw new Error('JSZip non chargé');
+                }
+
+                const response = await fetch(
+                    NAMED_PLACES_OFFLINE_ARCHIVE_URL,
+                    {
+                        method: 'GET',
+                        cache: 'force-cache',
+                        credentials: 'same-origin'
+                    }
+                );
+                if (!response.ok) {
+                    throw new Error(
+                        `Base localités France HTTP ${response.status}`
+                    );
+                }
+
+                const archiveBuffer = await response.arrayBuffer();
+                const archive = await JSZip.loadAsync(archiveBuffer);
+                const indexFile = archive.file(
+                    'localites-index.json'
+                );
+                if (!indexFile) {
+                    throw new Error(
+                        'Index de la base France absent'
+                    );
+                }
+
+                const indexPayload = JSON.parse(
+                    await indexFile.async('string')
+                );
+                if (
+                    !indexPayload
+                    || Number(indexPayload.total_count) < 10000
+                    || !Array.isArray(indexPayload.departments)
+                ) {
+                    throw new Error(
+                        'Index de la base France invalide'
+                    );
+                }
+
+                namedPlacesOfflineArchive = archive;
+                namedPlacesOfflineIndex = indexPayload;
+                namedPlacesOfflineShardIdsByPrefix =
+                    buildNamedPlacesShardPrefixIndex(archive);
+                return archive;
+            })()
+                .catch(error => {
+                    namedPlacesOfflineLoadError =
+                        error?.message || String(error);
+                    namedPlacesOfflineArchive = null;
+                    namedPlacesOfflineIndex = null;
+                    console.warn(
+                        '[Localités France offline] Chargement impossible:',
+                        error
+                    );
+                    throw error;
+                })
+                .finally(() => {
+                    namedPlacesOfflineLoadPromise = null;
+                });
+        }
+
+        try {
+            await namedPlacesOfflineLoadPromise;
+        } catch (_) {
+            return [];
+        }
+    }
+
+    if (!searchTerm) {
+        return [];
+    }
+
+    const loadShard = async shardId => {
+        if (namedPlacesOfflineShardCache.has(shardId)) {
+            const cached = namedPlacesOfflineShardCache.get(shardId);
+            namedPlacesOfflineShardCache.delete(shardId);
+            namedPlacesOfflineShardCache.set(shardId, cached);
+            return cached;
+        }
+
+        if (namedPlacesOfflineShardPromises.has(shardId)) {
+            return namedPlacesOfflineShardPromises.get(shardId);
+        }
+
+        const loadPromise = (async () => {
+            const shardFile = namedPlacesOfflineArchive.file(
+                `shards/${shardId}.json`
+            );
+            if (!shardFile) return [];
+
+            const payload = JSON.parse(
+                await shardFile.async('string')
+            );
+            const records = Array.isArray(payload?.items)
+                ? payload.items
+                    .map(buildOfflineNamedPlaceCandidate)
+                    .filter(Boolean)
+                : [];
+
+            namedPlacesOfflineShardCache.set(
+                shardId,
+                records
+            );
+            namedPlacesOfflineLoadedCount += records.length;
+
+            while (
+                namedPlacesOfflineShardCache.size
+                    > NAMED_PLACES_OFFLINE_SHARD_CACHE_MAX
+            ) {
+                const oldestKey =
+                    namedPlacesOfflineShardCache.keys()
+                        .next().value;
+                namedPlacesOfflineShardCache.delete(oldestKey);
+            }
+
+            return records;
+        })()
+            .catch(error => {
+                namedPlacesOfflineLoadError =
+                    error?.message || String(error);
+                console.warn(
+                    '[Localités France offline] Fragment impossible:',
+                    shardId,
+                    error
+                );
+                return [];
+            })
+            .finally(() => {
+                namedPlacesOfflineShardPromises.delete(shardId);
+            });
+
+        namedPlacesOfflineShardPromises.set(
+            shardId,
+            loadPromise
+        );
+        return loadPromise;
+    };
+
+    /*
+     * v2026.58 — un fragment unique sur trois lettres empêchait la recherche
+     * phonétique lorsqu'une faute modifiait la troisième lettre :
+     * « Abartelo » chargeait `aba`, jamais `abb` ; « Baye Argent » chargeait
+     * `bay`, jamais `bai`. Tous les fragments partageant les deux premières
+     * lettres sont maintenant chargés avant le classement phonétique local.
+     */
+    const shardIds = getNamedPlacesShardIds(searchTerm);
+    const shardGroups = await Promise.all(
+        shardIds.map(loadShard)
+    );
+
+    return shardGroups.flat();
+}
+
+function isDirectionalSearchTerm(searchTerm) {
+    const normalized = simplifyString(
+        searchTerm
+    );
+    return /(?:^|\s)(?:nord|sud|est|ouest)(?:\s|$)/
+        .test(normalized);
+}
+
+function groupOfflineNamedPlaceResults(
+    results,
+    searchTerm
+) {
+    const grouped = [];
+    const seen = new Set();
+    const keepDirection =
+        isDirectionalSearchTerm(searchTerm);
+
+    (Array.isArray(results) ? results : [])
+        .forEach(candidate => {
+            if (!candidate) return;
+
+            let groupName =
+                candidate.normalized_name;
+
+            if (!keepDirection) {
+                groupName = groupName.replace(
+                    /(?:\s|-)+(?:nord(?:\s|-)?est|nord(?:\s|-)?ouest|sud(?:\s|-)?est|sud(?:\s|-)?ouest|nord|sud|est|ouest)$/,
+                    ''
+                ).trim();
+            }
+
+            const key = [
+                groupName,
+                candidate.code_insee || '',
+                candidate.locality_commune_name || ''
+            ].join('|');
+
+            if (seen.has(key)) return;
+            seen.add(key);
+            grouped.push(candidate);
+        });
+
+    return grouped;
+}
+
+async function searchNamedPlacesOffline(
+    searchTerm,
+    departmentFilter,
+    searchWords
+) {
+    if (
+        !Array.isArray(searchWords)
+        || !searchWords.length
+        || simplifyString(searchTerm).length < 3
+    ) {
+        return [];
+    }
+
+    if (
+        departmentFilter
+        && Array.isArray(
+            namedPlacesOfflineIndex?.departments
+        )
+        && !namedPlacesOfflineIndex.departments
+            .includes(departmentFilter)
+    ) {
+        return [];
+    }
+
+    const records =
+        await loadNamedPlacesOfflineDatabase({
+            searchTerm
+        });
+    if (!records.length) return [];
+
+    const searchCompact =
+        searchWords.join('');
+    const normalizedQuery =
+        simplifyString(searchTerm);
+
+    const scored = records
+        .filter(candidate => (
+            !departmentFilter
+            || candidate.dep_code
+                === departmentFilter
+        ))
+        .filter(candidate =>
+            shouldSearchCandidate(
+                candidate,
+                searchWords,
+                searchCompact,
+                departmentFilter
+            )
+        )
+        .map(candidate => {
+            let score =
+                scoreCommuneSearchCandidate(
+                    candidate,
+                    searchWords,
+                    departmentFilter
+                );
+
+            if (
+                candidate.normalized_name
+                === normalizedQuery
+            ) {
+                score = -0.5;
+            } else {
+                score += 0.35;
+            }
+
+            return {
+                ...candidate,
+                score
+            };
+        })
+        .filter(candidate =>
+            candidate.score < 999
+        )
+        .sort(
+            (a, b) =>
+                a.score - b.score
+                || a.nom_standard.length
+                    - b.nom_standard.length
+        );
+
+    const grouped =
+        groupOfflineNamedPlaceResults(
+            scored,
+            searchTerm
+        );
+
+    const exactResults = grouped.filter(
+        candidate =>
+            candidate.normalized_name
+                === normalizedQuery
+    );
+
+    /*
+     * Un nom exact doit rester lisible : « Blagon » n'affiche que Blagon.
+     * Les autres propositions phonétiques restent disponibles lorsque la
+     * saisie comporte une faute, par exemple « Blagond ».
+     */
+    if (exactResults.length) {
+        return exactResults.slice(
+            0,
+            NAMED_PLACES_OFFLINE_RESULT_LIMIT
+        );
+    }
+
+    return grouped.slice(
+        0,
+        NAMED_PLACES_OFFLINE_RESULT_LIMIT
+    );
+}
+
+function mergeCommuneAndNamedPlaceResults(
+    communeResults,
+    namedPlaceResults
+) {
+    const merged = [];
+    const seen = new Set();
+
+    const addCandidate = candidate => {
+        if (!candidate) return;
+
+        const coordinatesKey = (
+            Number.isFinite(
+                Number(candidate.latitude_mairie)
+            )
+            && Number.isFinite(
+                Number(candidate.longitude_mairie)
+            )
+        )
+            ? `${Number(
+                candidate.latitude_mairie
+            ).toFixed(4)}:${Number(
+                candidate.longitude_mairie
+            ).toFixed(4)}`
+            : '';
+
+        const key = [
+            candidate.locality_match
+                ? 'locality'
+                : 'commune',
+            simplifyString(
+                candidate.nom_standard || ''
+            ),
+            candidate.code_insee || '',
+            coordinatesKey
+        ].join('|');
+
+        if (seen.has(key)) return;
+        seen.add(key);
+        merged.push(candidate);
+    };
+
+    (Array.isArray(communeResults)
+        ? communeResults
+        : []
+    ).forEach(addCandidate);
+
+    (Array.isArray(namedPlaceResults)
+        ? namedPlaceResults
+        : []
+    ).forEach(addCandidate);
+
+    return merged
+        .sort(
+            (a, b) =>
+                Number(a.score || 0)
+                    - Number(b.score || 0)
+                || (
+                    a.locality_match
+                        ? 1
+                        : 0
+                ) - (
+                    b.locality_match
+                        ? 1
+                        : 0
+                )
+                || String(
+                    a.nom_standard || ''
+                ).length
+                    - String(
+                        b.nom_standard || ''
+                    ).length
+        )
+        .slice(0, 10);
+}
+
+async function enrichCommuneSearchWithNamedPlaces({
+    rawSearch,
+    searchTerm,
+    departmentFilter,
+    searchWords,
+    localResults,
+    expectedSequence
+}) {
+    const offlineResults =
+        await searchNamedPlacesOffline(
+            searchTerm,
+            departmentFilter,
+            searchWords
+        );
+
+    if (
+        expectedSequence
+            !== namedPlacesSearchSequence
+    ) {
+        return;
+    }
+
+    const currentInput =
+        document.getElementById(
+            'search-input'
+        );
+    if (
+        !currentInput
+        || String(currentInput.value || '')
+            !== String(rawSearch || '')
+    ) {
+        return;
+    }
+
+    displayResults(
+        mergeCommuneAndNamedPlaceResults(
+            localResults,
+            offlineResults
+        )
+    );
+}
+
 
 function applyMapNoBackgroundStyle() {
+    /*
+     * v13.58 — le fond transparent laissait apparaître le bleu de l'app pendant
+     * les très courts chargements de tuiles au zoom/dézoom. On garde un fond
+     * neutre fixe : si une tuile manque brièvement, l'écran ne devient plus bleu.
+     */
+    const mapLoadingBackground = '#d8e2e8';
     const styleId = 'map-no-background-style';
     if (!document.getElementById(styleId)) {
         const style = document.createElement('style');
@@ -1914,12 +4353,12 @@ function applyMapNoBackgroundStyle() {
             .leaflet-pane,
             .leaflet-map-pane,
             .leaflet-tile-pane {
-                background: transparent !important;
-                background-color: transparent !important;
+                background: ${mapLoadingBackground} !important;
+                background-color: ${mapLoadingBackground} !important;
             }
 
             .leaflet-tile {
-                background: transparent !important;
+                background: ${mapLoadingBackground} !important;
             }
         `;
         document.head.appendChild(style);
@@ -1927,22 +4366,429 @@ function applyMapNoBackgroundStyle() {
 
     const mapElement = document.getElementById('map');
     if (mapElement) {
-        mapElement.style.background = 'transparent';
-        mapElement.style.backgroundColor = 'transparent';
+        mapElement.style.background = mapLoadingBackground;
+        mapElement.style.backgroundColor = mapLoadingBackground;
     }
 
     if (map && map.getContainer) {
         const container = map.getContainer();
         if (container) {
-            container.style.background = 'transparent';
-            container.style.backgroundColor = 'transparent';
+            container.style.background = mapLoadingBackground;
+            container.style.backgroundColor = mapLoadingBackground;
         }
     }
 
     document.querySelectorAll('.leaflet-container, .leaflet-pane, .leaflet-map-pane, .leaflet-tile-pane').forEach((element) => {
-        element.style.background = 'transparent';
-        element.style.backgroundColor = 'transparent';
+        element.style.background = mapLoadingBackground;
+        element.style.backgroundColor = mapLoadingBackground;
     });
+}
+
+
+
+/* v13.77 — échelle nautique dynamique permanente.
+ * Indépendante du fond de carte : fonctionne sur carte NPF, OACI et cartes offline.
+ * Affichage bas-gauche : nautique uniquement.
+ */
+let nauticalScaleControl = null;
+let nauticalScaleElement = null;
+
+function injectNauticalScaleStyle() {
+    const styleId = 'npf-nautical-scale-style';
+    if (document.getElementById(styleId)) return;
+    const style = document.createElement('style');
+    style.id = styleId;
+    style.textContent = `
+        .npf-nautical-scale {
+            position: fixed !important;
+            left: calc(env(safe-area-inset-left, 0px) + 12px) !important;
+            bottom: calc(env(safe-area-inset-bottom, 0px) + 0px) !important;
+            z-index: 1350 !important;
+            background: rgba(255, 255, 255, 0.95);
+            border: 2px solid rgba(0, 67, 112, 0.86);
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+            padding: 6px 8px 5px 8px;
+            color: #003f6b;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 13px;
+            font-weight: 800;
+            line-height: 1;
+            pointer-events: none;
+            min-width: 74px;
+        }
+        .npf-nautical-scale-bar-wrap {
+            height: 8px;
+            border-left: 2px solid #003f6b;
+            border-right: 2px solid #003f6b;
+            border-bottom: 3px solid #003f6b;
+            margin-bottom: 4px;
+        }
+        .npf-nautical-scale-label {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+            text-align: center;
+            white-space: nowrap;
+        }
+        .npf-nautical-scale-label .nm {
+            font-size: 13px;
+            font-weight: 1000;
+            color: #003f6b;
+        }
+        .npf-nautical-scale-label .km {
+            font-size: 11px;
+            font-weight: 900;
+            color: #41556a;
+        }
+        .npf-two-finger-ruler-label {
+            background: rgba(255, 255, 255, 0.96);
+            border: 2px solid rgba(0, 67, 112, 0.90);
+            border-radius: 9px;
+            box-shadow: 0 2px 8px rgba(0,0,0,.30);
+            padding: 5px 8px;
+            color: #003f6b;
+            font-family: Arial, Helvetica, sans-serif;
+            font-weight: 1000;
+            line-height: 1.08;
+            text-align: center;
+            white-space: nowrap;
+            pointer-events: none;
+        }
+        .npf-two-finger-ruler-label .nm { font-size: 15px; }
+        .npf-two-finger-ruler-label .km { font-size: 12px; color:#41556a; margin-top:2px; }
+        .npf-two-finger-ruler-help {
+            position: fixed;
+            left: 50%;
+            top: calc(env(safe-area-inset-top, 0px) + 14px);
+            transform: translateX(-50%);
+            z-index: 1850;
+            background: rgba(0,67,112,.92);
+            color: #fff;
+            border-radius: 999px;
+            padding: 6px 12px;
+            font: 900 13px/1 Arial, Helvetica, sans-serif;
+            box-shadow: 0 2px 9px rgba(0,0,0,.28);
+            pointer-events: none;
+        }
+        @media (max-width: 900px) {
+            .npf-nautical-scale {
+                font-size: 12px;
+                padding: 5px 7px 4px 7px;
+            }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+function formatNauticalMiles(value) {
+    if (!Number.isFinite(value) || value <= 0) return '-- NM';
+    if (value < 1) {
+        return `${Number(value.toFixed(1)).toString()} NM`;
+    }
+    if (value < 10) {
+        return `${Number(value.toFixed(value % 1 ? 1 : 0)).toString()} NM`;
+    }
+    return `${Math.round(value)} NM`;
+}
+
+function formatKilometers(value) {
+    if (!Number.isFinite(value) || value <= 0) return '-- km';
+    if (value < 10) return `${Number(value.toFixed(1)).toString()} km`;
+    return `${Math.round(value)} km`;
+}
+
+function chooseNiceNauticalScale(maxNm) {
+    const candidates = [0.1, 0.2, 0.5, 1, 2, 5, 10, 20, 50, 100, 200, 500];
+    let selected = candidates[0];
+    for (const candidate of candidates) {
+        if (candidate <= maxNm) selected = candidate;
+    }
+    return selected;
+}
+
+function updateNauticalScale() {
+    if (!map || !nauticalScaleElement || !map.getSize || !map.containerPointToLatLng || !map.distance) return;
+    const size = map.getSize();
+    if (!size || !size.x || !size.y) return;
+
+    const samplePixels = Math.min(160, Math.max(80, Math.floor(size.x * 0.16)));
+    const y = Math.max(10, Math.floor(size.y / 2));
+    const x1 = Math.max(5, Math.floor((size.x - samplePixels) / 2));
+    const x2 = x1 + samplePixels;
+
+    const ll1 = map.containerPointToLatLng(L.point(x1, y));
+    const ll2 = map.containerPointToLatLng(L.point(x2, y));
+    const meters = map.distance(ll1, ll2);
+    const metersPerPixel = meters / samplePixels;
+    if (!Number.isFinite(metersPerPixel) || metersPerPixel <= 0) return;
+
+    const maxPixels = 110;
+    const maxNm = (metersPerPixel * maxPixels) / 1852;
+    const niceNm = chooseNiceNauticalScale(maxNm);
+    const pixelWidth = Math.max(26, Math.round((niceNm * 1852) / metersPerPixel));
+
+    nauticalScaleElement.innerHTML = `
+        <div class="npf-nautical-scale-bar-wrap" style="width:${pixelWidth}px"></div>
+        <div class="npf-nautical-scale-label"><span class="nm">${formatNauticalMiles(niceNm)}</span></div>
+    `;
+}
+
+function ensureNauticalScaleControl() {
+    if (!map || !window.L || nauticalScaleControl) return;
+    injectNauticalScaleStyle();
+
+    /* v13.75 — l'échelle est sortie des contrôles Leaflet.
+     * Sur iPad, les contrôles bottom-left pouvaient être masqués/décalés par le zoom,
+     * la safe-area ou les bandeaux. Un overlay fixe reste visible sur NPF, OACI,
+     * online et offline, y compris avec les anciennes cartes.
+     */
+    nauticalScaleElement = document.getElementById('npf-nautical-scale-fixed');
+    if (!nauticalScaleElement) {
+        nauticalScaleElement = document.createElement('div');
+        nauticalScaleElement.id = 'npf-nautical-scale-fixed';
+        nauticalScaleElement.className = 'npf-nautical-scale';
+        nauticalScaleElement.innerHTML = '<div class="npf-nautical-scale-label"><span class="nm">-- NM</span></div>';
+        document.body.appendChild(nauticalScaleElement);
+    }
+    nauticalScaleControl = { fixedOverlay: true };
+
+    map.on('zoomend moveend resize viewreset', updateNauticalScale);
+    setTimeout(updateNauticalScale, 0);
+    setTimeout(updateNauticalScale, 350);
+    setTimeout(updateNauticalScale, 1200);
+}
+
+
+/* v13.77 — règle mobile 2 doigts, graduée en NM/km.
+ * Appui prolongé à 2 doigts : affichage de la règle tant que les doigts restent posés.
+ * Fonctionne avec carte NPF, OACI, online et offline car elle utilise la géométrie Leaflet.
+ */
+let twoFingerRulerLayer = null;
+let twoFingerRulerTimer = null;
+let twoFingerRulerActive = false;
+let twoFingerRulerWasDraggingEnabled = null;
+let twoFingerRulerWasTouchZoomEnabled = null;
+let twoFingerRulerPreviousTouchAction = null;
+let twoFingerRulerStartPoints = null;
+let twoFingerRulerHelpEl = null;
+
+function getTouchContainerPoints(event) {
+    if (!map || !map.getContainer || !event || !event.touches || event.touches.length < 2) return null;
+    const rect = map.getContainer().getBoundingClientRect();
+    const t1 = event.touches[0];
+    const t2 = event.touches[1];
+    return [
+        L.point(t1.clientX - rect.left, t1.clientY - rect.top),
+        L.point(t2.clientX - rect.left, t2.clientY - rect.top)
+    ];
+}
+
+function clearTwoFingerRulerLayer() {
+    if (twoFingerRulerLayer) {
+        twoFingerRulerLayer.clearLayers();
+    }
+}
+
+function ensureTwoFingerRulerLayer() {
+    if (!map || !window.L) return null;
+    if (!twoFingerRulerLayer) twoFingerRulerLayer = L.layerGroup().addTo(map);
+    return twoFingerRulerLayer;
+}
+
+function showTwoFingerRulerHelp() {
+    if (twoFingerRulerHelpEl) return;
+    twoFingerRulerHelpEl = document.createElement('div');
+    twoFingerRulerHelpEl.className = 'npf-two-finger-ruler-help';
+    twoFingerRulerHelpEl.textContent = 'Règle mobile — zoom suspendu';
+    document.body.appendChild(twoFingerRulerHelpEl);
+}
+
+function hideTwoFingerRulerHelp() {
+    if (twoFingerRulerHelpEl && twoFingerRulerHelpEl.parentNode) {
+        twoFingerRulerHelpEl.parentNode.removeChild(twoFingerRulerHelpEl);
+    }
+    twoFingerRulerHelpEl = null;
+}
+
+function drawTwoFingerRulerFromTouches(event) {
+    const points = getTouchContainerPoints(event);
+    const layer = ensureTwoFingerRulerLayer();
+    if (!points || !layer || !map || !map.containerPointToLatLng || !map.distance) return;
+
+    const [p1, p2] = points;
+    const ll1 = map.containerPointToLatLng(p1);
+    const ll2 = map.containerPointToLatLng(p2);
+    const meters = map.distance(ll1, ll2);
+    if (!Number.isFinite(meters) || meters <= 0) return;
+
+    clearTwoFingerRulerLayer();
+
+    const nm = meters / 1852;
+    const km = meters / 1000;
+
+    /* v13.77 — la règle est dessinée au-dessus des doigts, sinon elle est masquée en vol.
+     * La mesure reste basée sur les deux points réellement touchés.
+     */
+    let offsetY = -72;
+    const minTouchY = Math.min(p1.y, p2.y);
+    if (minTouchY + offsetY < 18) offsetY = 18 - minTouchY;
+    const visualOffset = L.point(0, offsetY);
+    const vp1 = p1.add(visualOffset);
+    const vp2 = p2.add(visualOffset);
+    const vll1 = map.containerPointToLatLng(vp1);
+    const vll2 = map.containerPointToLatLng(vp2);
+
+    L.polyline([vll1, vll2], {
+        color: '#111827',
+        weight: 8,
+        opacity: 0.80,
+        interactive: false,
+        lineCap: 'round'
+    }).addTo(layer);
+    L.polyline([vll1, vll2], {
+        color: '#ffffff',
+        weight: 5,
+        opacity: 0.95,
+        interactive: false,
+        lineCap: 'round'
+    }).addTo(layer);
+    L.polyline([vll1, vll2], {
+        color: '#003f6b',
+        weight: 3,
+        opacity: 1,
+        interactive: false,
+        lineCap: 'round'
+    }).addTo(layer);
+
+    const dx = vp2.x - vp1.x;
+    const dy = vp2.y - vp1.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nx = -dy / len;
+    const ny = dx / len;
+    const tickLength = 16;
+    const fractions = [0, 0.25, 0.5, 0.75, 1];
+    fractions.forEach((fraction) => {
+        const px = vp1.x + dx * fraction;
+        const py = vp1.y + dy * fraction;
+        const a = L.point(px - nx * tickLength / 2, py - ny * tickLength / 2);
+        const b = L.point(px + nx * tickLength / 2, py + ny * tickLength / 2);
+        L.polyline([map.containerPointToLatLng(a), map.containerPointToLatLng(b)], {
+            color: '#003f6b',
+            weight: fraction === 0 || fraction === 1 || fraction === 0.5 ? 4 : 3,
+            opacity: 1,
+            interactive: false,
+            lineCap: 'round'
+        }).addTo(layer);
+    });
+
+    let labelPoint = L.point((vp1.x + vp2.x) / 2, (vp1.y + vp2.y) / 2 - 42);
+    if (labelPoint.y < 20) labelPoint = L.point(labelPoint.x, 20);
+    const labelLatLng = map.containerPointToLatLng(labelPoint);
+
+    L.marker(labelLatLng, {
+        interactive: false,
+        icon: L.divIcon({
+            className: 'npf-two-finger-ruler-label',
+            html: `<div class="nm">${formatNauticalMiles(nm)}</div><div class="km">${formatKilometers(km)}</div>`,
+            iconSize: [112, 44],
+            iconAnchor: [56, 22]
+        })
+    }).addTo(layer);
+}
+
+function cancelTwoFingerRulerTimer() {
+    if (twoFingerRulerTimer) {
+        clearTimeout(twoFingerRulerTimer);
+        twoFingerRulerTimer = null;
+    }
+}
+
+function startTwoFingerRuler(event) {
+    cancelTwoFingerRulerTimer();
+    twoFingerRulerActive = true;
+    showTwoFingerRulerHelp();
+    try {
+        twoFingerRulerWasDraggingEnabled = map?.dragging?.enabled ? map.dragging.enabled() : null;
+        twoFingerRulerWasTouchZoomEnabled = map?.touchZoom?.enabled ? map.touchZoom.enabled() : null;
+        const container = map?.getContainer ? map.getContainer() : null;
+        if (container) {
+            twoFingerRulerPreviousTouchAction = container.style.touchAction || '';
+            container.style.touchAction = 'none';
+        }
+        if (map?.dragging?.disable) map.dragging.disable();
+        if (map?.touchZoom?.disable) map.touchZoom.disable();
+    } catch (_) {}
+    if (event) {
+        if (event.cancelable) event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+    }
+    drawTwoFingerRulerFromTouches(event);
+}
+
+function endTwoFingerRuler() {
+    cancelTwoFingerRulerTimer();
+    twoFingerRulerStartPoints = null;
+    if (twoFingerRulerActive) {
+        twoFingerRulerActive = false;
+        clearTwoFingerRulerLayer();
+        hideTwoFingerRulerHelp();
+        try {
+            if (twoFingerRulerWasDraggingEnabled && map?.dragging?.enable) map.dragging.enable();
+            if (twoFingerRulerWasTouchZoomEnabled && map?.touchZoom?.enable) map.touchZoom.enable();
+            const container = map?.getContainer ? map.getContainer() : null;
+            if (container) container.style.touchAction = twoFingerRulerPreviousTouchAction || '';
+        } catch (_) {}
+    }
+    twoFingerRulerWasDraggingEnabled = null;
+    twoFingerRulerWasTouchZoomEnabled = null;
+    twoFingerRulerPreviousTouchAction = null;
+}
+
+function handleTwoFingerRulerTouchStart(event) {
+    if (!event || !event.touches || event.touches.length !== 2 || !map) {
+        endTwoFingerRuler();
+        return;
+    }
+    injectNauticalScaleStyle();
+    twoFingerRulerStartPoints = getTouchContainerPoints(event);
+    cancelTwoFingerRulerTimer();
+    twoFingerRulerTimer = setTimeout(() => {
+        if (event.touches && event.touches.length === 2) startTwoFingerRuler(event);
+    }, 420);
+}
+
+function handleTwoFingerRulerTouchMove(event) {
+    if (twoFingerRulerActive) {
+        if (event.cancelable) event.preventDefault();
+        if (event.stopPropagation) event.stopPropagation();
+        if (event.stopImmediatePropagation) event.stopImmediatePropagation();
+        drawTwoFingerRulerFromTouches(event);
+        return;
+    }
+    if (!twoFingerRulerTimer || !twoFingerRulerStartPoints || !event.touches || event.touches.length !== 2) return;
+    const currentPoints = getTouchContainerPoints(event);
+    if (!currentPoints) return;
+    const moved = Math.max(
+        Math.hypot(currentPoints[0].x - twoFingerRulerStartPoints[0].x, currentPoints[0].y - twoFingerRulerStartPoints[0].y),
+        Math.hypot(currentPoints[1].x - twoFingerRulerStartPoints[1].x, currentPoints[1].y - twoFingerRulerStartPoints[1].y)
+    );
+    if (moved > 18) cancelTwoFingerRulerTimer();
+}
+
+function handleTwoFingerRulerTouchEnd() {
+    endTwoFingerRuler();
+}
+
+function ensureTwoFingerRulerControl() {
+    if (!map || !map.getContainer || map.__npfTwoFingerRulerReady) return;
+    const container = map.getContainer();
+    container.addEventListener('touchstart', handleTwoFingerRulerTouchStart, { passive: false });
+    container.addEventListener('touchmove', handleTwoFingerRulerTouchMove, { passive: false });
+    container.addEventListener('touchend', handleTwoFingerRulerTouchEnd, { passive: false });
+    container.addEventListener('touchcancel', handleTwoFingerRulerTouchEnd, { passive: false });
+    map.__npfTwoFingerRulerReady = true;
 }
 
 function initMap() {
@@ -1951,13 +4797,22 @@ function initMap() {
         attributionControl: false,
         zoomControl: false,
         maxZoom: GLOBAL_MAX_ZOOM,
-        zoomAnimation: true,
+        // v13.58 — iPad : moins d'animations Leaflet pour éviter les anciennes tuiles étirées/bleues après zoom.
+        zoomAnimation: false,
         fadeAnimation: false,
-        markerZoomAnimation: true
+        markerZoomAnimation: false
     }).setView([46.6, 2.2], 5.5);
 
     map.on('zoomend', enforceOfflineZoomLimit);
+    map.on('zoomend', () => {
+        if (showTrafficLayer) {
+            redrawTrafficLayerFromSnapshot();
+        }
+    });
     L.control.zoom({ position: 'bottomleft' }).addTo(map);
+    ensureNauticalScaleControl();
+    ensureTwoFingerRulerControl();
+    installTrafficPopupMapDismissInteraction();
     applyMapNoBackgroundStyle();
 
     if (map.createPane && !map.getPane('highVoltageLinesPane')) {
@@ -1965,14 +4820,76 @@ function initMap() {
         const htPane = map.getPane('highVoltageLinesPane');
         if (htPane) htPane.style.zIndex = '385';
     }
+    if (map.createPane && !map.getPane('roadOverlayCasingPane')) {
+        map.createPane('roadOverlayCasingPane');
+        const roadCasingPane = map.getPane('roadOverlayCasingPane');
+        if (roadCasingPane) {
+            roadCasingPane.style.zIndex = '405';
+            roadCasingPane.style.pointerEvents = 'none';
+        }
+    }
+    if (map.createPane && !map.getPane('roadOverlayLinePane')) {
+        map.createPane('roadOverlayLinePane');
+        const roadLinePane = map.getPane('roadOverlayLinePane');
+        if (roadLinePane) {
+            roadLinePane.style.zIndex = '410';
+            roadLinePane.style.pointerEvents = 'none';
+        }
+    }
+    if (map.createPane && !map.getPane('roadOverlayLabelPane')) {
+        map.createPane('roadOverlayLabelPane');
+        const roadLabelPane = map.getPane('roadOverlayLabelPane');
+        if (roadLabelPane) {
+            roadLabelPane.style.zIndex = '415';
+            roadLabelPane.style.pointerEvents = 'none';
+        }
+    }
+    if (map.createPane && !map.getPane('trafficAdvisoryPane')) {
+        map.createPane('trafficAdvisoryPane');
+        const advisoryPane = map.getPane('trafficAdvisoryPane');
+        if (advisoryPane) advisoryPane.style.zIndex = '675';
+    }
     if (map.createPane && !map.getPane('trafficPane')) {
         map.createPane('trafficPane');
         const trafficPane = map.getPane('trafficPane');
         if (trafficPane) trafficPane.style.zIndex = '690';
     }
+    if (map.createPane && !map.getPane('npfRunwaysPane')) {
+        map.createPane('npfRunwaysPane');
+        const runwayPane = map.getPane('npfRunwaysPane');
+        if (runwayPane) {
+            runwayPane.style.zIndex = '390';
+            runwayPane.style.pointerEvents = 'none';
+        }
+    }
     highVoltageLinesRenderer = L.canvas ? L.canvas({ padding: 0.35 }) : null;
+    npfRunwayRenderer = L.canvas
+        ? L.canvas({
+            padding: 0.35,
+            pane: 'npfRunwaysPane'
+        })
+        : null;
+
+    /*
+     * v14.16 — un Canvas distinct par pane.
+     * Le partage d'un même renderer entre l'entourage et la ligne pouvait
+     * provoquer des redessins incomplets sur Safari/iPadOS.
+     */
+    roadOverlayCasingRenderer = L.canvas
+        ? L.canvas({
+            padding: 0.55,
+            pane: 'roadOverlayCasingPane'
+        })
+        : null;
+    roadOverlayLineRenderer = L.canvas
+        ? L.canvas({
+            padding: 0.55,
+            pane: 'roadOverlayLinePane'
+        })
+        : null;
 
     setupBaseTileLayer();
+    npfRunwayMapLayer = L.layerGroup().addTo(map);
     permanentAirportLayer = L.layerGroup().addTo(map);
     routesLayer = L.layerGroup().addTo(map);
     fireHistoryLayer = L.layerGroup().addTo(map);
@@ -1983,29 +4900,32 @@ function initMap() {
     departmentsLayerGroup = L.layerGroup();
     departmentsLabelsLayer = L.layerGroup();
     highVoltageLinesLayer = L.layerGroup();
+    roadOverlayCasingLayer = L.layerGroup();
+    roadOverlayLineLayer = L.layerGroup();
+    roadOverlayLabelsLayer = L.layerGroup();
+    roadOverlayLayer = L.layerGroup([
+        roadOverlayCasingLayer,
+        roadOverlayLineLayer,
+        roadOverlayLabelsLayer
+    ]);
     trafficLayer = L.layerGroup();
+    trafficAdvisoryLayer = L.layerGroup();
+    trafficAdvisoryLayer.addTo(trafficLayer);
     communesLayerGroup = L.layerGroup();
     communesLabelsLayer = L.layerGroup();
+    drawNpfRunwayMapLayer();
+    map.on('zoomend', drawNpfRunwayMapLayer);
     drawPermanentAirportMarkers();
     drawFireHistoryMarkers();
     redrawGaarCircuits();
 
-    if (areDepartmentsVisible) {
-        setTimeout(() => { toggleDepartmentsLayer(true); }, 150);
-    }
+    scheduleStartupAuxiliaryLayers();
 
-    if (showHighVoltageLinesLayer) {
-        setTimeout(() => { toggleHighVoltageLinesLayer(true); }, 350);
-    }
-
-    if (showTrafficLayer) {
-        setTimeout(() => { toggleTrafficLayer(true); }, 600);
-    }
-
-    areCommunesVisible = localStorage.getItem(SHOW_COMMUNES_LAYER_KEY) === 'true';
-    if (areCommunesVisible) {
-        setTimeout(() => { toggleCommunesLayer(true); }, 250);
-    }
+    map.on('moveend zoomend', () => {
+        if (showRoadOverlayLayer) {
+            scheduleRoadOverlayRefresh('map-change');
+        }
+    });
 
     map.on('click', handleGaarMapClick);
 
@@ -2031,12 +4951,13 @@ function initMap() {
 function enforceOfflineZoomLimit() {
     if (!map || !offlineTilesMode) return;
 
+    const activeOfflineMaxZoomLimit = getOfflinePackMaxNativeZoomLimitForPacks(activeOfflinePacks);
     const safeMaxZoom = Math.max(
         GLOBAL_MIN_ZOOM,
         Math.min(
             GLOBAL_MAX_ZOOM,
-            OFFLINE_HARD_MAX_NATIVE_ZOOM,
-            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : OFFLINE_HARD_MAX_NATIVE_ZOOM
+            activeOfflineMaxZoomLimit,
+            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : activeOfflineMaxZoomLimit
         )
     );
 
@@ -2104,6 +5025,26 @@ function isOaciOfflinePackName(packName) {
     return /\boaci\b|carte\s*oaci/.test(simplified);
 }
 
+function getOfflinePackMaxNativeZoomLimitForPacks(packs = activeOfflinePacks) {
+    /*
+     * v13.58 — plafond plus strict pour les packs OACI/IGN.
+     * Dans certains imports, la carte OACI peut être groupée ou nommée comme IGN ;
+     * on limite donc aussi les packs reconnus IGN/Scan pour éviter que Leaflet
+     * demande des z11/z12/z13 absents et laisse un écran vide.
+     */
+    const packList = Array.isArray(packs) ? packs.filter(Boolean) : [];
+    const hasOaciOrIgnPack = packList.some(name => {
+        const simplified = String(name || '').normalize("NFD").replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        return isOaciOfflinePackName(name)
+            || isIgnOfflinePackName(name)
+            || /oaci|sia|scan\s*oaci|carte\s*oaci|\bign\b|scan\s*25|scan25/.test(simplified);
+    });
+    if (hasOaciOrIgnPack) {
+        return Math.min(OFFLINE_HARD_MAX_NATIVE_ZOOM, OACI_OFFLINE_MAX_NATIVE_ZOOM);
+    }
+    return OFFLINE_HARD_MAX_NATIVE_ZOOM;
+}
+
 function buildOfflineTileUrlForPack(tilePath, packName, isLargeZip = false) {
     /*
      * v12.14 — correction IGN multi-ZIP.
@@ -2124,8 +5065,932 @@ function buildOfflineTileUrlForPack(tilePath, packName, isLargeZip = false) {
     return `https://${hostPrefix}.tile.openstreetmap.org/${tilePath}`;
 }
 
+
+function scheduleOfflineTileWake(reason = 'startup') {
+    const token = ++offlineTileWakeToken;
+
+    OFFLINE_TILE_WAKE_DELAYS_MS.forEach((delay, index) => {
+        setTimeout(() => {
+            if (token !== offlineTileWakeToken) return;
+            try {
+                if (!map || !baseTileLayer) return;
+
+                if (typeof map.invalidateSize === 'function') {
+                    map.invalidateSize({ animate: false, pan: false });
+                }
+
+                if (typeof baseTileLayer.redraw === 'function' && index <= 2) {
+                    baseTileLayer.redraw();
+                }
+
+                if (index === OFFLINE_TILE_WAKE_DELAYS_MS.length - 1 && typeof enforceOfflineZoomLimit === 'function') {
+                    enforceOfflineZoomLimit();
+                }
+            } catch (error) {
+                console.warn('Réveil carte offline impossible:', reason, error);
+            }
+        }, delay);
+    });
+}
+
+
+/*
+ * v14.69 — restauration fiable de la carte Offline mémorisée.
+ *
+ * Les v14.66/v14.67 reconstruisaient plusieurs fois la couche Leaflet, mais avec
+ * les mêmes informations de pack déjà présentes en mémoire. Sur Safari/iPadOS,
+ * les bases IndexedDB isolées peuvent ne devenir réellement lisibles que
+ * plusieurs secondes après l'ouverture. Dans ce cas, les premières lectures
+ * échouaient, Leaflet conservait les tuiles neutres et l'utilisateur devait
+ * sélectionner une autre carte puis revenir sur la carte voulue.
+ *
+ * Cette version reproduit complètement la sélection manuelle :
+ * - relit la liste des packs installés depuis localStorage ;
+ * - réconcilie le groupe mémorisé avec tous ses fichiers réellement installés ;
+ * - recalcule bases et alias ;
+ * - attend qu'au moins une base de tuiles contienne effectivement des données ;
+ * - ferme les connexions de lecture périmées puis recrée la couche une seule fois
+ *   lorsque IndexedDB est prêt.
+ */
+function reconcileRememberedOfflinePacksWithInstalledMetadata() {
+    if (!Array.isArray(activeOfflinePacks) || !activeOfflinePacks.length) {
+        return false;
+    }
+
+    const installed = getInstalledMapPacksSafe();
+    if (!installed.length) return false;
+
+    const rememberedGroup = getOfflinePackGroupName(activeOfflinePacks[0]);
+    const installedGroupPacks = installed
+        .filter(pack => (
+            pack
+            && getOfflinePackGroupName(pack.name) === rememberedGroup
+        ))
+        .map(pack => String(pack.name || '').trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(
+            right,
+            'fr',
+            { numeric: true, sensitivity: 'base' }
+        ));
+
+    if (!installedGroupPacks.length) return false;
+
+    const current = [...activeOfflinePacks]
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(
+            right,
+            'fr',
+            { numeric: true, sensitivity: 'base' }
+        ));
+
+    if (JSON.stringify(current) !== JSON.stringify(installedGroupPacks)) {
+        activeOfflinePacks = installedGroupPacks;
+        try {
+            localStorage.setItem(
+                OFFLINE_ACTIVE_PACKS_KEY,
+                JSON.stringify(activeOfflinePacks)
+            );
+        } catch (_) {}
+    }
+
+    refreshRememberedOfflinePackRuntimeMetadata();
+    return true;
+}
+
+function refreshRememberedOfflinePackRuntimeMetadata() {
+    if (!Array.isArray(activeOfflinePacks)) activeOfflinePacks = [];
+
+    activeOfflinePackDatabases =
+        getOfflineActivePackDatabasesForPacks(activeOfflinePacks);
+    activeOfflinePackAliases =
+        getOfflineActivePackAliasesForPacks(activeOfflinePacks);
+
+    try {
+        localStorage.setItem(
+            OFFLINE_ACTIVE_PACK_DATABASES_KEY,
+            JSON.stringify(activeOfflinePackDatabases)
+        );
+        localStorage.setItem(
+            OFFLINE_ACTIVE_PACK_ALIASES_KEY,
+            JSON.stringify(activeOfflinePackAliases)
+        );
+    } catch (_) {}
+}
+
+function closeDirectOfflineDatabaseConnectionsForStartupRetry() {
+    try {
+        directOfflineDbPromises.forEach(promise => {
+            Promise.resolve(promise)
+                .then(openedDb => {
+                    try { openedDb?.close(); } catch (_) {}
+                })
+                .catch(() => {});
+        });
+        directOfflineDbPromises.clear();
+    } catch (_) {}
+}
+
+function countDirectOfflineTilesInDatabase(openedDb) {
+    return new Promise((resolve, reject) => {
+        let transaction;
+        let request;
+        try {
+            transaction = openedDb.transaction('tiles', 'readonly');
+            request = transaction.objectStore('tiles').count();
+        } catch (error) {
+            reject(error);
+            return;
+        }
+        request.onsuccess = () => resolve(Number(request.result) || 0);
+        request.onerror = () => reject(
+            request.error || new Error('Comptage des tuiles impossible')
+        );
+        transaction.onabort = () => reject(
+            transaction.error || new Error('Comptage des tuiles annulé')
+        );
+    });
+}
+
+function databaseHasTileForActiveOfflineSelection(openedDb) {
+    return new Promise((resolve, reject) => {
+        let tx;
+        let store;
+        try {
+            tx = openedDb.transaction('tiles', 'readonly');
+            store = tx.objectStore('tiles');
+        } catch (error) {
+            reject(error);
+            return;
+        }
+
+        const aliases = [];
+        const addAlias = value => {
+            const clean = String(value || '').replace(/\.zip$/i, '').trim();
+            if (clean && !aliases.includes(clean)) aliases.push(clean);
+        };
+        (Array.isArray(activeOfflinePacks) ? activeOfflinePacks : []).forEach(addAlias);
+        (Array.isArray(activeOfflinePackAliases) ? activeOfflinePackAliases : []).forEach(addAlias);
+
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            resolve(!!value);
+        };
+        const fail = error => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        };
+
+        let aliasIndex = 0;
+        const tryAlias = () => {
+            if (settled) return;
+            if (!store.indexNames.contains('packName') || aliasIndex >= aliases.length) {
+                let cursorRequest;
+                try { cursorRequest = store.openCursor(); } catch (error) { fail(error); return; }
+                let inspected = 0;
+                cursorRequest.onsuccess = () => {
+                    const cursor = cursorRequest.result;
+                    if (!cursor || inspected >= 120) { finish(false); return; }
+                    inspected += 1;
+                    if (isDirectOfflineTileRecordAllowed(cursor.value || {})) { finish(true); return; }
+                    cursor.continue();
+                };
+                cursorRequest.onerror = () => fail(cursorRequest.error || new Error('Sondage tuiles impossible'));
+                return;
+            }
+
+            const alias = aliases[aliasIndex++];
+            let request;
+            try {
+                request = store.index('packName').openKeyCursor(IDBKeyRange.only(alias));
+            } catch (error) {
+                fail(error);
+                return;
+            }
+            request.onsuccess = () => {
+                if (request.result) { finish(true); return; }
+                tryAlias();
+            };
+            request.onerror = tryAlias;
+        };
+
+        tx.onerror = () => fail(tx.error || new Error('Sondage IndexedDB échoué'));
+        tx.onabort = () => fail(tx.error || new Error('Sondage IndexedDB annulé'));
+        tryAlias();
+    });
+}
+
+function getPreferredStartupOfflineDatabaseCandidates() {
+    const allCandidates = getDirectOfflineDatabaseCandidates();
+    if (!isNpfOfflinePackSelection()) return allCandidates;
+
+    const activeGroups = new Set(
+        (Array.isArray(activeOfflinePacks) ? activeOfflinePacks : [])
+            .map(name => getOfflinePackGroupName(name))
+            .filter(Boolean)
+    );
+    const explicitDatabases = getInstalledMapPacksSafe()
+        .filter(pack => (
+            pack
+            && pack.dbName
+            && activeGroups.has(getOfflinePackGroupName(pack.name))
+        ))
+        .map(pack => String(pack.dbName || '').trim())
+        .filter(Boolean);
+
+    if (!explicitDatabases.length) return allCandidates;
+    return [...new Set(explicitDatabases)];
+}
+
+async function waitForRememberedOfflineTileDatabaseReady() {
+    const databaseNames = getPreferredStartupOfflineDatabaseCandidates();
+    const isNpf = isNpfOfflinePackSelection();
+
+    for (const dbName of databaseNames) {
+        try {
+            const openedDb = await withTimeout(
+                openDirectOfflineTileDatabase(dbName),
+                isNpf ? 7500 : 3000,
+                `Timeout ouverture ${dbName}`
+            );
+            const hasActiveTile = await withTimeout(
+                databaseHasTileForActiveOfflineSelection(openedDb),
+                isNpf ? 6500 : 2600,
+                `Timeout sondage ${dbName}`
+            );
+            if (hasActiveTile) {
+                return { dbName, tileCount: 1 };
+            }
+        } catch (_) {
+            /* La tentative suivante rouvrira la base avec une connexion fraîche. */
+        }
+    }
+
+    return null;
+}
+
+function rebuildRememberedOfflineMapAfterDatabaseReady(reason, readyDatabase) {
+    if (mapSourceMode !== 'offline' || !map) return false;
+
+    directOfflineTileBlobCache.clear();
+    directOfflineTileHitCount = 0;
+    directOfflineTileMissCount = 0;
+    offlineTilesMode = true;
+    applyImmediateBaseTileZoomForMapSource('offline');
+
+    try {
+        setupBaseTileLayer();
+        map.invalidateSize?.({ animate: false, pan: false });
+        baseTileLayer?.redraw?.();
+        scheduleOfflineTileWake(`db-ready:${reason}`);
+        setOfflineMapSwitchBusy(
+            `Mode OFFLINE — carte locale prête (${readyDatabase.dbName}).`
+        );
+        return true;
+    } catch (error) {
+        console.warn(
+            '[Offline] Reconstruction après disponibilité IndexedDB impossible:',
+            reason,
+            error
+        );
+        return false;
+    }
+}
+
+function scheduleRememberedOfflineMapStartupRecovery(
+    reason = 'startup-remembered-offline-map'
+) {
+    const token = ++offlineStartupLayerRecoveryToken;
+
+    if (
+        mapSourceMode !== 'offline'
+        || !Array.isArray(activeOfflinePacks)
+        || !activeOfflinePacks.length
+    ) {
+        return false;
+    }
+
+    reconcileRememberedOfflinePacksWithInstalledMetadata();
+    refreshRememberedOfflinePackRuntimeMetadata();
+
+    try {
+        localStorage.removeItem(OFFLINE_TILES_MIN_ZOOM_KEY);
+        localStorage.removeItem(OFFLINE_TILES_MAX_ZOOM_KEY);
+    } catch (_) {}
+
+    offlineTilesMode = true;
+    applyImmediateBaseTileZoomForMapSource('offline');
+
+    const rememberedGroup = getOfflinePackGroupName(activeOfflinePacks[0]);
+    /*
+     * v14.69 — tentatives strictement séquentielles.
+     * Les anciens setTimeout parallèles pouvaient se chevaucher sur la grosse
+     * base NPF : une tentative fermait la connexion pendant qu'une autre lisait.
+     */
+    const retryWaits = [80, 450, 900, 1600, 2800, 4500, 7000];
+
+    const runAttempt = async index => {
+        if (token !== offlineStartupLayerRecoveryToken) return;
+        if (mapSourceMode !== 'offline' || !map) return;
+        if (directOfflineTileHitCount > 0) return;
+
+        const currentGroup = getOfflinePackGroupName(
+            activeOfflinePacks?.[0] || ''
+        );
+        if (currentGroup !== rememberedGroup) return;
+
+        reconcileRememberedOfflinePacksWithInstalledMetadata();
+        refreshRememberedOfflinePackRuntimeMetadata();
+        if (
+            index > 0
+            && directOfflineNpfActiveReads === 0
+            && directOfflineNpfReadQueue.length === 0
+        ) {
+            closeDirectOfflineDatabaseConnectionsForStartupRetry();
+        }
+
+        const readyDatabase = await waitForRememberedOfflineTileDatabaseReady();
+        if (token !== offlineStartupLayerRecoveryToken) return;
+        if (mapSourceMode !== 'offline') return;
+
+        if (readyDatabase) {
+            rebuildRememberedOfflineMapAfterDatabaseReady(
+                `${reason}:attempt-${index + 1}`,
+                readyDatabase
+            );
+        }
+
+        if (directOfflineTileHitCount > 0) return;
+        const nextIndex = index + 1;
+        if (nextIndex >= retryWaits.length) {
+            setOfflineMapSwitchBusy(
+                readyDatabase
+                    ? 'Mode OFFLINE actif — carte NPF en cours de réveil.'
+                    : 'Mode OFFLINE actif — stockage local encore indisponible.'
+            );
+            return;
+        }
+
+        setTimeout(
+            () => runAttempt(nextIndex),
+            readyDatabase ? Math.max(3000, retryWaits[nextIndex]) : retryWaits[nextIndex]
+        );
+    };
+
+    setTimeout(() => runAttempt(0), retryWaits[0]);
+    return true;
+}
+
+(function setupRememberedOfflineMapResumeRecovery() {
+    if (window.__npfRememberedOfflineMapResumeRecoveryInstalled) return;
+    window.__npfRememberedOfflineMapResumeRecoveryInstalled = true;
+
+    window.addEventListener('pageshow', () => {
+        setTimeout(() => {
+            if (mapSourceMode === 'offline' && directOfflineTileHitCount === 0) {
+                scheduleRememberedOfflineMapStartupRecovery('pageshow-v14.69');
+            }
+        }, 180);
+    }, { passive: true });
+
+    document.addEventListener('visibilitychange', () => {
+        if (document.hidden) return;
+        setTimeout(() => {
+            if (mapSourceMode === 'offline' && directOfflineTileHitCount === 0) {
+                scheduleRememberedOfflineMapStartupRecovery('visibility-v14.69');
+            }
+        }, 250);
+    }, { passive: true });
+})();
+
+function scheduleStartupAuxiliaryLayers() {
+    /*
+     * v13.58 — iPad : on ne charge plus les couches annexes en même temps que les
+     * premières tuiles offline. Safari/IndexedDB devient très lent si la carte,
+     * les lignes HT, les communes et les départements démarrent simultanément.
+     */
+    const baseDelay = offlineTilesMode ? OFFLINE_AUX_LAYER_START_DELAY_MS : 900;
+
+    if (areDepartmentsVisible) {
+        setTimeout(() => { toggleDepartmentsLayer(true); }, baseDelay + 600);
+    }
+
+    areCommunesVisible = localStorage.getItem(SHOW_COMMUNES_LAYER_KEY) === 'true';
+    if (areCommunesVisible) {
+        setTimeout(() => { toggleCommunesLayer(true); }, baseDelay + 1400);
+    }
+
+    if (showHighVoltageLinesLayer) {
+        setTimeout(() => {
+            toggleHighVoltageLinesLayer(true, { silent: true, retry: true, source: 'startup' });
+        }, baseDelay + 2200);
+    }
+
+    if (showRoadOverlayLayer) {
+        setTimeout(() => {
+            toggleRoadOverlayLayer(true, { silent: true, source: 'startup' });
+        }, baseDelay + 2800);
+    }
+
+    if (showTrafficLayer) {
+        setTimeout(() => { toggleTrafficLayer(true); }, baseDelay + 3600);
+    }
+}
+
+function setOfflineMapSwitchBusy(message = 'Changement de carte offline...') {
+    try {
+        const statusMessage = document.getElementById('import-status-message');
+        if (statusMessage) statusMessage.textContent = message;
+    } catch (_) {}
+}
+
+function closeOfflineMapModalSoon(delay = 120) {
+    setTimeout(() => {
+        try {
+            const modal = document.getElementById('offline-map-modal');
+            if (modal) modal.style.display = 'none';
+        } catch (_) {}
+    }, delay);
+}
+
+function rebuildBaseTileLayerAfterOfflineSwitch(reason = 'offline-switch') {
+    try {
+        if (map) {
+            setupBaseTileLayer();
+            scheduleOfflineTileWake(reason);
+        }
+    } catch (error) {
+        console.warn('Reconstruction carte offline impossible:', reason, error);
+    }
+}
+
+
+/*
+ * v14.63 — lecture directe des tuiles Offline depuis IndexedDB.
+ *
+ * La carte ne dépend plus du service worker pour afficher les packs téléchargés.
+ * Safari peut conserver une page sans contrôleur SW après une mise à jour : dans
+ * ce cas l'ancien système envoyait les requêtes vers un host fictif et la carte
+ * restait vide. Cette couche Leaflet lit maintenant directement les blobs dans
+ * les bases IndexedDB existantes. Le service worker reste utilisé pour le cache
+ * applicatif et comme chemin de compatibilité secondaire.
+ */
+const DIRECT_OFFLINE_TILE_CACHE_MAX = 240;
+const directOfflineTileBlobCache = new Map();
+const directOfflineDbPromises = new Map();
+let directOfflineTileHitCount = 0;
+let directOfflineTileMissCount = 0;
+
+/*
+ * v14.69 — lecture NPF à froid stabilisée.
+ *
+ * La carte NPF est nettement plus volumineuse que la carte OACI. Safari peut
+ * mettre plusieurs secondes à ouvrir son index IndexedDB et supporte mal une
+ * rafale de transactions parallèles au premier affichage. On limite donc la
+ * concurrence uniquement pour le groupe NPF ; OACI conserve son chemin rapide.
+ */
+const DIRECT_OFFLINE_NPF_MAX_CONCURRENT_READS = 3;
+let directOfflineNpfActiveReads = 0;
+const directOfflineNpfReadQueue = [];
+let directOfflineTileReadGeneration = 0;
+
+function resetPendingDirectOfflineNpfReads() {
+    directOfflineTileReadGeneration += 1;
+    while (directOfflineNpfReadQueue.length) {
+        const pending = directOfflineNpfReadQueue.shift();
+        try { pending.resolve(null); } catch (_) {}
+    }
+}
+
+function isNpfOfflinePackSelection(packs = activeOfflinePacks) {
+    return (Array.isArray(packs) ? packs : []).some(name => {
+        const simplified = String(
+            typeof getOfflinePackGroupName === 'function'
+                ? getOfflinePackGroupName(name)
+                : name || ''
+        ).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+        return /(^|[^a-z0-9])npf([^a-z0-9]|$)|npf[_\s-]*france|carte[_\s-]*npf/.test(simplified);
+    });
+}
+
+function runNextDirectOfflineNpfRead() {
+    while (
+        directOfflineNpfActiveReads < DIRECT_OFFLINE_NPF_MAX_CONCURRENT_READS
+        && directOfflineNpfReadQueue.length
+    ) {
+        const item = directOfflineNpfReadQueue.shift();
+        directOfflineNpfActiveReads += 1;
+        Promise.resolve()
+            .then(item.task)
+            .then(item.resolve, item.reject)
+            .finally(() => {
+                directOfflineNpfActiveReads = Math.max(0, directOfflineNpfActiveReads - 1);
+                runNextDirectOfflineNpfRead();
+            });
+    }
+}
+
+function enqueueDirectOfflineNpfRead(task) {
+    return new Promise((resolve, reject) => {
+        directOfflineNpfReadQueue.push({ task, resolve, reject });
+        runNextDirectOfflineNpfRead();
+    });
+}
+
+function getOfflinePackLegacyGroupNameForDirectRead(packName) {
+    const name = String(packName || '')
+        .replace(/\.zip$/i, '')
+        .trim();
+    const cleaned = name
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+    const match = cleaned.match(
+        /^(.+?)(?:[\s_-]*(?:part|partie|zip)?[\s_-]*)(\d{1,3})$/i
+    );
+    if (match && match[1].trim().length >= 2) {
+        return match[1].replace(/[\s_-]+$/g, '').trim();
+    }
+    return cleaned;
+}
+
+function normalizeOfflineTileHostPrefixForDirectRead(packName, { legacy = false } = {}) {
+    const raw = String(packName || '').trim();
+    const groupName = legacy
+        ? getOfflinePackLegacyGroupNameForDirectRead(raw)
+        : (typeof getOfflinePackGroupName === 'function'
+            ? getOfflinePackGroupName(raw)
+            : raw);
+    const simplified = String(groupName || raw || '')
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+    if (!simplified || /open\s*street|openstreet|\bosm\b/.test(simplified)) return 'a';
+    if (/\bign\b|scan25|scan\s*25|oaci\s*ign/.test(simplified)) return 'ign';
+    if (/oaci|carte\s*oaci/.test(simplified)) return 'oaci';
+    return simplified.replace(/[^a-z0-9]+/g, '').slice(0, 20) || 'pack';
+}
+
+function getDirectOfflineTileUrlCandidates(coords) {
+    const aliases = [
+        ...(Array.isArray(activeOfflinePacks) ? activeOfflinePacks : []),
+        ...(typeof getOfflineActivePackAliasesForPacks === 'function'
+            ? getOfflineActivePackAliasesForPacks(activeOfflinePacks)
+            : []),
+        ...(Array.isArray(activeOfflinePackAliases) ? activeOfflinePackAliases : [])
+    ];
+    const prefixes = [];
+    const addPrefix = value => {
+        const clean = String(value || '').trim();
+        if (clean && !prefixes.includes(clean)) prefixes.push(clean);
+    };
+    aliases.forEach(alias => {
+        addPrefix(normalizeOfflineTileHostPrefixForDirectRead(alias));
+        addPrefix(normalizeOfflineTileHostPrefixForDirectRead(alias, { legacy: true }));
+    });
+    if (!prefixes.length) addPrefix('a');
+    ['a', 'ign', 'oaci'].forEach(addPrefix);
+
+    const urls = [];
+    const addUrl = value => {
+        const clean = String(value || '').trim();
+        if (clean && !urls.includes(clean)) urls.push(clean);
+    };
+    prefixes.forEach(prefix => {
+        ['png', 'jpg', 'jpeg'].forEach(extension => {
+            addUrl(`https://${prefix}.tile.openstreetmap.org/${coords.z}/${coords.x}/${coords.y}.${extension}`);
+        });
+    });
+    return urls;
+}
+
+function getDirectOfflineDatabaseCandidates() {
+    const names = [];
+    const addName = value => {
+        const clean = String(value || '').trim();
+        if (clean && !names.includes(clean)) names.push(clean);
+    };
+    (Array.isArray(activeOfflinePackDatabases) ? activeOfflinePackDatabases : [])
+        .forEach(addName);
+    if (typeof getOfflineActivePackDatabasesForPacks === 'function') {
+        getOfflineActivePackDatabasesForPacks(activeOfflinePacks).forEach(addName);
+    }
+    addName(OFFLINE_DB_NAME);
+    return names;
+}
+
+function openDirectOfflineTileDatabase(dbName) {
+    const safeName = String(dbName || OFFLINE_DB_NAME);
+    if (directOfflineDbPromises.has(safeName)) {
+        return directOfflineDbPromises.get(safeName);
+    }
+    const promise = new Promise((resolve, reject) => {
+        if (typeof indexedDB === 'undefined') {
+            reject(new Error('IndexedDB indisponible'));
+            return;
+        }
+        const request = indexedDB.open(safeName);
+        let databaseDidNotExist = false;
+        request.onupgradeneeded = event => {
+            /* Ne pas créer silencieusement une base vide lors d'une simple lecture. */
+            databaseDidNotExist = true;
+            try { event.target.transaction.abort(); } catch (_) {}
+        };
+        request.onsuccess = event => {
+            const openedDb = event.target.result;
+            if (databaseDidNotExist || !openedDb.objectStoreNames.contains('tiles')) {
+                try { openedDb.close(); } catch (_) {}
+                reject(new Error(`Base de tuiles absente : ${safeName}`));
+                return;
+            }
+            try {
+                openedDb.onversionchange = () => {
+                    try { openedDb.close(); } catch (_) {}
+                    directOfflineDbPromises.delete(safeName);
+                };
+            } catch (_) {}
+            resolve(openedDb);
+        };
+        request.onerror = () => reject(request.error || new Error(`Ouverture impossible : ${safeName}`));
+        request.onblocked = () => reject(new Error(`Base bloquée : ${safeName}`));
+    }).catch(error => {
+        directOfflineDbPromises.delete(safeName);
+        throw error;
+    });
+    directOfflineDbPromises.set(safeName, promise);
+    return promise;
+}
+
+function isDirectOfflineTileRecordAllowed(record) {
+    const activeNames = new Set([
+        ...(Array.isArray(activeOfflinePacks) ? activeOfflinePacks : []),
+        ...(typeof getOfflineActivePackAliasesForPacks === 'function'
+            ? getOfflineActivePackAliasesForPacks(activeOfflinePacks)
+            : []),
+        ...(Array.isArray(activeOfflinePackAliases) ? activeOfflinePackAliases : [])
+    ].filter(Boolean));
+    if (!activeNames.size) return true;
+    const recordPack = String(record?.packName || '').trim();
+    if (!recordPack) return true; // anciennes bases sans champ packName
+    if (activeNames.has(recordPack)) return true;
+    const recordCanonical = typeof normalizeOfflinePackName === 'function'
+        ? normalizeOfflinePackName(recordPack)
+        : recordPack;
+    const recordGroup = typeof getOfflinePackGroupName === 'function'
+        ? getOfflinePackGroupName(recordPack)
+        : recordPack;
+    for (const activeName of activeNames) {
+        if (typeof normalizeOfflinePackName === 'function'
+            && normalizeOfflinePackName(activeName) === recordCanonical) return true;
+        if (typeof getOfflinePackGroupName === 'function'
+            && getOfflinePackGroupName(activeName) === recordGroup) return true;
+    }
+    return false;
+}
+
+function getDirectOfflineStoredKeyCandidates(tileUrl) {
+    const packNames = [];
+    const addPack = value => {
+        const clean = String(value || '').replace(/\.zip$/i, '').trim();
+        if (clean && !packNames.includes(clean)) packNames.push(clean);
+    };
+
+    (Array.isArray(activeOfflinePacks) ? activeOfflinePacks : []).forEach(addPack);
+    (Array.isArray(activeOfflinePackAliases) ? activeOfflinePackAliases : []).forEach(addPack);
+    if (typeof getOfflineActivePackAliasesForPacks === 'function') {
+        getOfflineActivePackAliasesForPacks(activeOfflinePacks).forEach(addPack);
+    }
+
+    const keys = [];
+    const addKey = value => {
+        const clean = String(value || '').trim();
+        if (clean && !keys.includes(clean)) keys.push(clean);
+    };
+
+    /* Clés pack-scopées utilisées par NPF/OACI depuis les imports récents. */
+    packNames.forEach(packName => addKey(buildStoredTileKey(tileUrl, packName)));
+    /* Compatibilité avec les anciens packs à clé URL simple. */
+    addKey(tileUrl);
+    return keys;
+}
+
+function readDirectOfflineTileRecord(db, tileUrl) {
+    return new Promise((resolve, reject) => {
+        let tx;
+        let store;
+        try {
+            tx = db.transaction('tiles', 'readonly');
+            store = tx.objectStore('tiles');
+        } catch (error) {
+            reject(error);
+            return;
+        }
+
+        let settled = false;
+        const finish = value => {
+            if (settled) return;
+            settled = true;
+            resolve(value);
+        };
+        const fail = error => {
+            if (settled) return;
+            settled = true;
+            reject(error);
+        };
+
+        const exactKeys = getDirectOfflineStoredKeyCandidates(tileUrl);
+        let keyIndex = 0;
+
+        const fallbackToTileUrlIndex = () => {
+            if (settled) return;
+            let request;
+            try {
+                if (store.indexNames.contains('tileUrl')) {
+                    request = store.index('tileUrl').openCursor(IDBKeyRange.only(tileUrl));
+                } else {
+                    request = store.openCursor();
+                }
+            } catch (error) {
+                fail(error);
+                return;
+            }
+            request.onsuccess = () => {
+                const cursor = request.result;
+                if (!cursor) {
+                    finish(null);
+                    return;
+                }
+                const record = cursor.value || {};
+                const storedTileUrl = record.tileUrl || getTileUrlFromStoredKey(record.url);
+                if (storedTileUrl === tileUrl && isDirectOfflineTileRecordAllowed(record)) {
+                    finish(record);
+                    return;
+                }
+                cursor.continue();
+            };
+            request.onerror = () => fail(request.error || new Error('Erreur lecture index tuile'));
+        };
+
+        const tryNextExactKey = () => {
+            if (settled) return;
+            if (keyIndex >= exactKeys.length) {
+                fallbackToTileUrlIndex();
+                return;
+            }
+            const key = exactKeys[keyIndex++];
+            let request;
+            try {
+                request = store.get(key);
+            } catch (error) {
+                fail(error);
+                return;
+            }
+            request.onsuccess = () => {
+                const record = request.result || null;
+                if (record && isDirectOfflineTileRecordAllowed(record)) {
+                    finish(record);
+                    return;
+                }
+                tryNextExactKey();
+            };
+            request.onerror = tryNextExactKey;
+        };
+
+        tx.onerror = () => fail(tx.error || new Error('Erreur transaction tuile'));
+        tx.onabort = () => fail(tx.error || new Error('Transaction tuile annulée'));
+        tryNextExactKey();
+    });
+}
+
+function rememberDirectOfflineTileBlob(cacheKey, blob) {
+    if (!blob) return;
+    directOfflineTileBlobCache.delete(cacheKey);
+    directOfflineTileBlobCache.set(cacheKey, blob);
+    while (directOfflineTileBlobCache.size > DIRECT_OFFLINE_TILE_CACHE_MAX) {
+        const oldestKey = directOfflineTileBlobCache.keys().next().value;
+        directOfflineTileBlobCache.delete(oldestKey);
+    }
+}
+
+async function findDirectOfflineTileBlobUnqueued(coords) {
+    const cacheKey = [
+        coords.z,
+        coords.x,
+        coords.y,
+        ...(Array.isArray(activeOfflinePacks) ? activeOfflinePacks : [])
+    ].join('|');
+    if (directOfflineTileBlobCache.has(cacheKey)) {
+        const cachedBlob = directOfflineTileBlobCache.get(cacheKey);
+        directOfflineTileBlobCache.delete(cacheKey);
+        directOfflineTileBlobCache.set(cacheKey, cachedBlob);
+        return cachedBlob;
+    }
+
+    const dbNames = getDirectOfflineDatabaseCandidates();
+    const tileUrls = getDirectOfflineTileUrlCandidates(coords);
+    for (const dbName of dbNames) {
+        let tileDb;
+        try {
+            const openTimeoutMs = isNpfOfflinePackSelection() ? 7000 : 2200;
+            tileDb = await withTimeout(
+                openDirectOfflineTileDatabase(dbName),
+                openTimeoutMs,
+                `Timeout ouverture ${dbName}`
+            );
+        } catch (_) {
+            continue;
+        }
+        for (const tileUrl of tileUrls) {
+            try {
+                const readTimeoutMs = isNpfOfflinePackSelection() ? 5200 : 1800;
+                const record = await withTimeout(
+                    readDirectOfflineTileRecord(tileDb, tileUrl),
+                    readTimeoutMs,
+                    'Timeout lecture tuile'
+                );
+                if (!record?.tile) continue;
+                const blob = record.tile instanceof Blob
+                    ? record.tile
+                    : new Blob([record.tile], {
+                        type: /\.(jpg|jpeg)(?:\?.*)?$/i.test(tileUrl)
+                            ? 'image/jpeg'
+                            : 'image/png'
+                    });
+                rememberDirectOfflineTileBlob(cacheKey, blob);
+                directOfflineTileHitCount += 1;
+                if (directOfflineTileHitCount === 1) {
+                    setOfflineMapSwitchBusy('Mode OFFLINE — tuiles locales chargées.');
+                }
+                return blob;
+            } catch (_) {}
+        }
+    }
+    directOfflineTileMissCount += 1;
+    if (directOfflineTileHitCount === 0 && directOfflineTileMissCount === 6) {
+        setOfflineMapSwitchBusy(
+            'Mode OFFLINE actif — aucune tuile trouvée ici à ce niveau de zoom.'
+        );
+    }
+    return null;
+}
+
+async function findDirectOfflineTileBlob(coords) {
+    if (!isNpfOfflinePackSelection()) {
+        return findDirectOfflineTileBlobUnqueued(coords);
+    }
+    const generation = directOfflineTileReadGeneration;
+    return enqueueDirectOfflineNpfRead(async () => {
+        if (generation !== directOfflineTileReadGeneration) return null;
+        const blob = await findDirectOfflineTileBlobUnqueued(coords);
+        return generation === directOfflineTileReadGeneration ? blob : null;
+    });
+}
+
+function buildDirectOfflineLeafletLayer(options = {}) {
+    const DirectOfflineGridLayer = L.GridLayer.extend({
+        createTile(coords, done) {
+            const tile = document.createElement('img');
+            tile.alt = '';
+            tile.setAttribute('role', 'presentation');
+            tile.decoding = 'async';
+            tile.style.width = '100%';
+            tile.style.height = '100%';
+
+            findDirectOfflineTileBlob(coords).then(blob => {
+                if (!blob) {
+                    tile.onload = () => done(null, tile);
+                    tile.onerror = error => done(error || new Error('Tuile absente'), tile);
+                    tile.src = OFFLINE_TILE_PLACEHOLDER_DATA_URL;
+                    return;
+                }
+                const blobUrl = URL.createObjectURL(blob);
+                tile.onload = () => {
+                    try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+                    done(null, tile);
+                };
+                tile.onerror = error => {
+                    try { URL.revokeObjectURL(blobUrl); } catch (_) {}
+                    done(error || new Error('Décodage tuile impossible'), tile);
+                };
+                tile.src = blobUrl;
+            }).catch(error => {
+                tile.onload = () => done(null, tile);
+                tile.onerror = () => done(error, tile);
+                tile.src = OFFLINE_TILE_PLACEHOLDER_DATA_URL;
+            });
+            return tile;
+        }
+    });
+    return new DirectOfflineGridLayer(options);
+}
+
 function setupBaseTileLayer() {
     if (!map) return;
+    resetPendingDirectOfflineNpfReads();
     if (baseTileLayer) {
         map.removeLayer(baseTileLayer);
     }
@@ -2137,12 +6002,13 @@ function setupBaseTileLayer() {
      * - plafond dur z12 pour éviter que Leaflet demande des tuiles absentes ;
      * - animations désactivées pour éviter le flash blanc pendant le rafraîchissement.
      */
+    const activeOfflineMaxZoomLimit = getOfflinePackMaxNativeZoomLimitForPacks(activeOfflinePacks);
     const offlineNativeMaxZoom = Math.max(
         GLOBAL_MIN_ZOOM,
         Math.min(
             GLOBAL_MAX_ZOOM,
-            OFFLINE_HARD_MAX_NATIVE_ZOOM,
-            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : OFFLINE_HARD_MAX_NATIVE_ZOOM
+            activeOfflineMaxZoomLimit,
+            Number.isFinite(baseTileMaxNativeZoom) ? baseTileMaxNativeZoom : activeOfflineMaxZoomLimit
         )
     );
 
@@ -2161,34 +6027,43 @@ function setupBaseTileLayer() {
 
     if (map.getZoom() > effectiveMaxZoom) {
         map.setView(map.getCenter(), effectiveMaxZoom, { animate: false });
+    } else if (offlineTilesMode && map.getZoom() < effectiveMinZoom) {
+        map.setView(map.getCenter(), effectiveMinZoom, { animate: false });
     }
 
     const activeTilePackName = Array.isArray(activeOfflinePacks) && activeOfflinePacks.length ? activeOfflinePacks[0] : '';
     const tileHostPrefix = offlineTilesMode ? normalizeOfflineTileHostPrefix(activeTilePackName) : 'a';
     const tileLayerUrl = `https://${tileHostPrefix}.tile.openstreetmap.org/{z}/{x}/{y}.png`;
 
-    baseTileLayer = L.tileLayer(tileLayerUrl, {
+    const tileLayerOptions = {
         minNativeZoom: effectiveMinZoom,
         maxNativeZoom: effectiveMaxZoom,
         minZoom: effectiveMinZoom,
         maxZoom: effectiveMaxZoom,
         attribution: '© OpenStreetMap',
-        keepBuffer: 32,
+        keepBuffer: OFFLINE_TILE_KEEP_BUFFER,
         updateWhenZooming: false,
         updateWhenIdle: true,
-        updateInterval: 160,
+        updateInterval: OFFLINE_TILE_UPDATE_INTERVAL_MS,
         noWrap: true,
-        errorTileUrl: 'data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs='
-    }).addTo(map);
+        errorTileUrl: OFFLINE_TILE_PLACEHOLDER_DATA_URL
+    };
+
+    baseTileLayer = offlineTilesMode
+        ? buildDirectOfflineLeafletLayer(tileLayerOptions)
+        : L.tileLayer(tileLayerUrl, tileLayerOptions);
+    baseTileLayer.addTo(map);
 
     enforceOfflineZoomLimit();
 
 
     applyMapNoBackgroundStyle();
+    scheduleOfflineTileWake('setupBaseTileLayer');
 }
 
 function clearCurrentSelection(options = {}) {
     const preserveMapView = !!options.preserveMapView;
+    selectedAirportDestination = null;
     selectedPelicanOACI = null;
     const searchInput = document.getElementById('search-input');
     const clearSearchBtn = document.getElementById('clear-search');
@@ -2260,6 +6135,8 @@ function setupEventListeners() {
     const communesLayerButton = document.getElementById('communes-layer-button');
     const waterPointsButton = document.getElementById('water-points-button');
     const highVoltageLinesButton = document.getElementById('high-voltage-lines-button');
+    const roadOverlayButton = document.getElementById('road-overlay-button');
+    const opsFrequenciesButton = document.getElementById('ops-frequencies-pdf-button');
     const trafficLayerButton = document.getElementById('traffic-layer-button');
     const offlineMapsButton = document.getElementById('offline-maps-button');
     const offlineMapModal = document.getElementById('offline-map-modal');
@@ -2268,11 +6145,21 @@ function setupEventListeners() {
     const folderImporterInput = document.getElementById('folder-importer-input');
     const tilesImporterInput = document.getElementById('tiles-importer-input');
     const airportPdfImporterInput = document.getElementById('airport-pdf-importer-input');
+    const roadOverlayImporterInput = document.getElementById('road-overlay-importer-input');
+    const deleteRoadOverlayButton = document.getElementById('delete-road-overlay-button');
     const mapSourceOnlineBtn = document.getElementById('map-source-online-btn');
     const mapSourceOfflineBtn = document.getElementById('map-source-offline-btn');
     const purgeInactivePacksBtn = document.getElementById('purge-inactive-packs-btn');
     const refreshOfflineTilesBtn = document.getElementById('refresh-offline-tiles-btn');
     const simulationModeButton = document.getElementById('simulation-mode-button');
+    const simulationMotionButton = document.getElementById('simulation-motion-button');
+    const simulationMotionModal = document.getElementById('simulation-motion-modal');
+    const closeSimulationMotionModalButton = document.getElementById('close-simulation-motion-modal');
+    const applySimulationMotionButton = document.getElementById('apply-simulation-motion');
+    const quitSimulationModeButton = document.getElementById('quit-simulation-mode');
+    const simulationSpeedInput = document.getElementById('simulation-speed-input');
+    const simulationRouteInput = document.getElementById('simulation-route-input');
+    const simulationAltitudeInput = document.getElementById('simulation-altitude-input');
     
     if (mainActionButtons) {
         const versionDisplay = document.getElementById('app-version-display');
@@ -2341,6 +6228,19 @@ function setupEventListeners() {
         });
     }
 
+    if (roadOverlayButton) {
+        refreshRoadOverlayButtonState();
+        roadOverlayButton.addEventListener('click', () => {
+            toggleRoadOverlayLayer();
+        });
+    }
+
+    if (opsFrequenciesButton) {
+        opsFrequenciesButton.addEventListener('click', () => {
+            openOpsFrequenciesPdf();
+        });
+    }
+
     if (trafficLayerButton) {
         refreshTrafficButtonState();
         installTrafficButtonInteractions(trafficLayerButton);
@@ -2349,19 +6249,19 @@ function setupEventListeners() {
     let searchInputDebounceTimer = null;
 
     const runCommuneSearch = () => {
-        selectedPelicanOACI = null;
         const rawSearch = searchInput.value;
         clearSearchBtn.style.display = rawSearch.length > 0 ? 'block' : 'none';
-        let departmentFilter = null;
-        let searchTerm = rawSearch;
-        const depRegex = /\s(\d{1,3}|2A|2B)$/i;
-        const match = rawSearch.match(depRegex);
-        if (match) {
-            departmentFilter = match[1].length === 1 ? '0' + match[1] : match[1].toUpperCase();
-            searchTerm = rawSearch.substring(0, match.index).trim();
-        }
+
+        const {
+            departmentFilter,
+            searchTerm
+        } = parseSearchDepartmentFilter(
+            rawSearch
+        );
         const simplifiedSearch = simplifyString(searchTerm);
         if (simplifiedSearch.length < 2) {
+            namedPlacesSearchSequence += 1;
+
             if (rawSearch.trim().length === 0) {
                 displayFireHistory();
             } else {
@@ -2375,7 +6275,7 @@ function setupEventListeners() {
 
         const scoredResults = communesToSearch
             .filter(c => shouldSearchCandidate(c, searchWords, searchCompact, departmentFilter))
-            .map(c => ({ ...c, score: scoreCommuneSearchCandidate(c, searchWords) }))
+            .map(c => ({ ...c, score: scoreCommuneSearchCandidate(c, searchWords, departmentFilter) }))
             .filter(c => c.score < 999);
 
         const aliasResults = searchAliasCommunes(searchWords, departmentFilter);
@@ -2391,7 +6291,26 @@ function setupEventListeners() {
         });
 
         scoredResults.sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length);
-        displayResults(scoredResults.slice(0, 10));
+
+        const localResults =
+            scoredResults.slice(0, 10);
+        displayResults(localResults);
+
+        const sequence =
+            ++namedPlacesSearchSequence;
+
+        /*
+         * Le résultat communes/alias est affiché immédiatement. La base locale
+         * Gironde est ensuite fusionnée, sans réseau et sans bloquer le clavier.
+         */
+        enrichCommuneSearchWithNamedPlaces({
+            rawSearch,
+            searchTerm,
+            departmentFilter,
+            searchWords,
+            localResults,
+            expectedSequence: sequence
+        });
     };
 
     searchInput.addEventListener('input', keepKeyboardAfterSearchClear);
@@ -2424,23 +6343,15 @@ function setupEventListeners() {
 
     const showFireHistoryFromSearch = () => {
         /*
-         * v11.25 — correction saisie commune après sélection d'un feu.
-         * L'historique reste accessible au clic, mais la barre de recherche
-         * garde toujours le focus et le clavier doit pouvoir s'ouvrir.
+         * v14.45 — placement tactile natif du curseur dans la recherche.
+         * L'ancien setSelectionRange différé remettait systématiquement le
+         * curseur à droite après un toucher au milieu du nom. On conserve le
+         * focus et l'historique, mais Safari/iPadOS choisit désormais lui-même
+         * la position exacte correspondant au toucher de l'utilisateur.
          */
         searchInput.disabled = false;
         searchInput.readOnly = false;
         displayFireHistory();
-
-        if (searchInput.value && searchInput.value.trim().length > 0) {
-            setTimeout(() => {
-                try {
-                    const end = searchInput.value.length;
-                    searchInput.focus();
-                    searchInput.setSelectionRange(end, end);
-                } catch (_) {}
-            }, 0);
-        }
     };
 
     const collapseSearchInputSelection = () => {
@@ -2544,6 +6455,7 @@ function setupEventListeners() {
         selectedPelicanOACI = null;
         navigator.geolocation.getCurrentPosition(
             async (pos) => {
+                clearAirportDestination({ restoreFire: false, redraw: false });
                 const { latitude, longitude } = pos.coords;
                 const gpsCommune = await buildManualFireCommuneFromPointAsync(latitude, longitude, 'Feu GPS');
                 currentCommune = gpsCommune;
@@ -2558,7 +6470,7 @@ function setupEventListeners() {
     if (centerGpsButton) {
         refreshCenterGpsFollowButtonState();
         installCenterGpsFollowHandlers();
-        centerGpsButton.addEventListener('click', toggleCenterGpsFollow);
+        installCenterGpsButtonPressHandlers(centerGpsButton);
     }
 
     liveGpsButton.addEventListener('click', toggleLiveGps);
@@ -2587,19 +6499,22 @@ function setupEventListeners() {
         } else {
             uiOverlay.style.display = 'none';
             toggleSearchButton.classList.remove('active');
-            if (communeDisplay.innerHTML.trim() !== '' && currentCommune) {
+            if (communeDisplay.innerHTML.trim() !== '' && (currentCommune || selectedAirportDestination)) {
                 communeDisplay.style.display = 'flex';
             }
         }
     });
 
-    document.addEventListener('communeSelected', () => {
+    const closeSearchAfterTargetSelection = () => {
         document.getElementById('ui-overlay').style.display = 'none';
         document.getElementById('toggle-search-button').classList.remove('active');
-        if (currentCommune) {
+        if (currentCommune || selectedAirportDestination) {
             document.getElementById('commune-info-display').style.display = 'flex';
         }
-    });
+    };
+
+    document.addEventListener('communeSelected', closeSearchAfterTargetSelection);
+    document.addEventListener('airportDestinationSelected', closeSearchAfterTargetSelection);
 
     function openCalculatorTab(tabId) {
         if (!calculatorModal) return;
@@ -2615,7 +6530,13 @@ function setupEventListeners() {
     closeCalculatorButton.addEventListener('click', () => { calculatorModal.style.display = 'none'; });
     calculatorModal.addEventListener('click', (e) => { if (e.target === calculatorModal) { calculatorModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && calculatorModal.style.display === 'flex') { calculatorModal.style.display = 'none'; } });
-    offlineMapsButton.addEventListener('click', () => { offlineMapModal.style.display = 'flex'; displayInstalledMaps(); displayInstalledAirportPdfs(); refreshSimulationModeButtonState(); });
+    offlineMapsButton.addEventListener('click', () => {
+        offlineMapModal.style.display = 'flex';
+        displayInstalledMaps();
+        displayInstalledAirportPdfs();
+        refreshSimulationModeButtonState();
+        refreshRoadOverlayInstalledStatus();
+    });
     closeOfflineMapButton.addEventListener('click', () => { offlineMapModal.style.display = 'none'; });
     offlineMapModal.addEventListener('click', (e) => { if (e.target === offlineMapModal) { offlineMapModal.style.display = 'none'; } });
     window.addEventListener('keydown', (e) => { if (e.key === 'Escape' && offlineMapModal.style.display === 'flex') { offlineMapModal.style.display = 'none'; } });
@@ -2629,6 +6550,33 @@ function setupEventListeners() {
             const files = Array.from(event.target.files || []);
             await importAirportPdfFiles(files);
             event.target.value = '';
+        });
+    }
+
+    if (roadOverlayImporterInput) {
+        roadOverlayImporterInput.addEventListener('change', async (event) => {
+            const file = event.target.files?.[0] || null;
+            try {
+                await importRoadOverlayFile(file);
+            } catch (error) {
+                console.error('Import calque routier impossible:', error);
+                alert(`Import du calque routier impossible : ${error.message || error}`);
+            } finally {
+                event.target.value = '';
+                refreshRoadOverlayInstalledStatus();
+                refreshRoadOverlayButtonState();
+            }
+        });
+    }
+
+    if (deleteRoadOverlayButton) {
+        deleteRoadOverlayButton.addEventListener('click', async () => {
+            if (!confirm('Supprimer le calque routier offline A / N / D / M de cet appareil ?')) {
+                return;
+            }
+            await deleteRoadOverlayData();
+            refreshRoadOverlayInstalledStatus();
+            refreshRoadOverlayButtonState();
         });
     }
     if (folderImporterInput) {
@@ -2699,6 +6647,104 @@ function setupEventListeners() {
         });
     }
 
+    if (simulationMotionButton) {
+        simulationMotionButton.addEventListener('click', () => {
+            openSimulationMotionModal();
+        });
+    }
+
+    if (closeSimulationMotionModalButton) {
+        closeSimulationMotionModalButton.addEventListener('click', closeSimulationMotionModal);
+    }
+
+    if (applySimulationMotionButton) {
+        applySimulationMotionButton.addEventListener('click', () => {
+            applySimulationMotionSettingsFromModal();
+        });
+    }
+
+    if (quitSimulationModeButton) {
+        quitSimulationModeButton.addEventListener('click', () => {
+            /*
+             * Même fonction et mêmes paramètres que le bouton présent dans
+             * Gestion des Cartes.
+             */
+            disableSimulationMode({ restoreGps: true });
+        });
+    }
+
+    if (simulationMotionModal) {
+        simulationMotionModal.addEventListener('click', (event) => {
+            if (event.target === simulationMotionModal) {
+                closeSimulationMotionModal();
+            }
+        });
+    }
+
+    [simulationSpeedInput, simulationRouteInput, simulationAltitudeInput].filter(Boolean).forEach((input) => {
+        /*
+         * v14.11 — bloquer le stylet sur les champs de saisie.
+         * Le passage temporaire en readOnly empêche iPadOS Scribble de prendre
+         * la main ; le champ redevient immédiatement disponible pour le doigt.
+         */
+        input.addEventListener('pointerdown', (event) => {
+            if (!isSimulationPenPointer(event)) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+
+            input.readOnly = true;
+            input.blur();
+            input.classList.add('simulation-stylus-blocked');
+
+            window.setTimeout(() => {
+                input.readOnly = false;
+                input.classList.remove('simulation-stylus-blocked');
+            }, 350);
+        }, true);
+
+        input.addEventListener('pointerup', (event) => {
+            if (!isSimulationPenPointer(event)) return;
+            event.preventDefault();
+            event.stopPropagation();
+        }, true);
+
+        input.addEventListener('click', (event) => {
+            if (isSimulationPenPointer(event)) {
+                event.preventDefault();
+                event.stopPropagation();
+                return;
+            }
+            focusAndSelectSimulationInput(input);
+        });
+
+        input.addEventListener('focus', () => {
+            if (!input.readOnly) {
+                selectWholeSimulationInputValue(input);
+            }
+        });
+
+        input.addEventListener('touchend', () => {
+            if (!input.readOnly) {
+                focusAndSelectSimulationInput(input);
+            }
+        }, { passive: true });
+
+        input.addEventListener('keydown', (event) => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                applySimulationMotionSettingsFromModal();
+            }
+        });
+    });
+
+    window.addEventListener('keydown', (event) => {
+        if (event.key === 'Escape' && simulationMotionModal?.style.display === 'flex') {
+            closeSimulationMotionModal();
+        }
+    });
+
     setupBaseOaciInputs();
     updateBaseLabels();
     updateLftwButtonState();
@@ -2707,16 +6753,60 @@ function setupEventListeners() {
 
 function displayResults(results) {
     const resultsList = document.getElementById('results-list');
+    const searchValue = document.getElementById('search-input')?.value || '';
+    const airportResults = searchAirportsByOaci(searchValue);
     resultsList.innerHTML = '';
-    if (results.length > 0) {
+
+    if (airportResults.length > 0 || results.length > 0) {
         resultsList.style.display = 'block';
+
+        airportResults.forEach((airport) => {
+            const li = document.createElement('li');
+            li.className = 'search-result-airport';
+            li.innerHTML = `<span class="search-result-airport-oaci">${escapeHtml(airport.oaci)}</span><span class="search-result-airport-name">${escapeHtml(airport.name)}</span>`;
+            li.title = `Tracer la route GPS vers ${airport.oaci} — sans modifier le feu ni le pélicandrome`;
+            li.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                selectAirportDestination(airport);
+            });
+            resultsList.appendChild(li);
+        });
+
         results.forEach(c => {
             const li = document.createElement('li');
-            li.textContent = `${c.nom_standard} (${c.dep_nom} - ${c.dep_code})`;
+
+            if (c.locality_match) {
+                const municipality =
+                    c.locality_commune_name
+                        ? ` — ${c.locality_commune_name}`
+                        : '';
+                const department =
+                    c.dep_code
+                        ? ` (${c.dep_code})`
+                        : '';
+
+                li.textContent =
+                    `${c.nom_standard}${municipality}${department}`;
+                li.classList.add(
+                    'search-result-locality'
+                );
+                li.title = [
+                    c.locality_type
+                        || 'Lieu nommé',
+                    c.dep_nom || '',
+                    c.locality_source || ''
+                ].filter(Boolean).join(' · ');
+            } else {
+                li.textContent =
+                    `${c.nom_standard} (${c.dep_nom} - ${c.dep_code})`;
+            }
+
             if (c.alias_match && c.alias_commune_actuelle) {
                 li.title = `Rattachée à ${c.alias_commune_actuelle}`;
             }
             li.addEventListener('click', () => {
+                clearAirportDestination({ restoreFire: false, redraw: false });
                 currentCommune = c;
                 localStorage.setItem('currentCommune', JSON.stringify(c));
                 displayCommuneDetails(c);
@@ -2732,8 +6822,18 @@ function displayResults(results) {
     }
 }
 
+
 async function findOfflineTileZoomRange() {
-    if (!db) return null;
+    try {
+        await initDB();
+    } catch (_) {
+        return null;
+    }
+
+    if (!isMainOfflineDatabaseUsable(db)) {
+        return null;
+    }
+
     const targetPacks = new Set(activeOfflinePacks);
     return new Promise((resolve) => {
         let settled = false;
@@ -2749,9 +6849,26 @@ async function findOfflineTileZoomRange() {
             finalize(null);
         }, 8000);
 
-        const tx = db.transaction('tiles', 'readonly');
-        const store = tx.objectStore('tiles');
-        const request = store.openCursor();
+        let tx;
+        let store;
+        let request;
+
+        try {
+            tx = db.transaction(
+                'tiles',
+                'readonly'
+            );
+            store = tx.objectStore('tiles');
+            request = store.openCursor();
+        } catch (error) {
+            if (
+                isOfflineDatabaseClosingError(error)
+            ) {
+                invalidateMainOfflineDatabase(db);
+            }
+            finalize(null);
+            return;
+        }
         let minZoom = null;
         let maxZoom = null;
 
@@ -2790,6 +6907,7 @@ async function findOfflineTileZoomRange() {
 async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = {}) {
     const offlineEnabled = await getOfflineTilesEnabled();
     const shouldForceScan = forceScan;
+    const activeOfflineMaxZoomLimit = getOfflinePackMaxNativeZoomLimitForPacks(activeOfflinePacks);
     if (!offlineEnabled) {
         baseTileMinNativeZoom = GLOBAL_MIN_ZOOM;
         baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
@@ -2799,7 +6917,7 @@ async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = 
         let offlineMinZoom = Number.isFinite(storedOfflineMinZoom) ? storedOfflineMinZoom : null;
         let offlineMaxZoom = Number.isFinite(storedOfflineMaxZoom) ? storedOfflineMaxZoom : null;
 
-        if (shouldForceScan) {
+        if (shouldForceScan && !OFFLINE_DISABLE_STARTUP_FORCE_SCAN) {
             const zoomRange = await findOfflineTileZoomRange();
             if (!zoomRange) {
                 offlineMinZoom = null;
@@ -2816,10 +6934,10 @@ async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = 
 
         if (offlineMinZoom === null || offlineMaxZoom === null) {
             baseTileMinNativeZoom = GLOBAL_MIN_ZOOM;
-            baseTileMaxNativeZoom = OFFLINE_HARD_MAX_NATIVE_ZOOM;
+            baseTileMaxNativeZoom = activeOfflineMaxZoomLimit;
         } else {
             baseTileMinNativeZoom = Math.max(GLOBAL_MIN_ZOOM, Math.min(GLOBAL_MAX_ZOOM, offlineMinZoom));
-            baseTileMaxNativeZoom = Math.max(0, Math.min(OFFLINE_HARD_MAX_NATIVE_ZOOM, offlineMaxZoom));
+            baseTileMaxNativeZoom = Math.max(0, Math.min(activeOfflineMaxZoomLimit, offlineMaxZoom));
         }
     }
 
@@ -2831,44 +6949,14 @@ async function updateBaseTileNativeZoomFromAvailability({ forceScan = false } = 
 
 function showPostUpdateRestartNoticeIfNeeded() {
     try {
-        const pending = localStorage.getItem('npfPostUpdateRestartNoticePending') === '1';
-        const noticeVersion = localStorage.getItem('npfPostUpdateRestartNoticeVersion') || '';
-        const currentVersion = (typeof window.APP_VERSION !== 'undefined' && window.APP_VERSION) ? window.APP_VERSION : '';
-        if (!pending && !noticeVersion) return;
-        // v12.92 — si pending=1, afficher même si le marqueur de version vient de l'ancienne version.
-        if (!pending && currentVersion && noticeVersion && noticeVersion !== currentVersion) return;
-        showPostUpdateRestartNoticeModal();
+        if (typeof window.showNpfPostUpdateNoticeOnce === 'function') {
+            window.showNpfPostUpdateNoticeOnce();
+        }
     } catch (_) {}
 }
 
 function showPostUpdateRestartNoticeModal() {
-    if (document.getElementById('post-update-restart-modal')) return;
-
-    const modal = document.createElement('div');
-    modal.id = 'post-update-restart-modal';
-    modal.className = 'update-reminder-modal post-update-restart-modal';
-    modal.innerHTML = `
-        <div class="update-reminder-modal-content post-update-restart-modal-content" role="dialog" aria-modal="true" aria-labelledby="post-update-restart-title">
-            <h3 id="post-update-restart-title">Mise à jour installée</h3>
-            <p>Une nouvelle version de NPF-Q400 vient d’être chargée.</p>
-            <p>Ferme complètement l’application puis relance-la pour finaliser la mise à jour.</p>
-            <p>Ce message peut apparaître plusieurs fois : c’est normal. Relance simplement l’application à chaque demande jusqu’à disparition du message.</p>
-            <p>Si à un moment l’application devient anormalement lente à s’ouvrir ou reste bloquée au démarrage, supprime-la de l’écran d’accueil puis réinstalle-la depuis Safari.</p>
-        </div>
-    `;
-
-    document.body.appendChild(modal);
-
-    /*
-     * v12.82 — fenêtre post-MAJ persistante : pas de bouton OK, pas de
-     * fermeture par clic extérieur. Elle reste affichée jusqu'à fermeture / 
-     * relance de l'app. On efface le marqueur dès l'affichage pour ne pas
-     * la revoir au lancement suivant.
-     */
-    try {
-        localStorage.removeItem('npfPostUpdateRestartNoticeVersion');
-        localStorage.removeItem('npfPostUpdateRestartNoticePending');
-    } catch (_) {}
+    showPostUpdateRestartNoticeIfNeeded();
 }
 
 function showUpdateReminderIfDue() {
@@ -2932,6 +7020,70 @@ function showUpdateReminderModal(timestamp = Date.now()) {
 
 function updateCommuneDisplay(commune) {
     const communeDisplay = document.getElementById('commune-info-display');
+    if (!communeDisplay) return;
+
+    communeDisplay.classList.toggle(
+        'airport-destination-active',
+        !!selectedAirportDestination
+    );
+    communeDisplay.classList.toggle(
+        'airport-destination-no-fire',
+        !!selectedAirportDestination && !currentCommune
+    );
+
+    if (selectedAirportDestination) {
+        const airport = selectedAirportDestination;
+        const airportName = escapeHtml(airport.name || airport.oaci);
+        const airportOaci = escapeHtml(airport.oaci);
+        communeDisplay.innerHTML = `
+            <span class="commune-name airport-destination-name" title="${airportName}">${airportOaci}</span>
+            <div id="gps-feu-route-info" class="gps-feu-route-info" title="Route, distance et temps GPS vers ${airportOaci}">---° / -- Nm / -- min</div>
+            <button type="button" id="clear-airport-destination-btn" class="clear-commune-btn clear-airport-destination-btn" title="Quitter la route vers ${airportOaci}" aria-label="Quitter la route vers ${airportOaci}">×</button>
+        `;
+        updateCommuneGpsRouteDisplay();
+
+        const clearAirportButton = document.getElementById('clear-airport-destination-btn');
+        if (clearAirportButton) {
+            let airportClearHandled = false;
+            const stopAirportClearPropagation = (event) => {
+                event.stopPropagation();
+            };
+            const performAirportDestinationClear = (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                if (airportClearHandled) return;
+                airportClearHandled = true;
+                clearAirportDestination({ restoreFire: true, redraw: true });
+                setTimeout(() => {
+                    airportClearHandled = false;
+                }, 350);
+            };
+
+            ['touchstart', 'pointerdown', 'mousedown'].forEach((eventName) => {
+                clearAirportButton.addEventListener(
+                    eventName,
+                    stopAirportClearPropagation,
+                    { passive: true }
+                );
+            });
+            clearAirportButton.addEventListener(
+                'touchend',
+                performAirportDestinationClear,
+                { passive: false }
+            );
+            clearAirportButton.addEventListener(
+                'pointerup',
+                performAirportDestinationClear,
+                { passive: false }
+            );
+            clearAirportButton.addEventListener(
+                'click',
+                performAirportDestinationClear
+            );
+        }
+        return;
+    }
+
     if (!commune) {
         communeDisplay.innerHTML = '';
         communeDisplay.style.display = 'none';
@@ -3010,6 +7162,7 @@ function updateCommuneDisplay(commune) {
     }
 }
 
+
 function getCurrentGpsGroundSpeedKt() {
     const speedMps = Number(lastPosition?.speedMps);
     if (!Number.isFinite(speedMps) || speedMps <= 0) return null;
@@ -3058,37 +7211,49 @@ function updateCommuneGpsRouteDisplay() {
     const rotationInfo = document.getElementById('gps-feu-rotation-info');
     if (!routeInfo && !rotationInfo) return;
 
-    if (!currentCommune || !userMarker || !userMarker.getLatLng) {
+    const target = selectedAirportDestination
+        ? {
+            lat: Number(selectedAirportDestination.lat),
+            lon: Number(selectedAirportDestination.lon),
+            airport: true
+        }
+        : (currentCommune
+            ? {
+                lat: Number(currentCommune.latitude_mairie),
+                lon: Number(currentCommune.longitude_mairie),
+                airport: false
+            }
+            : null);
+
+    if (!target || !userMarker || !userMarker.getLatLng) {
         if (routeInfo) {
             routeInfo.textContent = '---° / -- Nm / -- min';
             routeInfo.classList.add('gps-feu-route-info-empty');
         }
-        updateCommuneMapRotationInfo();
+        if (!selectedAirportDestination) updateCommuneMapRotationInfo();
         return;
     }
 
-    const targetLat = Number(currentCommune.latitude_mairie);
-    const targetLon = Number(currentCommune.longitude_mairie);
     const userLatLng = userMarker.getLatLng();
 
-    if (!Number.isFinite(targetLat) || !Number.isFinite(targetLon) || !userLatLng) {
+    if (!Number.isFinite(target.lat) || !Number.isFinite(target.lon) || !userLatLng) {
         if (routeInfo) {
             routeInfo.textContent = '---° / -- Nm / -- min';
             routeInfo.classList.add('gps-feu-route-info-empty');
         }
-        updateCommuneMapRotationInfo();
+        if (!selectedAirportDestination) updateCommuneMapRotationInfo();
         return;
     }
 
-    const distance = calculateDistanceInNm(userLatLng.lat, userLatLng.lng, targetLat, targetLon);
-    const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, targetLat, targetLon);
+    const distance = calculateDistanceInNm(userLatLng.lat, userLatLng.lng, target.lat, target.lon);
+    const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, target.lat, target.lon);
     const magneticBearing = (trueBearingToTarget - MAGNETIC_DECLINATION + 360) % 360;
 
     if (routeInfo) {
         routeInfo.textContent = `${formatRouteDegrees(magneticBearing)} / ${Math.round(distance)} Nm / ${formatGpsEtaMinutes(distance)}`;
         routeInfo.classList.remove('gps-feu-route-info-empty');
     }
-    updateCommuneMapRotationInfo();
+    if (!selectedAirportDestination) updateCommuneMapRotationInfo();
 }
 
 
@@ -3294,18 +7459,35 @@ async function loadHighVoltageLinesLayerData() {
     }
 }
 
-async function toggleHighVoltageLinesLayer(forceState = null) {
+function scheduleHighVoltageLinesRetry(source = 'retry') {
+    const token = ++highVoltageLinesRetryToken;
+    const delays = [2500, 7000, 15000, 30000];
+    delays.forEach((delay) => {
+        setTimeout(() => {
+            if (token !== highVoltageLinesRetryToken) return;
+            if (!showHighVoltageLinesLayer || hasLoadedHighVoltageLines) return;
+            toggleHighVoltageLinesLayer(true, { silent: true, retry: false, source }).catch(() => {});
+        }, delay);
+    });
+}
+
+async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
     const shouldShow = forceState === null ? !showHighVoltageLinesLayer : Boolean(forceState);
+    const silent = !!options.silent;
+    const allowRetry = options.retry !== false;
 
     if (shouldShow && !hasLoadedHighVoltageLines) {
         try {
             await loadHighVoltageLinesLayerData();
         } catch (error) {
-            console.error('Erreur de chargement du calque lignes HT:', error);
-            alert("Impossible de charger le calque Lignes HT. Vérifiez que le fichier lignes_ht_rte_simplifiees.geojson est bien présent à la racine du dépôt et que l'application a été mise à jour.");
-            showHighVoltageLinesLayer = false;
-            localStorage.setItem(HIGH_VOLTAGE_LINES_LAYER_KEY, 'false');
+            console.warn('Chargement lignes HT différé:', options.source || 'manual', error);
+            showHighVoltageLinesLayer = true;
+            localStorage.setItem(HIGH_VOLTAGE_LINES_LAYER_KEY, 'true');
             refreshHighVoltageLinesButtonState();
+            if (allowRetry) scheduleHighVoltageLinesRetry(options.source || 'load-error');
+            if (!silent) {
+                alert("Chargement Lignes HT différé. L'application va réessayer automatiquement.");
+            }
             return;
         }
     }
@@ -3326,9 +7508,973 @@ async function toggleHighVoltageLinesLayer(forceState = null) {
 
 
 
+// =========================================================================
+// v14.49 — routes métropolitaines M
+// - import des références M613, M185, M5E14, RM613 et « Route métropolitaine » ;
+// - classe M affichée comme une route départementale, dès le niveau 1 NM ;
+// - conservation intégrale des classes A, N et D existantes.
+// =========================================================================
 
 // =========================================================================
-// v13.01 TEST — réglages calque trafic ADS-B
+// v14.49 — calque routier vectoriel offline A / N / D / M
+// =========================================================================
+
+function getRoadOverlayManifest() {
+    try {
+        const parsed = JSON.parse(localStorage.getItem(ROAD_OVERLAY_MANIFEST_KEY) || 'null');
+        if (!parsed || !Array.isArray(parsed.parts)) {
+            return { version: 1, name: '', importedAt: 0, parts: [] };
+        }
+        return {
+            version: 1,
+            name: String(parsed.name || ''),
+            importedAt: Number(parsed.importedAt) || 0,
+            parts: parsed.parts
+                .filter(part => part && typeof part.key === 'string')
+                .map(part => ({
+                    key: String(part.key),
+                    name: String(part.name || part.key),
+                    bbox: Array.isArray(part.bbox) && part.bbox.length === 4
+                        ? part.bbox.map(Number)
+                        : null,
+                    featureCount: Number(part.featureCount) || 0
+                }))
+        };
+    } catch (_) {
+        return { version: 1, name: '', importedAt: 0, parts: [] };
+    }
+}
+
+function saveRoadOverlayManifest(manifest) {
+    localStorage.setItem(ROAD_OVERLAY_MANIFEST_KEY, JSON.stringify(manifest));
+}
+
+function normalizeRoadOverlayReferenceValue(value) {
+    if (value === null || value === undefined) return '';
+
+    let normalized = String(value)
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .trim()
+        .toUpperCase()
+        .replace(/[°º]/g, '')
+        .replace(/\bNUMERO\b/g, '')
+        .replace(/\bAUTOROUTE\b/g, 'A')
+        .replace(/\bROUTE\s*NATIONALE\b/g, 'N')
+        .replace(/\bNATIONALE\b/g, 'N')
+        .replace(/\bROUTE\s*DEPARTEMENTALE\b/g, 'D')
+        .replace(/\bDEPARTEMENTALE\b/g, 'D')
+        .replace(/\bROUTE\s*METROPOLITAINE\b/g, 'M')
+        .replace(/\bMETROPOLITAINE\b/g, 'M')
+        .replace(/[\s._/]+/g, '');
+
+    if (!normalized) return '';
+
+    /*
+     * L'ordre est important : DN/RDN doit être reconnu avant RD/D.
+     * Exemples : DN7, D.N.7, D N 7 et RD N7 deviennent tous DN7.
+     */
+    let match = normalized.match(/(?:^|[^A-Z0-9])R?DN(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/R?DN(\d+[A-Z0-9-]*)/);
+    if (match) return `DN${match[1]}`;
+
+    /*
+     * Formes départementales administratives : RD559, RD 559, CD35.
+     */
+    match = normalized.match(/(?:^|[^A-Z0-9])(?:R|C)D(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/(?:R|C)D(\d+[A-Z0-9-]*)/);
+    if (match) return `D${match[1]}`;
+
+    /*
+     * Formes métropolitaines administratives : RM613, RM 613.
+     */
+    match = normalized.match(/(?:^|[^A-Z0-9])RM(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/RM(\d+[A-Z0-9-]*)/);
+    if (match) return `M${match[1]}`;
+
+    /*
+     * Formes nationales administratives : RN7, RN 7.
+     */
+    match = normalized.match(/(?:^|[^A-Z0-9])RN(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/RN(\d+[A-Z0-9-]*)/);
+    if (match) return `N${match[1]}`;
+
+    /*
+     * Formes directement exploitables : A8, N7, D559, M613, D7N, D2007.
+     */
+    match = normalized.match(/(?:^|[^A-Z0-9])([ANDM]\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/([ANDM]\d+[A-Z0-9-]*)/);
+    return match ? match[1] : '';
+}
+
+function getRoadOverlayFeatureReference(feature) {
+    const props = feature?.properties || {};
+    const candidates = [
+        props.ref,
+        props.route,
+        props.ROUTE,
+        props.num_route,
+        props.NUM_ROUTE,
+        props.numero_route,
+        props.NUMERO_ROUTE,
+        props.code_route,
+        props.CODE_ROUTE,
+        props.numero,
+        props.NUMERO,
+        props.ref_raw,
+        props.toponyme,
+        props.TOPONYME,
+        props.name,
+        props.nom,
+        props.NOM
+    ];
+
+    for (const value of candidates) {
+        const ref = normalizeRoadOverlayReferenceValue(value);
+        if (ref) return ref;
+    }
+
+    return '';
+}
+
+function getRoadOverlayClassFromRef(ref) {
+    const prefix = String(ref || '').trim().toUpperCase().charAt(0);
+    return prefix === 'A' || prefix === 'N' || prefix === 'D' || prefix === 'M'
+        ? prefix
+        : '';
+}
+
+function normalizeRoadOverlayFeature(feature) {
+    if (!feature || feature.type !== 'Feature' || !feature.geometry) return null;
+    const geometryType = feature.geometry.type;
+    if (geometryType !== 'LineString' && geometryType !== 'MultiLineString') return null;
+
+    const ref = getRoadOverlayFeatureReference(feature);
+    const roadClass = getRoadOverlayClassFromRef(ref);
+    if (!ref || !roadClass) return null;
+
+    return {
+        type: 'Feature',
+        properties: {
+            ref,
+            roadClass,
+            name: String(
+                feature.properties?.name
+                || feature.properties?.nom
+                || feature.properties?.NOM
+                || ''
+            ).trim()
+        },
+        geometry: feature.geometry
+    };
+}
+
+function iterateRoadOverlayCoordinates(geometry, callback) {
+    if (!geometry || typeof callback !== 'function') return;
+    const coordinates = geometry.coordinates;
+
+    if (geometry.type === 'LineString' && Array.isArray(coordinates)) {
+        coordinates.forEach(coord => {
+            if (Array.isArray(coord) && coord.length >= 2) {
+                callback(Number(coord[0]), Number(coord[1]));
+            }
+        });
+        return;
+    }
+
+    if (geometry.type === 'MultiLineString' && Array.isArray(coordinates)) {
+        coordinates.forEach(line => {
+            if (!Array.isArray(line)) return;
+            line.forEach(coord => {
+                if (Array.isArray(coord) && coord.length >= 2) {
+                    callback(Number(coord[0]), Number(coord[1]));
+                }
+            });
+        });
+    }
+}
+
+function calculateRoadOverlayGeojsonBbox(geojson) {
+    let minLon = Infinity;
+    let minLat = Infinity;
+    let maxLon = -Infinity;
+    let maxLat = -Infinity;
+
+    (geojson?.features || []).forEach(feature => {
+        iterateRoadOverlayCoordinates(feature?.geometry, (lon, lat) => {
+            if (!Number.isFinite(lon) || !Number.isFinite(lat)) return;
+            minLon = Math.min(minLon, lon);
+            minLat = Math.min(minLat, lat);
+            maxLon = Math.max(maxLon, lon);
+            maxLat = Math.max(maxLat, lat);
+        });
+    });
+
+    return [minLon, minLat, maxLon, maxLat].every(Number.isFinite)
+        ? [minLon, minLat, maxLon, maxLat]
+        : null;
+}
+
+function normalizeRoadOverlayGeojson(rawGeojson) {
+    if (!rawGeojson || rawGeojson.type !== 'FeatureCollection') {
+        throw new Error('Le fichier doit être un GeoJSON de type FeatureCollection.');
+    }
+
+    const features = (rawGeojson.features || [])
+        .map(normalizeRoadOverlayFeature)
+        .filter(Boolean);
+
+    if (!features.length) {
+        throw new Error('Aucune route A, N, D ou M avec une référence exploitable n’a été trouvée.');
+    }
+
+    const normalized = {
+        type: 'FeatureCollection',
+        features
+    };
+    const bbox = calculateRoadOverlayGeojsonBbox(normalized);
+    if (bbox) normalized.bbox = bbox;
+    return normalized;
+}
+
+function sanitizeRoadOverlayPartName(value, index = 0) {
+    const baseName = String(value || `routes-${index + 1}`)
+        .replace(/\.(geojson|json)$/i, '')
+        .replace(/[^a-zA-Z0-9_-]+/g, '-')
+        .replace(/^-+|-+$/g, '')
+        .slice(0, 80);
+    return baseName || `routes-${index + 1}`;
+}
+
+function buildRoadOverlayCacheRequest(key) {
+    const safeKey = encodeURIComponent(String(key || 'routes'));
+    return new Request(`${ROAD_OVERLAY_RESOURCE_PREFIX}${safeKey}.geojson`);
+}
+
+async function clearRoadOverlayCacheAndManifest() {
+    try {
+        await caches.delete(ROAD_OVERLAY_CACHE_NAME);
+    } catch (_) {}
+    localStorage.removeItem(ROAD_OVERLAY_MANIFEST_KEY);
+}
+
+async function importRoadOverlayFile(file) {
+    if (!file) return;
+    if (typeof JSZip === 'undefined' && /\.zip$/i.test(file.name)) {
+        throw new Error('JSZip n’est pas disponible.');
+    }
+    if (!('caches' in window)) {
+        throw new Error('Le stockage offline Cache API n’est pas disponible.');
+    }
+
+    const progressSection = document.getElementById('import-progress-section');
+    const statusMessage = document.getElementById('import-status-message');
+    const progressBar = document.getElementById('import-progress-bar');
+
+    if (progressSection) progressSection.style.display = 'block';
+    if (progressBar) progressBar.style.width = '2%';
+    if (statusMessage) statusMessage.textContent = `Lecture de ${file.name}…`;
+
+    const candidates = [];
+
+    if (/\.zip$/i.test(file.name)) {
+        const zip = await JSZip.loadAsync(file);
+        const entries = Object.values(zip.files || {}).filter(entry => (
+            !entry.dir
+            && /\.(geojson|json)$/i.test(entry.name)
+            && !/(^|\/)(manifest|index)\.json$/i.test(entry.name)
+        ));
+
+        if (!entries.length) {
+            throw new Error('Le ZIP ne contient aucun fichier .geojson ou .json.');
+        }
+
+        for (let index = 0; index < entries.length; index += 1) {
+            const entry = entries[index];
+            if (statusMessage) {
+                statusMessage.textContent = `Analyse des routes ${index + 1} / ${entries.length}…`;
+            }
+            if (progressBar) {
+                progressBar.style.width = `${Math.max(3, Math.round(((index + 1) / entries.length) * 60))}%`;
+            }
+            const text = await entry.async('string');
+            candidates.push({
+                name: entry.name.split('/').pop() || `routes-${index + 1}.geojson`,
+                text
+            });
+            await new Promise(resolve => setTimeout(resolve, 0));
+        }
+    } else {
+        candidates.push({
+            name: file.name || 'routes.geojson',
+            text: await file.text()
+        });
+    }
+
+    const normalizedParts = [];
+    for (let index = 0; index < candidates.length; index += 1) {
+        const candidate = candidates[index];
+        let parsed;
+        try {
+            parsed = JSON.parse(candidate.text);
+        } catch (_) {
+            throw new Error(`JSON invalide dans ${candidate.name}.`);
+        }
+
+        const normalized = normalizeRoadOverlayGeojson(parsed);
+        normalizedParts.push({
+            key: `${Date.now()}-${index}-${sanitizeRoadOverlayPartName(candidate.name, index)}`,
+            name: candidate.name,
+            bbox: normalized.bbox || calculateRoadOverlayGeojsonBbox(normalized),
+            featureCount: normalized.features.length,
+            text: JSON.stringify(normalized)
+        });
+
+        if (statusMessage) {
+            statusMessage.textContent = `Préparation ${index + 1} / ${candidates.length}…`;
+        }
+        if (progressBar) {
+            progressBar.style.width = `${60 + Math.round(((index + 1) / candidates.length) * 20)}%`;
+        }
+        await new Promise(resolve => setTimeout(resolve, 0));
+    }
+
+    /*
+     * Remplacement atomique du pack précédent. On prépare le nouveau cache,
+     * puis on enregistre le manifeste seulement lorsque tous les fichiers ont
+     * été écrits.
+     */
+    await clearRoadOverlayCacheAndManifest();
+    const cache = await caches.open(ROAD_OVERLAY_CACHE_NAME);
+
+    for (let index = 0; index < normalizedParts.length; index += 1) {
+        const part = normalizedParts[index];
+        await cache.put(
+            buildRoadOverlayCacheRequest(part.key),
+            new Response(part.text, {
+                headers: {
+                    'Content-Type': 'application/geo+json; charset=utf-8',
+                    'X-NPF-Road-Part': part.name
+                }
+            })
+        );
+
+        if (statusMessage) {
+            statusMessage.textContent = `Stockage offline ${index + 1} / ${normalizedParts.length}…`;
+        }
+        if (progressBar) {
+            progressBar.style.width = `${80 + Math.round(((index + 1) / normalizedParts.length) * 18)}%`;
+        }
+    }
+
+    const manifest = {
+        version: 1,
+        name: file.name || 'Calque routier',
+        importedAt: Date.now(),
+        parts: normalizedParts.map(part => ({
+            key: part.key,
+            name: part.name,
+            bbox: part.bbox,
+            featureCount: part.featureCount
+        }))
+    };
+    saveRoadOverlayManifest(manifest);
+
+    clearRoadOverlayRenderedParts();
+    if (progressBar) progressBar.style.width = '100%';
+    if (statusMessage) {
+        const totalFeatures = manifest.parts.reduce((sum, part) => sum + part.featureCount, 0);
+        statusMessage.textContent = `${totalFeatures.toLocaleString('fr-FR')} tronçons routiers installés.`;
+    }
+
+    showRoadOverlayLayer = true;
+    localStorage.setItem(ROAD_OVERLAY_LAYER_KEY, 'true');
+    await toggleRoadOverlayLayer(true, { silent: true, source: 'import' });
+    refreshRoadOverlayInstalledStatus();
+
+    window.setTimeout(() => {
+        if (progressSection) progressSection.style.display = 'none';
+    }, 1800);
+}
+
+async function deleteRoadOverlayData() {
+    showRoadOverlayLayer = false;
+    localStorage.setItem(ROAD_OVERLAY_LAYER_KEY, 'false');
+    clearRoadOverlayRenderedParts();
+
+    if (roadOverlayLayer && map?.hasLayer(roadOverlayLayer)) {
+        map.removeLayer(roadOverlayLayer);
+    }
+
+    await clearRoadOverlayCacheAndManifest();
+    refreshRoadOverlayButtonState();
+}
+
+function formatRoadOverlayImportedDate(timestamp) {
+    if (!Number.isFinite(Number(timestamp)) || Number(timestamp) <= 0) return '';
+    try {
+        return new Date(Number(timestamp)).toLocaleString('fr-FR', {
+            dateStyle: 'short',
+            timeStyle: 'short'
+        });
+    } catch (_) {
+        return '';
+    }
+}
+
+function refreshRoadOverlayInstalledStatus() {
+    const status = document.getElementById('road-overlay-installed-status');
+    const deleteButton = document.getElementById('delete-road-overlay-button');
+    if (!status) return;
+
+    const manifest = getRoadOverlayManifest();
+    const totalFeatures = manifest.parts.reduce(
+        (sum, part) => sum + (Number(part.featureCount) || 0),
+        0
+    );
+
+    if (!manifest.parts.length) {
+        status.textContent = 'Aucun pack routier installé.';
+        if (deleteButton) deleteButton.style.display = 'none';
+        return;
+    }
+
+    const importedDate = formatRoadOverlayImportedDate(manifest.importedAt);
+    status.textContent = `${manifest.name || 'Calque routier'} — ${manifest.parts.length} partie(s) — ${totalFeatures.toLocaleString('fr-FR')} tronçons${importedDate ? ` — ${importedDate}` : ''}.`;
+    if (deleteButton) deleteButton.style.display = 'inline-flex';
+}
+
+function refreshRoadOverlayButtonState() {
+    const button = document.getElementById('road-overlay-button');
+    const status = document.getElementById('road-overlay-button-status');
+    if (!button) return;
+
+    const manifest = getRoadOverlayManifest();
+    const hasData = manifest.parts.length > 0;
+
+    button.classList.toggle('active', showRoadOverlayLayer && hasData);
+    button.classList.toggle('loading', isRoadOverlayLoading);
+    button.classList.toggle('missing-data', !hasData);
+    button.disabled = isRoadOverlayLoading;
+
+    if (status) {
+        status.textContent = hasData ? 'A/N/D/M' : '!';
+    }
+
+    button.title = isRoadOverlayLoading
+        ? 'Chargement du calque routier…'
+        : (
+            hasData
+                ? 'Afficher/Masquer le calque routier A / N / D / M'
+                : 'Aucun calque routier installé — ouvrir Gestion des Cartes'
+        );
+}
+
+function roadOverlayBboxIntersectsBounds(bbox, bounds) {
+    if (!Array.isArray(bbox) || bbox.length !== 4 || !bounds) return true;
+    const [minLon, minLat, maxLon, maxLat] = bbox.map(Number);
+    if (![minLon, minLat, maxLon, maxLat].every(Number.isFinite)) return true;
+
+    return !(
+        maxLon < bounds.getWest()
+        || minLon > bounds.getEast()
+        || maxLat < bounds.getSouth()
+        || minLat > bounds.getNorth()
+    );
+}
+
+function getRoadOverlayZoomTier() {
+    const zoom = map?.getZoom?.() ?? 0;
+
+    /*
+     * Niveau 0 : rien avant 2 NM.
+     * Niveau 1 : autoroutes uniquement à partir de 2 NM.
+     * Niveau 2 : A + N + D + M à partir de 1 NM.
+     */
+    if (zoom >= 12) return 2;
+    if (zoom >= 11) return 1;
+    return 0;
+}
+
+function shouldLoadRoadOverlayFeatureForTier(feature, tier) {
+    const roadClass = String(
+        feature?.properties?.roadClass || ''
+    ).toUpperCase();
+
+    if (tier >= 2) {
+        return roadClass === 'A' || roadClass === 'N' || roadClass === 'D' || roadClass === 'M';
+    }
+
+    if (tier === 1) {
+        return roadClass === 'A';
+    }
+
+    return false;
+}
+
+function buildRoadOverlayGeojsonForTier(geojson, tier) {
+    const features = Array.isArray(geojson?.features)
+        ? geojson.features.filter(
+            feature => shouldLoadRoadOverlayFeatureForTier(feature, tier)
+        )
+        : [];
+
+    return {
+        type: 'FeatureCollection',
+        bbox: Array.isArray(geojson?.bbox) ? geojson.bbox : undefined,
+        features
+    };
+}
+
+function getRoadOverlayLineStyle(feature, casing = false) {
+    const roadClass = getRoadOverlayClassFromRef(
+        feature?.properties?.ref || feature?.properties?.roadClass
+    ) || String(feature?.properties?.roadClass || '');
+
+    const zoom = map?.getZoom?.() ?? 10;
+    const visibleAtCurrentZoom = shouldDisplayRoadOverlayFeature(feature);
+    const styleByClass = {
+        A: {
+            color: '#e85d04',
+            weight: zoom >= 12 ? 5.2 : 4.4,
+            casingWeight: zoom >= 12 ? 8.2 : 7.2
+        },
+        N: {
+            color: '#d62828',
+            weight: zoom >= 12 ? 4.5 : 3.7,
+            casingWeight: zoom >= 12 ? 7.4 : 6.4
+        },
+        D: {
+            color: '#f0a202',
+            weight: zoom >= 13 ? 3.4 : 2.8,
+            casingWeight: zoom >= 13 ? 6.0 : 5.2
+        },
+        M: {
+            color: '#f0a202',
+            weight: zoom >= 13 ? 3.4 : 2.8,
+            casingWeight: zoom >= 13 ? 6.0 : 5.2
+        }
+    };
+
+    const selected = styleByClass[roadClass] || styleByClass.D;
+
+    /*
+     * Toutes les routes restent présentes dans les couches Leaflet. En dessous
+     * du zoom prévu, elles deviennent transparentes mais ne sont pas supprimées.
+     */
+    return {
+        color: casing ? '#ffffff' : selected.color,
+        weight: visibleAtCurrentZoom
+            ? (casing ? selected.casingWeight : selected.weight)
+            : 0,
+        opacity: visibleAtCurrentZoom
+            ? (casing ? 0.94 : 0.95)
+            : 0,
+        fillOpacity: 0,
+        lineCap: 'round',
+        lineJoin: 'round',
+        interactive: false,
+        pane: casing ? 'roadOverlayCasingPane' : 'roadOverlayLinePane'
+    };
+}
+
+function shouldDisplayRoadOverlayFeature(feature) {
+    const roadClass = String(feature?.properties?.roadClass || '').toUpperCase();
+    const zoom = map?.getZoom?.() ?? 10;
+
+    /*
+     * v14.20 — autoroutes à partir de l'échelle 2 NM environ.
+     * Sur la carte actuelle, cela correspond au niveau de zoom 11.
+     */
+    if (roadClass === 'A') return zoom >= 11;
+
+    /*
+     * v14.20 — nationales et départementales à partir de l'échelle 1 NM
+     * environ, correspondant au niveau de zoom 12.
+     */
+    if (roadClass === 'N') return zoom >= 12;
+    if (roadClass === 'D' || roadClass === 'M') return zoom >= 12;
+    return false;
+}
+
+function getRoadOverlayLongestLineCoordinates(feature) {
+    const geometry = feature?.geometry;
+    if (!geometry) return null;
+
+    if (geometry.type === 'LineString') {
+        return Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
+    }
+
+    if (geometry.type === 'MultiLineString' && Array.isArray(geometry.coordinates)) {
+        return geometry.coordinates.reduce((longest, line) => (
+            Array.isArray(line) && line.length > (longest?.length || 0)
+                ? line
+                : longest
+        ), null);
+    }
+
+    return null;
+}
+
+function getRoadOverlayFeatureLabelPoint(feature) {
+    const coordinates = getRoadOverlayLongestLineCoordinates(feature);
+    if (!Array.isArray(coordinates) || !coordinates.length) return null;
+
+    if (coordinates.length === 1) {
+        const coord = coordinates[0];
+        return L.latLng(Number(coord[1]), Number(coord[0]));
+    }
+
+    let totalLength = 0;
+    const segmentLengths = [];
+
+    for (let index = 1; index < coordinates.length; index += 1) {
+        const previous = coordinates[index - 1];
+        const current = coordinates[index];
+        const previousLatLng = L.latLng(Number(previous[1]), Number(previous[0]));
+        const currentLatLng = L.latLng(Number(current[1]), Number(current[0]));
+        const length = previousLatLng.distanceTo(currentLatLng);
+        segmentLengths.push(length);
+        totalLength += length;
+    }
+
+    if (!Number.isFinite(totalLength) || totalLength <= 0) {
+        const middle = coordinates[Math.floor(coordinates.length / 2)];
+        return L.latLng(Number(middle[1]), Number(middle[0]));
+    }
+
+    const target = totalLength / 2;
+    let walked = 0;
+
+    for (let index = 1; index < coordinates.length; index += 1) {
+        const segmentLength = segmentLengths[index - 1];
+        if (walked + segmentLength >= target) {
+            const ratio = segmentLength > 0
+                ? (target - walked) / segmentLength
+                : 0;
+            const start = coordinates[index - 1];
+            const end = coordinates[index];
+            const lon = Number(start[0]) + (Number(end[0]) - Number(start[0])) * ratio;
+            const lat = Number(start[1]) + (Number(end[1]) - Number(start[1])) * ratio;
+            return L.latLng(lat, lon);
+        }
+        walked += segmentLength;
+    }
+
+    const last = coordinates[coordinates.length - 1];
+    return L.latLng(Number(last[1]), Number(last[0]));
+}
+
+function addRoadOverlayLabelsForGeojson(geojson, partKey) {
+    if (!roadOverlayLabelsLayer || !map) return;
+    const zoom = map.getZoom();
+    const bounds = map.getBounds().pad(0.18);
+    const seenGridKeys = new Set();
+    const gridSize = zoom >= 13 ? 0.035 : (zoom >= 12 ? 0.075 : 0.18);
+
+    (geojson?.features || []).forEach(feature => {
+        if (!shouldDisplayRoadOverlayFeature(feature)) return;
+
+        const roadClass = String(feature?.properties?.roadClass || '').toUpperCase();
+        if ((roadClass === 'D' || roadClass === 'M') && zoom < 12) return;
+
+        const ref = String(feature?.properties?.ref || '').trim();
+        if (!ref) return;
+
+        const point = getRoadOverlayFeatureLabelPoint(feature);
+        if (!point || !bounds.contains(point)) return;
+
+        const gridX = Math.round(point.lng / gridSize);
+        const gridY = Math.round(point.lat / gridSize);
+        const key = `${ref}:${gridX}:${gridY}`;
+        if (seenGridKeys.has(key)) return;
+        seenGridKeys.add(key);
+
+        const marker = L.marker(point, {
+            pane: 'roadOverlayLabelPane',
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+                className: 'road-overlay-label-marker',
+                html: `<span class="road-overlay-ref road-overlay-ref-${roadClass.toLowerCase()}">${escapeHtml(ref)}</span>`,
+                iconSize: null
+            })
+        });
+        marker.__npfRoadPartKey = partKey;
+        marker.addTo(roadOverlayLabelsLayer);
+    });
+}
+
+function clearRoadOverlayRenderedParts(options = {}) {
+    loadedRoadOverlayParts.clear();
+
+    try { roadOverlayCasingLayer?.clearLayers(); } catch (_) {}
+    try { roadOverlayLineLayer?.clearLayers(); } catch (_) {}
+    try { roadOverlayLabelsLayer?.clearLayers(); } catch (_) {}
+
+    /*
+     * Libérer immédiatement les géométries et les commandes Canvas. Cette
+     * opération est essentielle sur iPad lorsque l'on revient à un zoom où
+     * aucune route ne doit être affichée.
+     */
+    try { roadOverlayCasingRenderer?._redraw?.(); } catch (_) {}
+    try { roadOverlayLineRenderer?._redraw?.(); } catch (_) {}
+
+    if (options.resetTier !== false) {
+        roadOverlayLoadedZoomTier = -1;
+    }
+}
+
+async function loadRoadOverlayPart(part, token, tier) {
+    const cache = await caches.open(ROAD_OVERLAY_CACHE_NAME);
+    const response = await cache.match(buildRoadOverlayCacheRequest(part.key));
+    if (!response || !response.ok) {
+        throw new Error(`Partie routière absente : ${part.name}`);
+    }
+
+    const storedGeojson = await response.json();
+    if (
+        token !== roadOverlayRefreshToken
+        || !showRoadOverlayLayer
+        || tier !== roadOverlayLoadedZoomTier
+    ) {
+        return null;
+    }
+
+    /*
+     * Ne créer dans Leaflet que les classes utiles au niveau courant :
+     * - niveau 1 : A seulement ;
+     * - niveau 2 : A, N, D et M.
+     * Le changement de niveau détruit puis reconstruit entièrement les couches,
+     * ce qui évite à la fois les étiquettes seules et les géométries invisibles
+     * conservées en mémoire.
+     */
+    const geojson = buildRoadOverlayGeojsonForTier(storedGeojson, tier);
+
+    if (!geojson.features.length) {
+        const emptyRecord = {
+            casing: null,
+            lines: null,
+            geojson,
+            tier
+        };
+        loadedRoadOverlayParts.set(part.key, emptyRecord);
+        return emptyRecord;
+    }
+
+    const casing = L.geoJSON(geojson, {
+        pane: 'roadOverlayCasingPane',
+        renderer: roadOverlayCasingRenderer || undefined,
+        interactive: false,
+        style: feature => getRoadOverlayLineStyle(feature, true)
+    });
+    const lines = L.geoJSON(geojson, {
+        pane: 'roadOverlayLinePane',
+        renderer: roadOverlayLineRenderer || undefined,
+        interactive: false,
+        style: feature => getRoadOverlayLineStyle(feature, false)
+    });
+
+    casing.addTo(roadOverlayCasingLayer);
+    lines.addTo(roadOverlayLineLayer);
+    addRoadOverlayLabelsForGeojson(geojson, part.key);
+
+    const record = { casing, lines, geojson, tier };
+    loadedRoadOverlayParts.set(part.key, record);
+    return record;
+}
+
+function rebuildRoadOverlayLabels() {
+    if (!roadOverlayLabelsLayer) return;
+    roadOverlayLabelsLayer.clearLayers();
+
+    loadedRoadOverlayParts.forEach((record, partKey) => {
+        if (
+            record?.tier !== roadOverlayLoadedZoomTier
+            || !record?.geojson?.features?.length
+        ) {
+            return;
+        }
+        addRoadOverlayLabelsForGeojson(record.geojson, partKey);
+    });
+}
+
+async function refreshRoadOverlayVisibleParts(source = 'refresh') {
+    if (!showRoadOverlayLayer || !map || !roadOverlayLayer) return;
+
+    const manifest = getRoadOverlayManifest();
+    if (!manifest.parts.length) {
+        refreshRoadOverlayButtonState();
+        return;
+    }
+
+    const token = ++roadOverlayRefreshToken;
+    const currentTier = getRoadOverlayZoomTier();
+
+    isRoadOverlayLoading = true;
+    refreshRoadOverlayButtonState();
+
+    try {
+        /*
+         * Au-dessous de 2 NM, aucune route n'est visible : ne lire aucun
+         * GeoJSON, ne conserver aucune géométrie et ne solliciter aucun Canvas.
+         */
+        if (currentTier === 0) {
+            clearRoadOverlayRenderedParts({ resetTier: false });
+            roadOverlayLoadedZoomTier = 0;
+            return;
+        }
+
+        /*
+         * Lors du passage 2 NM ↔ 1 NM, détruire réellement les anciennes
+         * couches. On évite ainsi de conserver N/D invisibles à 2 NM ou de
+         * réutiliser une partie chargée avec une autre sélection de classes.
+         */
+        if (roadOverlayLoadedZoomTier !== currentTier) {
+            clearRoadOverlayRenderedParts({ resetTier: false });
+            roadOverlayLoadedZoomTier = currentTier;
+        }
+
+        const bounds = map.getBounds().pad(currentTier === 1 ? 0.18 : 0.22);
+        const visibleParts = manifest.parts.filter(part => (
+            roadOverlayBboxIntersectsBounds(part.bbox, bounds)
+        ));
+        const visibleKeys = new Set(visibleParts.map(part => part.key));
+
+        loadedRoadOverlayParts.forEach((record, key) => {
+            if (
+                visibleKeys.has(key)
+                && record?.tier === currentTier
+            ) {
+                return;
+            }
+
+            try {
+                if (record?.casing) {
+                    roadOverlayCasingLayer.removeLayer(record.casing);
+                }
+            } catch (_) {}
+
+            try {
+                if (record?.lines) {
+                    roadOverlayLineLayer.removeLayer(record.lines);
+                }
+            } catch (_) {}
+
+            loadedRoadOverlayParts.delete(key);
+        });
+
+        for (const part of visibleParts) {
+            if (
+                token !== roadOverlayRefreshToken
+                || !showRoadOverlayLayer
+                || currentTier !== roadOverlayLoadedZoomTier
+            ) {
+                return;
+            }
+
+            const existing = loadedRoadOverlayParts.get(part.key);
+            if (existing?.tier === currentTier) continue;
+
+            try {
+                await loadRoadOverlayPart(part, token, currentTier);
+            } catch (error) {
+                console.warn(
+                    'Partie du calque routier ignorée:',
+                    part.name,
+                    error
+                );
+            }
+        }
+
+        if (
+            token !== roadOverlayRefreshToken
+            || !showRoadOverlayLayer
+            || currentTier !== roadOverlayLoadedZoomTier
+        ) {
+            return;
+        }
+
+        loadedRoadOverlayParts.forEach(record => {
+            if (record?.tier !== currentTier) return;
+
+            try {
+                record.casing?.setStyle(
+                    feature => getRoadOverlayLineStyle(feature, true)
+                );
+                record.lines?.setStyle(
+                    feature => getRoadOverlayLineStyle(feature, false)
+                );
+            } catch (_) {}
+        });
+
+        try { roadOverlayCasingRenderer?._redraw?.(); } catch (_) {}
+        try { roadOverlayLineRenderer?._redraw?.(); } catch (_) {}
+
+        rebuildRoadOverlayLabels();
+    } finally {
+        if (token === roadOverlayRefreshToken) {
+            isRoadOverlayLoading = false;
+            refreshRoadOverlayButtonState();
+        }
+    }
+}
+
+function scheduleRoadOverlayRefresh(source = 'scheduled') {
+    clearTimeout(roadOverlayRefreshTimer);
+    roadOverlayRefreshTimer = setTimeout(() => {
+        refreshRoadOverlayVisibleParts(source).catch(error => {
+            console.warn('Actualisation du calque routier impossible:', source, error);
+        });
+    }, 220);
+}
+
+async function toggleRoadOverlayLayer(forceState = null, options = {}) {
+    const shouldShow = forceState === null
+        ? !showRoadOverlayLayer
+        : Boolean(forceState);
+    const manifest = getRoadOverlayManifest();
+
+    if (shouldShow && !manifest.parts.length) {
+        showRoadOverlayLayer = false;
+        localStorage.setItem(ROAD_OVERLAY_LAYER_KEY, 'false');
+        refreshRoadOverlayButtonState();
+
+        if (!options.silent) {
+            const modal = document.getElementById('offline-map-modal');
+            if (modal) {
+                modal.style.display = 'flex';
+                refreshRoadOverlayInstalledStatus();
+            }
+            alert('Aucun calque routier n’est installé. Importe le pack A / N / D / M dans Gestion des Cartes.');
+        }
+        return;
+    }
+
+    showRoadOverlayLayer = shouldShow;
+    localStorage.setItem(ROAD_OVERLAY_LAYER_KEY, String(showRoadOverlayLayer));
+
+    if (showRoadOverlayLayer) {
+        if (roadOverlayLayer && !map.hasLayer(roadOverlayLayer)) {
+            roadOverlayLayer.addTo(map);
+        }
+        await refreshRoadOverlayVisibleParts(options.source || 'toggle');
+    } else {
+        roadOverlayRefreshToken += 1;
+        clearTimeout(roadOverlayRefreshTimer);
+        isRoadOverlayLoading = false;
+        if (roadOverlayLayer && map.hasLayer(roadOverlayLayer)) {
+            map.removeLayer(roadOverlayLayer);
+        }
+    }
+
+    refreshRoadOverlayButtonState();
+}
+
+
+
+// =========================================================================
+// v13.01 — réglages calque trafic ADS-B
 // =========================================================================
 function sanitizeTrafficSettings(candidate = {}) {
     const fallback = DEFAULT_TRAFFIC_SETTINGS;
@@ -3343,7 +8489,6 @@ function sanitizeTrafficSettings(candidate = {}) {
     };
 
     const radiusNm = Math.max(5, Math.min(250, parseIntOr(candidate.radiusNm, fallback.radiusNm)));
-    const maxAircraft = Math.max(1, Math.min(150, parseIntOr(candidate.maxAircraft, fallback.maxAircraft)));
     const minAltitudeFt = Math.max(0, Math.min(60000, parseIntOr(candidate.minAltitudeFt, fallback.minAltitudeFt)));
 
     let maxAltitudeFt = candidate.maxAltitudeFt;
@@ -3358,27 +8503,1017 @@ function sanitizeTrafficSettings(candidate = {}) {
     }
 
     const showAltitudeLabel = asBool(candidate.showAltitudeLabel, fallback.showAltitudeLabel);
-    const relativeAltitudeEnabled = asBool(candidate.relativeAltitudeEnabled, fallback.relativeAltitudeEnabled);
-    const relativeAltitudeBandFt = Math.max(100, Math.min(10000, parseIntOr(candidate.relativeAltitudeBandFt, fallback.relativeAltitudeBandFt)));
-    let trafficAroundOwnPosition = asBool(candidate.trafficAroundOwnPosition, fallback.trafficAroundOwnPosition);
-    let trafficAroundFire = asBool(candidate.trafficAroundFire, fallback.trafficAroundFire);
 
-    if (!trafficAroundOwnPosition && !trafficAroundFire) {
-        trafficAroundOwnPosition = true;
+    const validAltitudeModes = new Set(['absolute', 'around', 'ground']);
+    let altitudeFilterMode = String(candidate.altitudeFilterMode || '').toLowerCase();
+    if (!validAltitudeModes.has(altitudeFilterMode)) {
+        /*
+         * Migration transparente des versions précédentes :
+         * - ancienne case cochée = mode ± autour de mon altitude ;
+         * - ancienne case décochée = altitude absolue.
+         */
+        altitudeFilterMode = asBool(
+            candidate.relativeAltitudeEnabled,
+            fallback.relativeAltitudeEnabled
+        ) ? 'around' : 'absolute';
     }
+
+    const relativeAltitudeBandFt = Math.max(
+        100,
+        Math.min(
+            10000,
+            parseIntOr(candidate.relativeAltitudeBandFt, fallback.relativeAltitudeBandFt)
+        )
+    );
+    const groundToAboveBandFt = Math.max(
+        100,
+        Math.min(
+            10000,
+            parseIntOr(candidate.groundToAboveBandFt, fallback.groundToAboveBandFt)
+        )
+    );
+
+    /*
+     * v14.44 — suppression des modes « autour de ma position » et
+     * « autour du feu ». Le trafic est toujours demandé autour du centre
+     * courant de la carte, quelle que soit une ancienne valeur mémorisée.
+     */
+    const trafficAroundOwnPosition = false;
+    const trafficAroundFire = false;
+    const showGroundTraffic = asBool(
+        candidate.showGroundTraffic,
+        fallback.showGroundTraffic
+    );
+
+    const showDroneAdvisories = asBool(
+        candidate.showDroneAdvisories,
+        fallback.showDroneAdvisories
+    );
+    const onlyTrackedIdentifiers = asBool(
+        candidate.onlyTrackedIdentifiers,
+        fallback.onlyTrackedIdentifiers
+    );
+    /*
+     * v14.41 — publication NPF vers SafeSky supprimée.
+     * Les anciennes valeurs mémorisées sont ignorées et neutralisées.
+     */
+    const publishOwnPosition = false;
+    const publicationCallsign = '';
+    const publicationBeaconType = 'MOTORPLANE';
 
     return {
         radiusNm,
-        maxAircraft,
         minAltitudeFt,
         maxAltitudeFt,
         showAltitudeLabel,
-        relativeAltitudeEnabled,
+        altitudeFilterMode,
+        /*
+         * Propriété conservée pour compatibilité avec d'anciens réglages ou
+         * modules, vraie pour les deux modes dépendant de l'altitude propre.
+         */
+        relativeAltitudeEnabled: altitudeFilterMode !== 'absolute',
         relativeAltitudeBandFt,
+        groundToAboveBandFt,
         trafficAroundOwnPosition,
-        trafficAroundFire
+        trafficAroundFire,
+        showGroundTraffic,
+        showDroneAdvisories,
+        onlyTrackedIdentifiers,
+        publishOwnPosition,
+        publicationCallsign,
+        publicationBeaconType
     };
 }
+
+
+function normalizeTrackedTrafficCallsign(value) {
+    return String(value || '')
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, '');
+}
+
+function isPermanentTrackedTrafficCallsign(value) {
+    return TRAFFIC_PERMANENT_TRACKED_CALLSIGN_SET.has(
+        normalizeTrackedTrafficCallsign(value)
+    );
+}
+
+function isPermanentTrackedTrafficEntry(entry) {
+    if (!entry) return false;
+    if (entry.permanent === true) return true;
+
+    const callsign = normalizeTrackedTrafficCallsign(
+        entry.callsign
+        || (
+            isPendingTrackedTrafficIdentifier(entry.id)
+                ? String(entry.id).slice('CALLSIGN:'.length)
+                : ''
+        )
+    );
+    return isPermanentTrackedTrafficCallsign(callsign);
+}
+
+function buildPermanentTrackedTrafficEntry(callsign) {
+    const normalizedCallsign = normalizeTrackedTrafficCallsign(callsign);
+    return {
+        id: buildPendingTrackedTrafficIdentifier(normalizedCallsign),
+        callsign: normalizedCallsign,
+        registration: '',
+        type: '',
+        pendingResolution: true,
+        permanent: true,
+        addedAt: 0
+    };
+}
+
+function mergePermanentTrackedTrafficIdentifiers(entries) {
+    const merged = Array.isArray(entries) ? [...entries] : [];
+
+    TRAFFIC_PERMANENT_TRACKED_CALLSIGNS.forEach(callsign => {
+        const existing = merged.find(entry => (
+            normalizeTrackedTrafficCallsign(entry?.callsign) === callsign
+            || String(entry?.id || '').toUpperCase()
+                === buildPendingTrackedTrafficIdentifier(callsign)
+        ));
+
+        if (existing) {
+            existing.callsign = callsign;
+            existing.permanent = true;
+            return;
+        }
+
+        merged.push(buildPermanentTrackedTrafficEntry(callsign));
+    });
+
+    return merged;
+}
+
+function isPendingTrackedTrafficIdentifier(id) {
+    return String(id || '').toUpperCase().startsWith('CALLSIGN:');
+}
+
+function buildPendingTrackedTrafficIdentifier(callsign) {
+    const normalizedCallsign = normalizeTrackedTrafficCallsign(callsign);
+    return normalizedCallsign ? `CALLSIGN:${normalizedCallsign}` : '';
+}
+
+function getTrackedTrafficEntryAlphabeticalLabel(entry) {
+    return String(
+        entry?.callsign
+        || entry?.registration
+        || (
+            isPendingTrackedTrafficIdentifier(entry?.id)
+                ? String(entry.id).slice('CALLSIGN:'.length)
+                : entry?.id
+        )
+        || ''
+    ).trim().toUpperCase();
+}
+
+function sortTrackedTrafficIdentifiers(entries) {
+    return [...(Array.isArray(entries) ? entries : [])]
+        .sort((left, right) => {
+            const labelDifference = getTrackedTrafficEntryAlphabeticalLabel(left)
+                .localeCompare(
+                    getTrackedTrafficEntryAlphabeticalLabel(right),
+                    'fr',
+                    { numeric: true, sensitivity: 'base' }
+                );
+            if (labelDifference) return labelDifference;
+            return String(left?.id || '').localeCompare(
+                String(right?.id || ''),
+                'fr',
+                { numeric: true, sensitivity: 'base' }
+            );
+        });
+}
+
+function sanitizeTrackedTrafficIdentifierEntry(entry) {
+    if (!entry) return null;
+
+    const callsign = normalizeTrackedTrafficCallsign(
+        entry.callsign || entry.call_sign || ''
+    );
+    const registration = String(entry.registration || '')
+        .trim()
+        .toUpperCase();
+    let id = String(entry.id || entry.hex || '')
+        .trim()
+        .toUpperCase();
+
+    if (!id && callsign) {
+        id = buildPendingTrackedTrafficIdentifier(callsign);
+    }
+    if (!id) return null;
+
+    return {
+        id,
+        callsign: callsign || (
+            isPendingTrackedTrafficIdentifier(id)
+                ? id.slice('CALLSIGN:'.length)
+                : ''
+        ),
+        registration,
+        type: String(entry.type || entry.beaconType || '')
+            .trim()
+            .toUpperCase(),
+        pendingResolution: (
+            Boolean(entry.pendingResolution)
+            || isPendingTrackedTrafficIdentifier(id)
+        ),
+        permanent: (
+            Boolean(entry.permanent)
+            || isPermanentTrackedTrafficCallsign(callsign)
+        ),
+        addedAt: Number(entry.addedAt) || Date.now()
+    };
+}
+
+function loadTrackedTrafficIdentifiers() {
+    let parsed = [];
+    try {
+        const stored = JSON.parse(
+            localStorage.getItem(
+                TRAFFIC_TRACKED_IDENTIFIERS_STORAGE_KEY
+            ) || '[]'
+        );
+        parsed = Array.isArray(stored) ? stored : [];
+    } catch (_) {
+        parsed = [];
+    }
+
+    const result = [];
+    const seenIds = new Set();
+    const seenCallsigns = new Set();
+
+    mergePermanentTrackedTrafficIdentifiers(parsed).forEach(entry => {
+        const cleanEntry = sanitizeTrackedTrafficIdentifierEntry(entry);
+        if (!cleanEntry) return;
+
+        const callsign = normalizeTrackedTrafficCallsign(cleanEntry.callsign);
+        if (seenIds.has(cleanEntry.id)) return;
+
+        /*
+         * Un indicatif permanent peut avoir été résolu en identifiant SafeSky.
+         * Dans ce cas, l'entrée résolue remplace l'entrée CALLSIGN:... et évite
+         * de faire réapparaître un doublon « en attente » au lancement suivant.
+         */
+        if (callsign && seenCallsigns.has(callsign)) {
+            const existingIndex = result.findIndex(candidate => (
+                normalizeTrackedTrafficCallsign(candidate.callsign)
+                    === callsign
+            ));
+            const existing = result[existingIndex];
+            const preferCurrent = (
+                existing
+                && isPendingTrackedTrafficIdentifier(existing.id)
+                && !isPendingTrackedTrafficIdentifier(cleanEntry.id)
+            );
+            if (preferCurrent) {
+                cleanEntry.permanent = (
+                    cleanEntry.permanent
+                    || existing.permanent
+                    || isPermanentTrackedTrafficCallsign(callsign)
+                );
+                seenIds.delete(existing.id);
+                result[existingIndex] = cleanEntry;
+                seenIds.add(cleanEntry.id);
+            }
+            return;
+        }
+
+        if (isPermanentTrackedTrafficCallsign(callsign)) {
+            cleanEntry.permanent = true;
+        }
+
+        seenIds.add(cleanEntry.id);
+        if (callsign) seenCallsigns.add(callsign);
+        result.push(cleanEntry);
+    });
+
+    return sortTrackedTrafficIdentifiers(result);
+}
+
+function saveTrackedTrafficIdentifiers(entries) {
+    const cleanEntries = [];
+    const seen = new Set();
+
+    mergePermanentTrackedTrafficIdentifiers(
+        Array.isArray(entries) ? entries : []
+    ).forEach(entry => {
+        const cleanEntry = sanitizeTrackedTrafficIdentifierEntry(entry);
+        if (!cleanEntry || seen.has(cleanEntry.id)) return;
+        seen.add(cleanEntry.id);
+        cleanEntries.push(cleanEntry);
+    });
+
+    const sortedEntries = sortTrackedTrafficIdentifiers(cleanEntries);
+
+    try {
+        localStorage.setItem(
+            TRAFFIC_TRACKED_IDENTIFIERS_STORAGE_KEY,
+            JSON.stringify(sortedEntries)
+        );
+    } catch (_) {}
+
+    return sortedEntries;
+}
+
+function getTrackedTrafficIdentifiers() {
+    return loadTrackedTrafficIdentifiers();
+}
+
+function getResolvedTrackedTrafficIdentifiers() {
+    return getTrackedTrafficIdentifiers()
+        .map(entry => entry.id)
+        .filter(id => id && !isPendingTrackedTrafficIdentifier(id));
+}
+
+function trackedTrafficEntryMatchesAircraft(entry, aircraft) {
+    const normalized = aircraft?.lat !== undefined
+        ? aircraft
+        : normalizeTrafficAircraft(aircraft?.raw || aircraft);
+    if (!entry || !normalized) return false;
+
+    const aircraftId = String(normalized.hex || '')
+        .trim()
+        .toUpperCase();
+    const aircraftCallsign = normalizeTrackedTrafficCallsign(
+        normalized.callsign
+    );
+    const aircraftRegistration = String(
+        normalized.registration || ''
+    ).trim().toUpperCase();
+
+    if (
+        entry.id
+        && !isPendingTrackedTrafficIdentifier(entry.id)
+        && aircraftId === entry.id
+    ) {
+        return true;
+    }
+
+    const entryCallsign = normalizeTrackedTrafficCallsign(entry.callsign);
+    if (entryCallsign && aircraftCallsign === entryCallsign) return true;
+
+    const entryRegistration = String(entry.registration || '')
+        .trim()
+        .toUpperCase();
+    return Boolean(
+        entryRegistration
+        && aircraftRegistration === entryRegistration
+    );
+}
+
+function findTrackedTrafficEntryForAircraft(aircraft) {
+    return getTrackedTrafficIdentifiers().find(
+        entry => trackedTrafficEntryMatchesAircraft(entry, aircraft)
+    ) || null;
+}
+
+function isTrafficAircraftTracked(aircraft) {
+    return Boolean(findTrackedTrafficEntryForAircraft(aircraft));
+}
+
+function addPendingTrackedTrafficCallsign(callsign) {
+    const normalizedCallsign = normalizeTrackedTrafficCallsign(callsign);
+    if (!/^[A-Z0-9][A-Z0-9._-]{1,23}$/.test(normalizedCallsign)) {
+        throw new Error(
+            'Indicatif invalide : utilise uniquement lettres, chiffres, point, tiret ou soulignement.'
+        );
+    }
+
+    const current = getTrackedTrafficIdentifiers();
+    const duplicate = current.find(entry => (
+        normalizeTrackedTrafficCallsign(entry.callsign) === normalizedCallsign
+        || entry.id === buildPendingTrackedTrafficIdentifier(normalizedCallsign)
+    ));
+    if (duplicate) {
+        throw new Error(
+            `${normalizedCallsign} est déjà présent dans la liste suivie.`
+        );
+    }
+
+    current.push({
+        id: buildPendingTrackedTrafficIdentifier(normalizedCallsign),
+        callsign: normalizedCallsign,
+        registration: '',
+        type: '',
+        pendingResolution: true,
+        addedAt: Date.now()
+    });
+
+    const saved = saveTrackedTrafficIdentifiers(current);
+    refreshTrackedTrafficListUi();
+
+    if (showTrafficLayer) {
+        refreshTrafficLayer({
+            force: true,
+            reason: 'tracked-pending-add'
+        });
+    }
+
+    return saved;
+}
+
+function mergeResolvedTrackedTrafficIdentity(entry, aircraft) {
+    const identity = extractTrackedTrafficIdentity(aircraft);
+    if (!entry || !identity.id) return false;
+
+    const entries = getTrackedTrafficIdentifiers();
+    const replacement = {
+        id: identity.id,
+        callsign: identity.callsign || entry.callsign,
+        registration: identity.registration || entry.registration,
+        type: identity.type || entry.type,
+        pendingResolution: false,
+        permanent: isPermanentTrackedTrafficEntry(entry),
+        addedAt: entry.addedAt
+    };
+
+    const updated = entries
+        .filter(candidate => (
+            candidate.id !== entry.id
+            && candidate.id !== identity.id
+        ))
+        .concat(replacement);
+
+    saveTrackedTrafficIdentifiers(updated);
+    return true;
+}
+
+function getTrackedTrafficIdentifierSet() {
+    return new Set(getResolvedTrackedTrafficIdentifiers());
+}
+
+function isTrafficIdentifierTracked(id) {
+    const normalizedId = String(id || '').trim().toUpperCase();
+    return normalizedId
+        ? getTrackedTrafficIdentifierSet().has(normalizedId)
+        : false;
+}
+
+function extractTrackedTrafficIdentity(aircraft) {
+    const raw = aircraft?.raw || aircraft || {};
+    const normalized = normalizeTrafficAircraft(raw);
+
+    const id = String(
+        normalized?.hex
+        || raw.hex
+        || raw.id
+        || raw.aircraft_id
+        || raw.aircraftId
+        || ''
+    ).trim().toUpperCase();
+
+    const cleanText = (...values) => {
+        for (const value of values) {
+            const text = String(value || '').trim();
+            if (
+                text
+                && !['N/A', 'UNKNOWN', '--', 'NULL'].includes(
+                    text.toUpperCase()
+                )
+            ) {
+                return text;
+            }
+        }
+        return '';
+    };
+
+    return {
+        id,
+        callsign: cleanText(
+            normalized?.callsign,
+            raw.call_sign,
+            raw.callsign,
+            raw.flight
+        ),
+        registration: cleanText(
+            normalized?.registration,
+            raw.registration,
+            raw.registration_number,
+            raw.tail_number,
+            raw.tail,
+            raw.r
+        ),
+        type: cleanText(
+            normalized?.beaconType,
+            normalized?.type,
+            raw.beacon_type,
+            raw.aircraft_type,
+            raw.type
+        ),
+        raw
+    };
+}
+
+function addTrackedTrafficIdentifier(aircraft) {
+    const identity = extractTrackedTrafficIdentity(aircraft);
+    const id = identity.id;
+
+    if (!id) {
+        throw new Error(
+            'SafeSky ne fournit pas d’identifiant technique exploitable pour cet indicatif.'
+        );
+    }
+
+    const identityCallsign = normalizeTrackedTrafficCallsign(
+        identity.callsign
+    );
+    const identityRegistration = String(identity.registration || '')
+        .trim()
+        .toUpperCase();
+    const current = getTrackedTrafficIdentifiers()
+        .filter(entry => (
+            entry.id !== id
+            && !(
+                identityCallsign
+                && normalizeTrackedTrafficCallsign(entry.callsign)
+                    === identityCallsign
+            )
+            && !(
+                identityRegistration
+                && String(entry.registration || '').trim().toUpperCase()
+                    === identityRegistration
+            )
+        ));
+
+    current.push({
+        id,
+        callsign: identity.callsign,
+        registration: identity.registration,
+        type: identity.type,
+        pendingResolution: false,
+        addedAt: Date.now()
+    });
+
+    const saved = saveTrackedTrafficIdentifiers(current);
+    refreshTrackedTrafficListUi();
+
+    if (showTrafficLayer) {
+        refreshTrafficLayer({
+            force: true,
+            reason: 'tracked-add'
+        });
+    }
+
+    return saved;
+}
+
+function removeTrackedTrafficIdentifier(id) {
+    const normalizedId = String(id || '').trim().toUpperCase();
+    const currentEntry = getTrackedTrafficIdentifiers().find(
+        entry => entry.id === normalizedId
+    );
+
+    if (isPermanentTrackedTrafficEntry(currentEntry)) {
+        return getTrackedTrafficIdentifiers();
+    }
+
+    const saved = saveTrackedTrafficIdentifiers(
+        getTrackedTrafficIdentifiers().filter(
+            entry => entry.id !== normalizedId
+        )
+    );
+
+    refreshTrackedTrafficListUi();
+
+    if (showTrafficLayer) {
+        refreshTrafficLayer({
+            force: true,
+            reason: 'tracked-remove'
+        });
+    }
+
+    return saved;
+}
+
+function getCurrentlyDetectedTrackedTrafficMap() {
+    const detected = new Map();
+    const refreshAgeMs = Date.now() - Number(lastTrafficRefreshAt || 0);
+
+    if (
+        !showTrafficLayer
+        || lastTrafficError
+        || !Number.isFinite(refreshAgeMs)
+        || refreshAgeMs > Math.max(15000, TRAFFIC_MAX_SEEN_SECONDS * 1000)
+    ) {
+        return detected;
+    }
+
+    const entries = getTrackedTrafficIdentifiers();
+    if (!entries.length) return detected;
+
+    const candidates = [
+        ...(Array.isArray(lastTrafficAircraftSnapshot)
+            ? lastTrafficAircraftSnapshot
+            : []),
+        ...getTemporaryGlobalTrafficRaw()
+    ]
+        .map(normalizeTrafficAircraft)
+        .filter(Boolean)
+        .filter(aircraft => (
+            !Number.isFinite(aircraft.seenPos)
+            || aircraft.seenPos <= TRAFFIC_MAX_SEEN_SECONDS
+        ));
+
+    entries.forEach(entry => {
+        const aircraft = candidates.find(candidate => (
+            trackedTrafficEntryMatchesAircraft(entry, candidate)
+        ));
+        if (aircraft) detected.set(entry.id, aircraft);
+    });
+
+    return detected;
+}
+
+function refreshTrackedTrafficListUi() {
+    const listElement = document.getElementById(
+        'traffic-tracked-list'
+    );
+    if (!listElement) return;
+
+    const entries = getTrackedTrafficIdentifiers();
+    const detectedTrafficMap = getCurrentlyDetectedTrackedTrafficMap();
+    listElement.innerHTML = '';
+
+    const countElement = document.getElementById(
+        'traffic-tracked-count'
+    );
+    if (countElement) {
+        countElement.textContent = String(entries.length);
+        countElement.title = entries.length
+            ? `${entries.length} indicatif${entries.length > 1 ? 's' : ''} suivi${entries.length > 1 ? 's' : ''}`
+            : 'Aucun indicatif suivi';
+    }
+
+    if (!entries.length) {
+        const empty = document.createElement('div');
+        empty.className = 'traffic-tool-empty';
+        empty.textContent = 'Aucun identifiant suivi';
+        listElement.appendChild(empty);
+        return;
+    }
+
+    entries.forEach(entry => {
+        const row = document.createElement('div');
+        row.className = 'traffic-tracked-row';
+
+        const detectedAircraft = detectedTrafficMap.get(entry.id);
+        if (detectedAircraft) {
+            row.classList.add('traffic-tracked-detected');
+            row.title = detectedAircraft.isGrounded
+                ? 'Détecté par SafeSky — appuyer pour afficher au sol'
+                : 'Détecté par SafeSky — appuyer pour afficher sur la carte';
+            row.setAttribute('role', 'button');
+            row.setAttribute('tabindex', '0');
+            row.setAttribute(
+                'aria-label',
+                `${entry.registration || entry.callsign || entry.id} — afficher sur la carte`
+            );
+
+            /*
+             * v14.56 — distinction appui / défilement dans la liste suivie.
+             *
+             * Aucun preventDefault n'est utilisé : Safari peut donc faire défiler
+             * naturellement la carte des filtres lorsque le doigt part verticalement.
+             * Si le déplacement dépasse quelques pixels, le clic synthétique suivant
+             * est neutralisé afin de ne pas ouvrir le trafic à la fin du scroll.
+             */
+            let trackedRowTouchStartX = 0;
+            let trackedRowTouchStartY = 0;
+            let trackedRowTouchMoved = false;
+
+            const suppressTrackedRowClickAfterScroll = () => {
+                row.dataset.trafficSuppressClickUntil = String(
+                    Date.now() + 700
+                );
+                window.setTimeout(() => {
+                    const suppressUntil = Number(
+                        row.dataset.trafficSuppressClickUntil || 0
+                    );
+                    if (Date.now() >= suppressUntil) {
+                        delete row.dataset.trafficSuppressClickUntil;
+                    }
+                }, 750);
+            };
+
+            row.addEventListener('touchstart', event => {
+                if (event?.target?.closest?.('button')) return;
+                const touch = event.touches?.[0];
+                if (!touch) return;
+
+                trackedRowTouchStartX = touch.clientX;
+                trackedRowTouchStartY = touch.clientY;
+                trackedRowTouchMoved = false;
+                delete row.dataset.trafficSuppressClickUntil;
+            }, { passive: true });
+
+            row.addEventListener('touchmove', event => {
+                const touch = event.touches?.[0];
+                if (!touch) return;
+
+                const deltaX = touch.clientX - trackedRowTouchStartX;
+                const deltaY = touch.clientY - trackedRowTouchStartY;
+                if (Math.hypot(deltaX, deltaY) >= 8) {
+                    trackedRowTouchMoved = true;
+                }
+            }, { passive: true });
+
+            row.addEventListener('touchend', () => {
+                if (trackedRowTouchMoved) {
+                    suppressTrackedRowClickAfterScroll();
+                }
+                trackedRowTouchMoved = false;
+            }, { passive: true });
+
+            row.addEventListener('touchcancel', () => {
+                suppressTrackedRowClickAfterScroll();
+                trackedRowTouchMoved = false;
+            }, { passive: true });
+
+            const openDetectedTraffic = async (event) => {
+                if (event?.target?.closest?.('button')) return;
+                if (
+                    Date.now() < Number(
+                        row.dataset.trafficSuppressClickUntil || 0
+                    )
+                ) return;
+                if (row.dataset.trafficOpening === '1') return;
+
+                row.dataset.trafficOpening = '1';
+                row.classList.add('traffic-tracked-opening');
+
+                try {
+                    await focusTrafficAircraftResult(
+                        detectedAircraft.raw || detectedAircraft,
+                        { forceGroundDisplay: true }
+                    );
+
+                    const modal = document.getElementById(
+                        'traffic-settings-modal'
+                    );
+                    if (modal) {
+                        modal.classList.remove('open');
+                        modal.setAttribute('aria-hidden', 'true');
+                    }
+                } catch (error) {
+                    console.warn(
+                        'Affichage du trafic suivi impossible:',
+                        error
+                    );
+                    row.title = error?.message
+                        || 'Position du trafic indisponible';
+                } finally {
+                    delete row.dataset.trafficOpening;
+                    row.classList.remove('traffic-tracked-opening');
+                }
+            };
+
+            row.addEventListener('click', openDetectedTraffic);
+            row.addEventListener('keydown', event => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                openDetectedTraffic(event);
+            });
+        }
+
+        const label = document.createElement('div');
+        label.className = 'traffic-tracked-label';
+
+        const primary = document.createElement('strong');
+        primary.textContent = (
+            entry.callsign
+            || entry.registration
+            || (
+                isPendingTrackedTrafficIdentifier(entry.id)
+                    ? entry.id.slice('CALLSIGN:'.length)
+                    : entry.id
+            )
+        );
+
+        const secondary = document.createElement('span');
+        secondary.textContent = [
+            entry.registration
+                && entry.registration !== primary.textContent
+                ? entry.registration
+                : '',
+            entry.type,
+            isPermanentTrackedTrafficEntry(entry)
+                ? 'Permanent'
+                : '',
+            isPendingTrackedTrafficIdentifier(entry.id)
+                ? 'En attente de détection'
+                : entry.id
+        ].filter(Boolean).join(' · ');
+
+        label.append(primary, secondary);
+
+        if (detectedAircraft) {
+            const liveState = document.createElement('span');
+            liveState.className = 'traffic-tracked-live-state';
+            liveState.textContent = detectedAircraft.isGrounded
+                ? 'Détecté au sol'
+                : 'Détecté en vol';
+            label.appendChild(liveState);
+        }
+
+        const removeButton = document.createElement('button');
+        removeButton.type = 'button';
+        removeButton.className =
+            'traffic-tool-button traffic-tool-button-danger';
+        const permanentEntry = isPermanentTrackedTrafficEntry(entry);
+        removeButton.textContent = permanentEntry ? 'Permanent' : 'Retirer';
+        removeButton.disabled = permanentEntry;
+        if (permanentEntry) {
+            removeButton.title = 'Indicatif permanent intégré à NPF';
+            removeButton.setAttribute('aria-label', 'Indicatif permanent');
+        } else {
+            removeButton.addEventListener('click', event => {
+                event.stopPropagation();
+                removeTrackedTrafficIdentifier(entry.id);
+            });
+        }
+
+        row.append(label, removeButton);
+        listElement.appendChild(row);
+    });
+}
+
+
+function sanitizeOwnTrafficAircraftSessionEntry(entry) {
+    if (!entry) return null;
+
+    const id = String(entry.id || entry.hex || '')
+        .trim()
+        .toUpperCase();
+    if (!id) return null;
+
+    return {
+        id,
+        callsign: String(entry.callsign || entry.call_sign || '')
+            .trim()
+            .toUpperCase(),
+        registration: String(entry.registration || '')
+            .trim()
+            .toUpperCase(),
+        type: String(entry.type || entry.beaconType || '')
+            .trim()
+            .toUpperCase(),
+        selectedAt: Number(entry.selectedAt) || Date.now()
+    };
+}
+
+function loadOwnTrafficAircraftSession() {
+    try {
+        const cleanEntry = sanitizeOwnTrafficAircraftSessionEntry(
+            JSON.parse(
+                sessionStorage.getItem(
+                    TRAFFIC_OWN_AIRCRAFT_SESSION_KEY
+                ) || 'null'
+            )
+        );
+        ownTrafficAircraftSessionFallback = cleanEntry;
+        return cleanEntry;
+    } catch (_) {
+        return sanitizeOwnTrafficAircraftSessionEntry(
+            ownTrafficAircraftSessionFallback
+        );
+    }
+}
+
+function getOwnTrafficAircraftSession() {
+    return loadOwnTrafficAircraftSession();
+}
+
+function getTrafficAircraftIdentifier(aircraftOrId) {
+    if (typeof aircraftOrId === 'string') {
+        return aircraftOrId.trim().toUpperCase();
+    }
+
+    return String(
+        aircraftOrId?.hex
+        || aircraftOrId?.id
+        || aircraftOrId?.raw?.hex
+        || aircraftOrId?.raw?.id
+        || ''
+    ).trim().toUpperCase();
+}
+
+function isOwnTrafficAircraft(aircraftOrId) {
+    const ownAircraft = getOwnTrafficAircraftSession();
+    const identifier = getTrafficAircraftIdentifier(aircraftOrId);
+    return !!ownAircraft && !!identifier && ownAircraft.id === identifier;
+}
+
+function refreshOwnTrafficAircraftUi() {
+    const ownAircraft = getOwnTrafficAircraftSession();
+    const statusElement = document.getElementById(
+        'traffic-own-aircraft-status'
+    );
+    const resetButton = document.getElementById(
+        'traffic-own-aircraft-reset'
+    );
+
+    if (statusElement) {
+        if (ownAircraft) {
+            const mainLabel = (
+                ownAircraft.registration
+                || ownAircraft.callsign
+                || ownAircraft.id
+            );
+            const details = [
+                ownAircraft.callsign
+                    && ownAircraft.callsign !== mainLabel
+                    ? ownAircraft.callsign
+                    : '',
+                ownAircraft.type,
+                ownAircraft.id
+            ].filter(Boolean).join(' · ');
+
+            statusElement.innerHTML = '';
+            const title = document.createElement('strong');
+            title.textContent = `Mon avion masqué : ${mainLabel}`;
+            const detail = document.createElement('span');
+            detail.textContent = details;
+            statusElement.append(title, detail);
+            statusElement.classList.add('traffic-own-aircraft-active');
+        } else {
+            statusElement.textContent =
+                'Aucun avion défini pour cette session.';
+            statusElement.classList.remove('traffic-own-aircraft-active');
+        }
+    }
+
+    if (resetButton) {
+        resetButton.disabled = !ownAircraft;
+    }
+}
+
+function redrawTrafficAfterOwnAircraftChange(reason) {
+    refreshOwnTrafficAircraftUi();
+    redrawTrafficLayerFromSnapshot();
+
+    if (showTrafficLayer) {
+        refreshTrafficLayer({
+            force: true,
+            reason
+        });
+    }
+}
+
+function setOwnTrafficAircraftSession(aircraft) {
+    const normalized = normalizeTrafficAircraft(
+        aircraft?.raw || aircraft
+    );
+    const id = getTrafficAircraftIdentifier(
+        normalized || aircraft
+    );
+
+    if (!id) {
+        throw new Error(
+            'Ce trafic ne fournit pas d’identifiant SafeSky exploitable'
+        );
+    }
+
+    const entry = sanitizeOwnTrafficAircraftSessionEntry({
+        id,
+        callsign: normalized?.callsign || aircraft?.callsign || '',
+        registration:
+            normalized?.registration || aircraft?.registration || '',
+        type:
+            normalized?.beaconType
+            || normalized?.type
+            || aircraft?.type
+            || '',
+        selectedAt: Date.now()
+    });
+
+    ownTrafficAircraftSessionFallback = entry;
+    try {
+        sessionStorage.setItem(
+            TRAFFIC_OWN_AIRCRAFT_SESSION_KEY,
+            JSON.stringify(entry)
+        );
+    } catch (_) {}
+
+    redrawTrafficAfterOwnAircraftChange('own-aircraft-set');
+    return entry;
+}
+
+function clearOwnTrafficAircraftSession() {
+    ownTrafficAircraftSessionFallback = null;
+    try {
+        sessionStorage.removeItem(
+            TRAFFIC_OWN_AIRCRAFT_SESSION_KEY
+        );
+    } catch (_) {}
+
+    redrawTrafficAfterOwnAircraftChange('own-aircraft-reset');
+}
+
 
 function loadTrafficSettings() {
     try {
@@ -3400,13 +9535,34 @@ function saveTrafficSettings(settings) {
 
 function getTrafficSettingsSummary() {
     const settings = sanitizeTrafficSettings(trafficSettings);
-    const altitudeMaxLabel = settings.maxAltitudeFt === null ? 'sans maxi' : `${settings.maxAltitudeFt} ft`;
-    const altitudeLabel = settings.showAltitudeLabel ? 'étiquette alt ON' : 'étiquette alt OFF';
-    const relativeLabel = settings.relativeAltitudeEnabled ? `±${settings.relativeAltitudeBandFt} ft autour GPS` : 'altitude absolue';
-    const referenceLabels = [];
-    if (settings.trafficAroundOwnPosition) referenceLabels.push('GPS');
-    if (settings.trafficAroundFire) referenceLabels.push('feu');
-    return `Rayon ${settings.radiusNm} Nm · Max ${settings.maxAircraft} avions · Alt ${settings.minAltitudeFt} ft à ${altitudeMaxLabel} · ${relativeLabel} · ${altitudeLabel} · autour ${referenceLabels.join(' + ')}`;
+    const altitudeMaxLabel = settings.maxAltitudeFt === null
+        ? 'sans maxi'
+        : `${settings.maxAltitudeFt} ft`;
+    const altitudeLabel = settings.showAltitudeLabel
+        ? 'étiquette alt ON'
+        : 'étiquette alt OFF';
+
+    let altitudeFilterLabel = `Alt. ${settings.minAltitudeFt} ft / ${altitudeMaxLabel}`;
+    if (settings.altitudeFilterMode === 'around') {
+        altitudeFilterLabel = `±${settings.relativeAltitudeBandFt} ft autour de moi`;
+    } else if (settings.altitudeFilterMode === 'ground') {
+        altitudeFilterLabel = `du sol à +${settings.groundToAboveBandFt} ft au-dessus de moi`;
+    }
+
+    const referenceLabel = 'centre carte';
+    const groundLabel = settings.showGroundTraffic
+        ? 'trafics au sol ON'
+        : 'trafics au sol OFF';
+
+    const trackedCount = getTrackedTrafficIdentifiers().length;
+    const trackedLabel = settings.onlyTrackedIdentifiers
+        ? `liste suivie ${trackedCount}`
+        : 'tous identifiants';
+    const advisoryLabel = settings.showDroneAdvisories
+        ? 'zones drone ON'
+        : 'zones drone OFF';
+
+    return `Rayon ${settings.radiusNm} Nm · ${altitudeFilterLabel} · ${altitudeLabel} · ${referenceLabel} · ${groundLabel} · ${trackedLabel} · ${advisoryLabel}`;
 }
 
 function ensureTrafficSettingsModal() {
@@ -3421,66 +9577,56 @@ function ensureTrafficSettingsModal() {
         <div class="traffic-settings-card" role="dialog" aria-modal="true" aria-labelledby="traffic-settings-title">
             <div class="traffic-settings-header">
                 <div>
-                    <div id="traffic-settings-title" class="traffic-settings-title">Filtres ADS-B</div>
+                    <div id="traffic-settings-title" class="traffic-settings-title">Filtres trafic</div>
                     <div class="traffic-settings-subtitle">Réglages du calque trafic indicatif</div>
                 </div>
                 <button type="button" id="traffic-settings-close" class="traffic-settings-close" aria-label="Fermer">×</button>
             </div>
 
             <div class="traffic-settings-grid">
-                <label class="traffic-settings-field">
-                    <span>Rayon d'affichage</span>
-                    <div class="traffic-settings-input-row">
+                <label class="traffic-settings-field traffic-settings-relative-line traffic-settings-radius-field">
+                    <div class="traffic-settings-check-row traffic-settings-radius-inline-row">
+                        <em>Rayon d'affichage</em>
                         <input id="traffic-radius-input" type="number" inputmode="numeric" min="5" max="250" step="1">
-                        <em>Nm</em>
+                        <strong>Nm</strong>
                     </div>
                 </label>
 
-                <label class="traffic-settings-field">
-                    <span>Nombre maximal d'avions</span>
-                    <div class="traffic-settings-input-row">
-                        <input id="traffic-max-aircraft-input" type="number" inputmode="numeric" min="1" max="150" step="1">
-                        <em>avions</em>
+                <label id="traffic-altitude-absolute-mode-field" class="traffic-settings-field traffic-settings-checkbox-field traffic-settings-relative-line">
+                    <div class="traffic-settings-check-row traffic-settings-altitude-row traffic-settings-absolute-band-row">
+                        <input id="traffic-altitude-mode-absolute" type="radio" name="traffic-altitude-mode" value="absolute">
+                        <em>Alt. mini / maxi</em>
+                        <input id="traffic-min-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100" placeholder="mini">
+                        <span class="traffic-altitude-separator">/</span>
+                        <input id="traffic-max-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100" placeholder="maxi">
+                        <strong>ft</strong>
                     </div>
                 </label>
 
-                <label id="traffic-min-altitude-field" class="traffic-settings-field traffic-absolute-altitude-field">
-                    <span>Altitude mini</span>
-                    <div class="traffic-settings-input-row">
-                        <input id="traffic-min-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100">
-                        <em>ft</em>
-                    </div>
-                </label>
-
-                <label id="traffic-max-altitude-field" class="traffic-settings-field traffic-absolute-altitude-field">
-                    <span>Altitude maxi</span>
-                    <div class="traffic-settings-input-row">
-                        <input id="traffic-max-altitude-input" type="number" inputmode="numeric" min="0" max="60000" step="100" placeholder="vide">
-                        <em>ft</em>
-                    </div>
-                </label>
-
-                <label class="traffic-settings-field traffic-settings-checkbox-field traffic-settings-relative-line">
-                    <div class="traffic-settings-check-row traffic-settings-inline-band-row">
-                        <input id="traffic-relative-altitude-input" type="checkbox">
-                        <em>Tranche autour de mon altitude</em>
+                <label id="traffic-around-altitude-field" class="traffic-settings-field traffic-settings-checkbox-field traffic-settings-relative-line">
+                    <div class="traffic-settings-check-row traffic-settings-altitude-row traffic-settings-around-band-row">
+                        <input id="traffic-altitude-mode-around" type="radio" name="traffic-altitude-mode" value="around">
+                        <em>Autour de mon altitude</em>
                         <span class="traffic-relative-plusminus">±</span>
                         <input id="traffic-relative-band-input" type="number" inputmode="numeric" min="100" max="10000" step="100">
                         <strong>ft</strong>
                     </div>
                 </label>
 
-                <label class="traffic-settings-field traffic-settings-checkbox-field">
-                    <div class="traffic-settings-check-row">
-                        <input id="traffic-around-own-input" type="checkbox">
-                        <em>Trafic autour de ma position</em>
+                <label id="traffic-ground-altitude-field" class="traffic-settings-field traffic-settings-checkbox-field traffic-settings-relative-line">
+                    <div class="traffic-settings-check-row traffic-settings-altitude-row traffic-settings-ground-band-row">
+                        <input id="traffic-altitude-mode-ground" type="radio" name="traffic-altitude-mode" value="ground">
+                        <em>Du sol à</em>
+                        <span class="traffic-relative-plusminus">+</span>
+                        <input id="traffic-ground-band-input" type="number" inputmode="numeric" min="100" max="10000" step="100">
+                        <strong>ft au-dessus de moi</strong>
                     </div>
                 </label>
 
                 <label class="traffic-settings-field traffic-settings-checkbox-field">
                     <div class="traffic-settings-check-row">
-                        <input id="traffic-around-fire-input" type="checkbox">
-                        <em>Trafic autour du feu</em>
+                        <input id="traffic-show-ground-input" type="checkbox">
+                        <em>Afficher les trafics au sol</em>
                     </div>
                 </label>
 
@@ -3490,9 +9636,89 @@ function ensureTrafficSettingsModal() {
                         <em>Etiquette Alt. Trafics</em>
                     </div>
                 </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field">
+                    <div class="traffic-settings-check-row">
+                        <input id="traffic-drone-advisories-input" type="checkbox">
+                        <em>Zones d’activité drone déclarées</em>
+                    </div>
+                </label>
+
+                <label class="traffic-settings-field traffic-settings-checkbox-field">
+                    <div class="traffic-settings-check-row">
+                        <input id="traffic-only-tracked-input" type="checkbox">
+                        <em>Afficher uniquement la liste suivie</em>
+                    </div>
+                </label>
+
             </div>
 
-            <div class="traffic-settings-note">Altitude maxi vide = pas de limite haute. La tranche autour de mon altitude utilise l'altitude GPS disponible. Rafraîchissement ADS-B toutes les 5 secondes. Ces filtres ne changent pas la nature indicative/non certifiée de l'ADS-B.</div>
+            <div class="traffic-tools-section traffic-own-aircraft-section">
+                <div class="traffic-tools-title">Mon avion</div>
+                <div class="traffic-own-aircraft-row">
+                    <div id="traffic-own-aircraft-status" class="traffic-own-aircraft-status">
+                        Aucun avion défini pour cette session.
+                    </div>
+                    <button type="button"
+                            id="traffic-own-aircraft-reset"
+                            class="traffic-tool-button traffic-tool-button-danger"
+                            disabled>
+                        Réinitialiser
+                    </button>
+                </div>
+                <div class="traffic-tools-note">
+                    Sélectionne ton transpondeur depuis la fenêtre d’un trafic ou depuis la recherche.
+                    Son étiquette sera masquée uniquement pendant la session PWA en cours.
+                </div>
+            </div>
+
+            <div class="traffic-settings-actions traffic-settings-actions-duplicate">
+                <button type="button" id="traffic-settings-reset-duplicate" class="traffic-settings-secondary">Défaut</button>
+                <button type="button" id="traffic-settings-cancel-duplicate" class="traffic-settings-secondary">Annuler</button>
+                <button type="button" id="traffic-settings-apply-duplicate" class="traffic-settings-primary">Appliquer</button>
+            </div>
+
+            <div class="traffic-tools-section">
+                <div class="traffic-tools-title">Recherche d’identifiants SafeSky</div>
+                <div class="traffic-search-row">
+                    <input id="traffic-global-search-input"
+                           type="search"
+                           maxlength="24"
+                           autocomplete="off"
+                           autocapitalize="characters"
+                           placeholder="Indicatif entier ou partie, ex. MILAN">
+                    <button type="button"
+                            id="traffic-global-add-button"
+                            class="traffic-tool-button traffic-tool-button-add">
+                        Ajouter
+                    </button>
+                    <button type="button"
+                            id="traffic-global-search-button"
+                            class="traffic-tool-button traffic-tool-button-primary">
+                        Rechercher
+                    </button>
+                </div>
+                <div class="traffic-tools-note">
+                    « Ajouter » enregistre immédiatement l’indicatif, même sans détection actuelle. L’identifiant SafeSky sera associé automatiquement à la première détection.
+                    « Rechercher » accepte aussi une partie comme MILAN et affiche les trafics actifs correspondants autour du centre de la carte.
+                </div>
+                <div id="traffic-search-results" class="traffic-search-results"></div>
+            </div>
+
+            <div class="traffic-tools-section">
+                <div class="traffic-tools-title">
+                    Liste d’identifiants suivis
+                    <span id="traffic-tracked-count" class="traffic-tracked-count"></span>
+                </div>
+                <div class="traffic-tools-note">
+                    Les indicatifs permanents intégrés à NPF sont recréés automatiquement après une réinstallation.
+                    Tu peux continuer à ajouter et retirer librement les autres indicatifs. NPF mémorise l’identifiant SafeSky, pas seulement l’indicatif.
+                </div>
+                <div id="traffic-tracked-list" class="traffic-tracked-list"></div>
+            </div>
+
+
+            <div class="traffic-settings-note">Altitude maxi vide = pas de limite haute. « Autour de mon altitude » affiche une tranche ±. « Du sol à + » ne fixe aucune limite basse. Les trafics sont recherchés dans le rayon choisi autour du centre de la carte. Les trafics au sol sont masqués par défaut et apparaissent uniquement lorsque « Afficher les trafics au sol » est coché. Rafraîchissement toutes les 5 secondes. Le déplacement intermédiaire est extrapolé localement. Les données SafeSky/ADS-B restent indicatives et non certifiées.</div>
 
             <div class="traffic-settings-actions">
                 <button type="button" id="traffic-settings-reset" class="traffic-settings-secondary">Défaut</button>
@@ -3509,41 +9735,97 @@ function ensureTrafficSettingsModal() {
         modal.setAttribute('aria-hidden', 'true');
     };
 
+    const getSelectedAltitudeMode = () => (
+        modal.querySelector('input[name="traffic-altitude-mode"]:checked')?.value
+        || 'absolute'
+    );
+
     const updateAltitudeModeUi = () => {
-        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const mode = getSelectedAltitudeMode();
+
         const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
         const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
-        const minAltitudeField = modal.querySelector('#traffic-min-altitude-field');
-        const maxAltitudeField = modal.querySelector('#traffic-max-altitude-field');
-        const disabled = !!relativeAltitudeInput?.checked;
+        const relativeBandInput = modal.querySelector('#traffic-relative-band-input');
+        const groundBandInput = modal.querySelector('#traffic-ground-band-input');
+
+        const absoluteAltitudeField = modal.querySelector('#traffic-altitude-absolute-mode-field');
+        const aroundAltitudeField = modal.querySelector('#traffic-around-altitude-field');
+        const groundAltitudeField = modal.querySelector('#traffic-ground-altitude-field');
+
+        const absoluteActive = mode === 'absolute';
+        const aroundActive = mode === 'around';
+        const groundActive = mode === 'ground';
 
         [minAltitudeInput, maxAltitudeInput].forEach(input => {
-            if (input) input.disabled = disabled;
+            if (input) input.disabled = !absoluteActive;
         });
-        [minAltitudeField, maxAltitudeField].forEach(field => {
-            if (field) field.classList.toggle('traffic-settings-field-disabled', disabled);
-        });
+        if (absoluteAltitudeField) {
+            absoluteAltitudeField.classList.toggle(
+                'traffic-settings-field-disabled',
+                !absoluteActive
+            );
+        }
+
+        if (relativeBandInput) relativeBandInput.disabled = !aroundActive;
+        if (aroundAltitudeField) {
+            aroundAltitudeField.classList.toggle('traffic-settings-field-disabled', !aroundActive);
+        }
+
+        if (groundBandInput) groundBandInput.disabled = !groundActive;
+        if (groundAltitudeField) {
+            groundAltitudeField.classList.toggle('traffic-settings-field-disabled', !groundActive);
+        }
     };
 
     const fillDefaults = () => {
         const defaults = sanitizeTrafficSettings(DEFAULT_TRAFFIC_SETTINGS);
         modal.querySelector('#traffic-radius-input').value = String(defaults.radiusNm);
-        modal.querySelector('#traffic-max-aircraft-input').value = String(defaults.maxAircraft);
         modal.querySelector('#traffic-min-altitude-input').value = String(defaults.minAltitudeFt);
         modal.querySelector('#traffic-max-altitude-input').value = '';
-        modal.querySelector('#traffic-around-own-input').checked = !!defaults.trafficAroundOwnPosition;
-        modal.querySelector('#traffic-around-fire-input').checked = !!defaults.trafficAroundFire;
-        modal.querySelector('#traffic-relative-altitude-input').checked = !!defaults.relativeAltitudeEnabled;
+        modal.querySelector('#traffic-show-ground-input').checked = !!defaults.showGroundTraffic;
+        modal.querySelector(`#traffic-altitude-mode-${defaults.altitudeFilterMode}`).checked = true;
         modal.querySelector('#traffic-relative-band-input').value = String(defaults.relativeAltitudeBandFt);
+        modal.querySelector('#traffic-ground-band-input').value = String(defaults.groundToAboveBandFt);
         modal.querySelector('#traffic-altitude-label-input').checked = !!defaults.showAltitudeLabel;
+        modal.querySelector('#traffic-drone-advisories-input').checked = !!defaults.showDroneAdvisories;
+        modal.querySelector('#traffic-only-tracked-input').checked = !!defaults.onlyTrackedIdentifiers;
         updateAltitudeModeUi();
     };
 
-    modal.querySelector('#traffic-relative-altitude-input').addEventListener('change', updateAltitudeModeUi);
+    modal.querySelectorAll('input[name="traffic-altitude-mode"]').forEach(input => {
+        input.addEventListener('change', updateAltitudeModeUi);
+    });
+
+    modal.querySelector('#traffic-global-add-button')
+        .addEventListener('click', () => {
+            addTrackedTrafficFromModal(modal);
+        });
+
+    modal.querySelector('#traffic-global-search-button')
+        .addEventListener('click', () => {
+            performTrafficSearchFromModal(modal);
+        });
+
+    modal.querySelector('#traffic-global-search-input')
+        .addEventListener('keydown', event => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            performTrafficSearchFromModal(modal);
+        });
 
     modal.querySelector('#traffic-settings-close').addEventListener('click', closeModal);
     modal.querySelector('#traffic-settings-cancel').addEventListener('click', closeModal);
     modal.querySelector('#traffic-settings-reset').addEventListener('click', fillDefaults);
+    modal.querySelector('#traffic-settings-cancel-duplicate')
+        .addEventListener('click', closeModal);
+    modal.querySelector('#traffic-settings-reset-duplicate')
+        .addEventListener('click', fillDefaults);
+    modal.querySelector('#traffic-settings-apply-duplicate')
+        .addEventListener('click', () => {
+            modal.querySelector('#traffic-settings-apply').click();
+        });
+    modal.querySelector('#traffic-own-aircraft-reset')
+        .addEventListener('click', clearOwnTrafficAircraftSession);
 
     modal.addEventListener('click', (event) => {
         if (event.target === modal) closeModal();
@@ -3551,25 +9833,28 @@ function ensureTrafficSettingsModal() {
 
     modal.querySelector('#traffic-settings-apply').addEventListener('click', () => {
         const radiusInput = modal.querySelector('#traffic-radius-input');
-        const maxAircraftInput = modal.querySelector('#traffic-max-aircraft-input');
         const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
         const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
-        const aroundOwnInput = modal.querySelector('#traffic-around-own-input');
-        const aroundFireInput = modal.querySelector('#traffic-around-fire-input');
-        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const showGroundInput = modal.querySelector('#traffic-show-ground-input');
+        const altitudeModeInput = modal.querySelector('input[name="traffic-altitude-mode"]:checked');
         const relativeBandInput = modal.querySelector('#traffic-relative-band-input');
+        const groundBandInput = modal.querySelector('#traffic-ground-band-input');
         const altitudeLabelInput = modal.querySelector('#traffic-altitude-label-input');
-
+        const droneAdvisoriesInput = modal.querySelector('#traffic-drone-advisories-input');
+        const onlyTrackedInput = modal.querySelector('#traffic-only-tracked-input');
         saveTrafficSettings({
             radiusNm: radiusInput.value,
-            maxAircraft: maxAircraftInput.value,
             minAltitudeFt: minAltitudeInput.value,
             maxAltitudeFt: maxAltitudeInput.value.trim() === '' ? null : maxAltitudeInput.value,
-            trafficAroundOwnPosition: !!aroundOwnInput.checked,
-            trafficAroundFire: !!aroundFireInput.checked,
-            relativeAltitudeEnabled: !!relativeAltitudeInput.checked,
+            trafficAroundOwnPosition: false,
+            trafficAroundFire: false,
+            showGroundTraffic: !!showGroundInput.checked,
+            altitudeFilterMode: altitudeModeInput?.value || 'absolute',
             relativeAltitudeBandFt: relativeBandInput.value,
-            showAltitudeLabel: !!altitudeLabelInput.checked
+            groundToAboveBandFt: groundBandInput.value,
+            showAltitudeLabel: !!altitudeLabelInput.checked,
+            showDroneAdvisories: !!droneAdvisoriesInput.checked,
+            onlyTrackedIdentifiers: !!onlyTrackedInput.checked
         });
 
         refreshTrafficButtonState(lastTrafficDisplayedCount);
@@ -3581,6 +9866,9 @@ function ensureTrafficSettingsModal() {
         closeModal();
     });
 
+    refreshTrackedTrafficListUi();
+    refreshOwnTrafficAircraftUi();
+
     return modal;
 }
 
@@ -3589,24 +9877,59 @@ function openTrafficSettingsDialog() {
     const modal = ensureTrafficSettingsModal();
 
     modal.querySelector('#traffic-radius-input').value = String(current.radiusNm);
-    modal.querySelector('#traffic-max-aircraft-input').value = String(current.maxAircraft);
     modal.querySelector('#traffic-min-altitude-input').value = String(current.minAltitudeFt);
     modal.querySelector('#traffic-max-altitude-input').value = current.maxAltitudeFt === null ? '' : String(current.maxAltitudeFt);
-    modal.querySelector('#traffic-around-own-input').checked = !!current.trafficAroundOwnPosition;
-    modal.querySelector('#traffic-around-fire-input').checked = !!current.trafficAroundFire;
-    modal.querySelector('#traffic-relative-altitude-input').checked = !!current.relativeAltitudeEnabled;
+    modal.querySelector('#traffic-show-ground-input').checked = !!current.showGroundTraffic;
+    modal.querySelector(`#traffic-altitude-mode-${current.altitudeFilterMode}`).checked = true;
     modal.querySelector('#traffic-relative-band-input').value = String(current.relativeAltitudeBandFt);
+    modal.querySelector('#traffic-ground-band-input').value = String(current.groundToAboveBandFt);
     modal.querySelector('#traffic-altitude-label-input').checked = !!current.showAltitudeLabel;
+    modal.querySelector('#traffic-drone-advisories-input').checked = !!current.showDroneAdvisories;
+    modal.querySelector('#traffic-only-tracked-input').checked = !!current.onlyTrackedIdentifiers;
+
+    refreshTrackedTrafficListUi();
+    refreshOwnTrafficAircraftUi();
 
     try {
-        const relativeAltitudeInput = modal.querySelector('#traffic-relative-altitude-input');
+        const mode = current.altitudeFilterMode;
+        const absoluteActive = mode === 'absolute';
+        const aroundActive = mode === 'around';
+        const groundActive = mode === 'ground';
+
         const minAltitudeInput = modal.querySelector('#traffic-min-altitude-input');
         const maxAltitudeInput = modal.querySelector('#traffic-max-altitude-input');
-        const minAltitudeField = modal.querySelector('#traffic-min-altitude-field');
-        const maxAltitudeField = modal.querySelector('#traffic-max-altitude-field');
-        const disabled = !!relativeAltitudeInput?.checked;
-        [minAltitudeInput, maxAltitudeInput].forEach(input => { if (input) input.disabled = disabled; });
-        [minAltitudeField, maxAltitudeField].forEach(field => { if (field) field.classList.toggle('traffic-settings-field-disabled', disabled); });
+        const relativeBandInput = modal.querySelector('#traffic-relative-band-input');
+        const groundBandInput = modal.querySelector('#traffic-ground-band-input');
+
+        const absoluteAltitudeField = modal.querySelector('#traffic-altitude-absolute-mode-field');
+        const aroundAltitudeField = modal.querySelector('#traffic-around-altitude-field');
+        const groundAltitudeField = modal.querySelector('#traffic-ground-altitude-field');
+
+        [minAltitudeInput, maxAltitudeInput].forEach(input => {
+            if (input) input.disabled = !absoluteActive;
+        });
+        if (absoluteAltitudeField) {
+            absoluteAltitudeField.classList.toggle(
+                'traffic-settings-field-disabled',
+                !absoluteActive
+            );
+        }
+
+        if (relativeBandInput) relativeBandInput.disabled = !aroundActive;
+        if (aroundAltitudeField) {
+            aroundAltitudeField.classList.toggle(
+                'traffic-settings-field-disabled',
+                !aroundActive
+            );
+        }
+
+        if (groundBandInput) groundBandInput.disabled = !groundActive;
+        if (groundAltitudeField) {
+            groundAltitudeField.classList.toggle(
+                'traffic-settings-field-disabled',
+                !groundActive
+            );
+        }
     } catch (_) {}
 
     modal.classList.add('open');
@@ -3671,6 +9994,1004 @@ function installTrafficButtonInteractions(button) {
     });
 }
 
+
+function buildSafeSkyApiEndpoint(relativePath = '') {
+    return new URL(
+        String(relativePath || '').replace(/^\/+/, ''),
+        SAFESKY_API_BASE_URL
+    );
+}
+
+async function fetchSafeSkyJson(
+    url,
+    {
+        method = 'GET',
+        body = null,
+        allowNotFound = false,
+        timeoutMs = TRAFFIC_FETCH_TIMEOUT_MS
+    } = {}
+) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+        () => controller.abort(),
+        timeoutMs
+    );
+
+    try {
+        const response = await fetch(
+            url instanceof URL ? url.toString() : String(url),
+            {
+                method,
+                cache: 'no-store',
+                mode: 'cors',
+                credentials: 'omit',
+                referrerPolicy: 'no-referrer',
+                signal: controller.signal,
+                headers: {
+                    'Accept': 'application/json',
+                    'Content-Type': 'application/json',
+                    'x-api-key': SAFESKY_API_KEY
+                },
+                body: body === null
+                    ? undefined
+                    : JSON.stringify(body)
+            }
+        );
+
+        if (allowNotFound && response.status === 404) {
+            return null;
+        }
+
+        let data = null;
+        const contentType = String(
+            response.headers.get('content-type') || ''
+        ).toLowerCase();
+
+        if (contentType.includes('json')) {
+            try {
+                data = await response.json();
+            } catch (_) {
+                data = null;
+            }
+        } else {
+            try {
+                data = await response.text();
+            } catch (_) {
+                data = null;
+            }
+        }
+
+        if (!response.ok) {
+            const apiError = new Error(
+                String(
+                    data?.error
+                    || data?.message
+                    || data
+                    || `HTTP ${response.status}`
+                ).trim()
+            );
+            apiError.status = response.status;
+            apiError.method = method;
+            throw apiError;
+        }
+
+        return data;
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('délai de réponse SafeSky dépassé');
+        }
+
+        if (
+            error instanceof TypeError
+            && /fetch/i.test(String(error.message || ''))
+        ) {
+            throw new Error(
+                'SafeSky direct inaccessible : réseau ou CORS'
+            );
+        }
+
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+function extractSingleSafeSkyBeacon(data) {
+    if (!data) return null;
+    if (Array.isArray(data)) return data[0] || null;
+    if (data.beacon && typeof data.beacon === 'object') {
+        return data.beacon;
+    }
+    if (data.data && !Array.isArray(data.data)) {
+        return data.data;
+    }
+    if (
+        typeof data === 'object'
+        && (
+            data.id
+            || data.latitude !== undefined
+            || data.call_sign
+        )
+    ) {
+        return data;
+    }
+    return null;
+}
+
+async function fetchSafeSkyBeaconById(identifier) {
+    const id = String(identifier || '')
+        .trim()
+        .toUpperCase();
+    if (!id) return null;
+
+    const url = buildSafeSkyApiEndpoint(
+        encodeURIComponent(id)
+    );
+    const data = await fetchSafeSkyJson(
+        url,
+        { allowNotFound: true }
+    );
+    return extractSingleSafeSkyBeacon(data);
+}
+
+async function searchSafeSkyIdentityExact(query) {
+    const normalizedQuery = String(query || '')
+        .trim()
+        .toUpperCase();
+
+    if (!normalizedQuery) return [];
+
+    const requests = [
+        ['call_sign', normalizedQuery],
+        ['aircraft_id', normalizedQuery]
+    ].map(async ([parameter, value]) => {
+        const url = buildSafeSkyApiEndpoint('search');
+        url.searchParams.set(parameter, value);
+
+        try {
+            const data = await fetchSafeSkyJson(
+                url,
+                { allowNotFound: true }
+            );
+            return extractSingleSafeSkyBeacon(data);
+        } catch (error) {
+            console.warn(
+                `Recherche d’identité SafeSky ${parameter} impossible:`,
+                error
+            );
+            return null;
+        }
+    });
+
+    const results = await Promise.all(requests);
+    const uniqueResults = [];
+    const seen = new Set();
+
+    results.filter(Boolean).forEach(raw => {
+        const identity = extractTrackedTrafficIdentity(raw);
+        const key = identity.id || [
+            identity.callsign,
+            identity.registration
+        ].filter(Boolean).join('|').toUpperCase();
+        if (!key || seen.has(key)) return;
+        seen.add(key);
+        uniqueResults.push(raw);
+    });
+
+    return uniqueResults;
+}
+
+async function searchSafeSkyBeaconExact(query) {
+    const normalizedQuery = String(query || '')
+        .trim()
+        .toUpperCase();
+
+    if (!normalizedQuery) return [];
+
+    const requests = [
+        ['call_sign', normalizedQuery],
+        ['aircraft_id', normalizedQuery]
+    ].map(async ([parameter, value]) => {
+        const url = buildSafeSkyApiEndpoint('search');
+        url.searchParams.set(parameter, value);
+
+        try {
+            const data = await fetchSafeSkyJson(
+                url,
+                { allowNotFound: true }
+            );
+            return extractSingleSafeSkyBeacon(data);
+        } catch (error) {
+            console.warn(
+                `Recherche SafeSky ${parameter} impossible:`,
+                error
+            );
+            return null;
+        }
+    });
+
+    const results = await Promise.all(requests);
+    const uniqueResults = [];
+    const seen = new Set();
+
+    results.filter(Boolean).forEach(raw => {
+        const normalized = normalizeTrafficAircraft(raw);
+        const key = buildTrafficAircraftKey(normalized);
+        if (!normalized || !key || seen.has(key)) return;
+        seen.add(key);
+        uniqueResults.push(raw);
+    });
+
+    return uniqueResults;
+}
+
+function buildTrafficSearchHaystack(aircraft) {
+    return [
+        aircraft?.callsign,
+        aircraft?.hex,
+        aircraft?.registration,
+        aircraft?.aircraftModel,
+        aircraft?.operatorName,
+        aircraft?.type,
+        aircraft?.beaconType
+    ]
+        .filter(Boolean)
+        .join(' ')
+        .toUpperCase();
+}
+
+function getTrafficSearchRank(aircraft, normalizedQuery) {
+    const identifiers = [
+        aircraft?.callsign,
+        aircraft?.registration,
+        aircraft?.hex
+    ]
+        .filter(Boolean)
+        .map(value => String(value).trim().toUpperCase());
+
+    if (identifiers.some(value => value === normalizedQuery)) return 0;
+    if (identifiers.some(value => value.startsWith(normalizedQuery))) return 1;
+    if (identifiers.some(value => value.includes(normalizedQuery))) return 2;
+    return 3;
+}
+
+function filterTrafficSearchCandidates(
+    candidates,
+    query,
+    {
+        airborneOnly = false,
+        limit = 50
+    } = {}
+) {
+    const normalizedQuery = String(query || '')
+        .trim()
+        .toUpperCase();
+
+    if (!normalizedQuery) return [];
+
+    const unique = [];
+    const seen = new Set();
+
+    (Array.isArray(candidates) ? candidates : [])
+        .map(normalizeTrafficAircraft)
+        .filter(Boolean)
+        .filter(ac => !airborneOnly || !ac.isGrounded)
+        .filter(ac => (
+            ac.forceDisplay
+            || !Number.isFinite(ac.seenPos)
+            || ac.seenPos <= TRAFFIC_MAX_SEEN_SECONDS
+        ))
+        .filter(ac => (
+            buildTrafficSearchHaystack(ac)
+                .includes(normalizedQuery)
+        ))
+        .sort((left, right) => {
+            const rankDifference = (
+                getTrafficSearchRank(left, normalizedQuery)
+                - getTrafficSearchRank(right, normalizedQuery)
+            );
+            if (rankDifference) return rankDifference;
+
+            const leftLabel = String(
+                left.callsign
+                || left.registration
+                || left.hex
+                || ''
+            ).toUpperCase();
+            const rightLabel = String(
+                right.callsign
+                || right.registration
+                || right.hex
+                || ''
+            ).toUpperCase();
+            return leftLabel.localeCompare(rightLabel, 'fr');
+        })
+        .forEach(ac => {
+            const key = buildTrafficAircraftKey(ac);
+            if (!key || seen.has(key)) return;
+            seen.add(key);
+            unique.push(ac.raw || ac);
+        });
+
+    return unique.slice(0, Math.max(1, limit));
+}
+
+function getLocalTrafficSearchResults(query) {
+    const candidates = [
+        ...(Array.isArray(lastTrafficAircraftSnapshot)
+            ? lastTrafficAircraftSnapshot
+            : []),
+        ...getTemporaryGlobalTrafficRaw()
+    ];
+
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    return filterTrafficSearchCandidates(
+        candidates,
+        query,
+        { airborneOnly: !settings.showGroundTraffic, limit: 50 }
+    );
+}
+
+function getTrafficPartialSearchPoints() {
+    const points = getTrafficQueryPoints();
+    if (points.length) return points;
+
+    try {
+        const center = map?.getCenter?.();
+        if (
+            center
+            && Number.isFinite(Number(center.lat))
+            && Number.isFinite(Number(center.lng))
+        ) {
+            return [{
+                lat: Number(center.lat),
+                lon: Number(center.lng),
+                label: 'centre carte',
+                kind: 'search-center'
+            }];
+        }
+    } catch (_) {}
+
+    return [];
+}
+
+async function fetchActiveSafeSkyTrafficForPartialSearch() {
+    const provider = TRAFFIC_API_PROVIDERS.find(candidate => (
+        candidate?.dataFormat === 'safesky'
+        && candidate?.urlFormat === 'viewport'
+        && candidate?.baseUrl
+    ));
+    const points = getTrafficPartialSearchPoints();
+
+    if (!provider) {
+        return {
+            candidates: [],
+            pointCount: points.length,
+            errors: ['source SafeSky indisponible']
+        };
+    }
+    if (!points.length) {
+        return {
+            candidates: [],
+            pointCount: 0,
+            errors: ['centre de carte indisponible']
+        };
+    }
+
+    const settled = await Promise.allSettled(
+        points.map(async point => {
+            const url = new URL(provider.baseUrl, window.location.href);
+            url.searchParams.set(
+                'viewport',
+                buildSafeSkyViewport(point, getTrafficRadiusNm())
+            );
+            /*
+             * Recherche par partie : ne pas appliquer le filtre d’altitude ni
+             * la liste suivie. L’objectif est de retrouver tous les indicatifs
+             * actifs autour du centre de la carte, sans modifier le calque affiché.
+             */
+            const settings = sanitizeTrafficSettings(trafficSettings);
+            url.searchParams.set(
+                'show_grounded',
+                settings.showGroundTraffic ? 'true' : 'false'
+            );
+            const data = await fetchSafeSkyJson(url);
+            return extractTrafficAircraftList(data);
+        })
+    );
+
+    const candidates = [];
+    const errors = [];
+    settled.forEach((result, index) => {
+        if (result.status === 'fulfilled') {
+            candidates.push(...result.value);
+            return;
+        }
+        errors.push(
+            `${points[index]?.label || 'zone'} : ${
+                result.reason?.message
+                || String(result.reason || 'erreur SafeSky')
+            }`
+        );
+    });
+
+    return {
+        candidates,
+        pointCount: points.length,
+        errors
+    };
+}
+
+function mergeTrafficSearchResults(...groups) {
+    const result = [];
+    const seen = new Set();
+
+    groups.flat().filter(Boolean).forEach(raw => {
+        const normalized = normalizeTrafficAircraft(raw);
+        const key = buildTrafficAircraftKey(normalized);
+        if (!normalized || !key || seen.has(key)) return;
+        seen.add(key);
+        result.push(raw);
+    });
+
+    return result;
+}
+
+function renderTrafficSearchResults(modal, results, message = '') {
+    const container = modal?.querySelector(
+        '#traffic-search-results'
+    );
+    if (!container) return;
+
+    container.innerHTML = '';
+
+    if (message) {
+        const messageElement = document.createElement('div');
+        messageElement.className = 'traffic-search-message';
+        messageElement.textContent = message;
+        container.appendChild(messageElement);
+    }
+
+    if (!Array.isArray(results) || !results.length) {
+        return;
+    }
+
+    results.forEach(raw => {
+        const aircraft = normalizeTrafficAircraft(raw);
+        if (!aircraft) return;
+
+        const row = document.createElement('div');
+        row.className = 'traffic-search-result-row';
+
+        const description = document.createElement('div');
+        description.className = 'traffic-search-result-description';
+
+        const primary = document.createElement('strong');
+        primary.textContent = (
+            aircraft.callsign
+            || aircraft.registration
+            || aircraft.hex
+            || 'Trafic'
+        );
+
+        const secondary = document.createElement('span');
+        secondary.textContent = [
+            aircraft.callsign
+                && aircraft.callsign !== primary.textContent
+                ? aircraft.callsign
+                : '',
+            getTrafficAircraftModel(aircraft)
+                || getTrafficTypeDisplayLabel(aircraft),
+            aircraft.hex
+        ].filter(Boolean).join(' · ');
+
+        description.append(primary, secondary);
+
+        const actions = document.createElement('div');
+        actions.className = 'traffic-search-result-actions';
+
+        const showButton = document.createElement('button');
+        showButton.type = 'button';
+        showButton.className =
+            'traffic-tool-button traffic-tool-button-primary';
+        showButton.textContent = 'Afficher';
+        showButton.addEventListener('click', async () => {
+            await focusTrafficAircraftResult(raw);
+            modal.classList.remove('open');
+            modal.setAttribute('aria-hidden', 'true');
+        });
+
+        const trackButton = document.createElement('button');
+        trackButton.type = 'button';
+        trackButton.className = 'traffic-tool-button';
+        trackButton.textContent = isTrafficAircraftTracked(aircraft)
+            ? 'Déjà suivi'
+            : 'Ajouter à la liste';
+        trackButton.disabled = isTrafficAircraftTracked(aircraft);
+        trackButton.addEventListener('click', () => {
+            try {
+                addTrackedTrafficIdentifier(aircraft);
+                trackButton.textContent = 'Déjà suivi';
+                trackButton.disabled = true;
+            } catch (error) {
+                renderTrafficSearchResults(
+                    modal,
+                    results,
+                    error.message
+                );
+            }
+        });
+
+        const ownAircraftButton = document.createElement('button');
+        ownAircraftButton.type = 'button';
+        ownAircraftButton.className =
+            'traffic-tool-button traffic-own-aircraft-select-button';
+        ownAircraftButton.textContent = isOwnTrafficAircraft(aircraft)
+            ? 'Mon avion masqué'
+            : 'Définir comme mon avion';
+        ownAircraftButton.disabled = (
+            !aircraft.hex
+            || isOwnTrafficAircraft(aircraft)
+        );
+        ownAircraftButton.addEventListener('click', () => {
+            try {
+                setOwnTrafficAircraftSession(aircraft);
+                renderTrafficSearchResults(
+                    modal,
+                    results,
+                    'Ton avion est masqué pour cette session.'
+                );
+            } catch (error) {
+                renderTrafficSearchResults(
+                    modal,
+                    results,
+                    error.message
+                );
+            }
+        });
+
+        actions.append(
+            showButton,
+            trackButton,
+            ownAircraftButton
+        );
+        row.append(description, actions);
+        container.appendChild(row);
+    });
+}
+
+async function addTrackedTrafficFromModal(modal) {
+    const input = modal?.querySelector(
+        '#traffic-global-search-input'
+    );
+    const addButton = modal?.querySelector(
+        '#traffic-global-add-button'
+    );
+    const query = normalizeTrackedTrafficCallsign(input?.value || '');
+
+    if (!query) {
+        renderTrafficSearchResults(
+            modal,
+            [],
+            'Saisis l’indicatif exact de l’avion à ajouter.'
+        );
+        return;
+    }
+
+    if (addButton?.dataset.loading === '1') return;
+    if (addButton) {
+        addButton.dataset.loading = '1';
+        addButton.disabled = true;
+        addButton.textContent = 'Ajout…';
+    }
+
+    renderTrafficSearchResults(
+        modal,
+        [],
+        `Ajout de « ${query} » à la liste suivie…`
+    );
+
+    try {
+        const alreadyTracked = getTrackedTrafficIdentifiers().find(entry => (
+            normalizeTrackedTrafficCallsign(entry.callsign) === query
+            || entry.id === query
+        ));
+        if (alreadyTracked) {
+            throw new Error(
+                `${query} est déjà présent dans la liste suivie.`
+            );
+        }
+
+        let selectedRaw = null;
+        try {
+            const rawCandidates = await searchSafeSkyIdentityExact(query);
+            const exactCandidates = rawCandidates
+                .map(raw => ({
+                    raw,
+                    identity: extractTrackedTrafficIdentity(raw)
+                }))
+                .filter(candidate => (
+                    candidate.identity.id
+                    && (
+                        normalizeTrackedTrafficCallsign(
+                            candidate.identity.callsign
+                        ) === query
+                        || String(candidate.identity.registration || '')
+                            .trim().toUpperCase() === query
+                        || candidate.identity.id === query
+                    )
+                ));
+            selectedRaw = exactCandidates[0]?.raw || null;
+        } catch (searchError) {
+            console.warn(
+                'Résolution immédiate SafeSky indisponible, ajout en attente:',
+                searchError
+            );
+        }
+
+        if (selectedRaw) {
+            addTrackedTrafficIdentifier(selectedRaw);
+            renderTrafficSearchResults(
+                modal,
+                [],
+                `${query} a été ajouté et associé à son identifiant SafeSky.`
+            );
+        } else {
+            addPendingTrackedTrafficCallsign(query);
+            renderTrafficSearchResults(
+                modal,
+                [],
+                `${query} a été ajouté. Il sera associé automatiquement à son identifiant SafeSky dès sa première détection.`
+            );
+        }
+    } catch (error) {
+        renderTrafficSearchResults(
+            modal,
+            [],
+            error?.message || 'Ajout impossible.'
+        );
+    } finally {
+        if (addButton) {
+            delete addButton.dataset.loading;
+            addButton.disabled = false;
+            addButton.textContent = 'Ajouter';
+        }
+    }
+}
+
+async function performTrafficSearchFromModal(modal) {
+    const input = modal?.querySelector(
+        '#traffic-global-search-input'
+    );
+    const query = String(input?.value || '')
+        .trim()
+        .toUpperCase();
+
+    if (!query) {
+        renderTrafficSearchResults(
+            modal,
+            [],
+            'Saisis un indicatif ou une partie d’indicatif.'
+        );
+        return;
+    }
+
+    renderTrafficSearchResults(
+        modal,
+        [],
+        `Recherche des indicatifs contenant « ${query} »…`
+    );
+
+    const localResults = getLocalTrafficSearchResults(query);
+    const [exactOutcome, activeOutcome] = await Promise.allSettled([
+        searchSafeSkyBeaconExact(query),
+        fetchActiveSafeSkyTrafficForPartialSearch()
+    ]);
+
+    const exactResults = exactOutcome.status === 'fulfilled'
+        ? exactOutcome.value
+        : [];
+    const activeSearch = activeOutcome.status === 'fulfilled'
+        ? activeOutcome.value
+        : {
+            candidates: [],
+            pointCount: 0,
+            errors: [
+                activeOutcome.reason?.message
+                || String(activeOutcome.reason || 'erreur SafeSky')
+            ]
+        };
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const airborneOnly = !settings.showGroundTraffic;
+    const exactFilteredResults = filterTrafficSearchCandidates(
+        exactResults,
+        query,
+        { airborneOnly, limit: 50 }
+    );
+    const partialResults = filterTrafficSearchCandidates(
+        activeSearch.candidates,
+        query,
+        { airborneOnly, limit: 50 }
+    );
+
+    const results = mergeTrafficSearchResults(
+        exactFilteredResults,
+        partialResults,
+        localResults
+    ).slice(0, 50);
+
+    let message = '';
+    if (!results.length) {
+        const detail = activeSearch.errors?.length
+            ? ` — ${activeSearch.errors.join(' / ')}`
+            : '';
+        message = (
+            `Aucun trafic actif contenant « ${query} » autour du centre de la carte`
+            + detail
+        );
+    } else {
+        const zoneLabel = activeSearch.pointCount
+            ? ` dans ${activeSearch.pointCount} zone carte`
+            : '';
+        message = (
+            `${results.length} correspondance${results.length > 1 ? 's' : ''}`
+            + zoneLabel
+            + ' — indicatif exact recherché globalement.'
+        );
+    }
+
+    renderTrafficSearchResults(modal, results, message);
+}
+
+function storeTemporaryGlobalTraffic(
+    raw,
+    { forceGroundDisplay = false } = {}
+) {
+    const normalized = normalizeTrafficAircraft(raw);
+    const key = buildTrafficAircraftKey(normalized);
+    if (!normalized || !key) return null;
+
+    const rawCopy = {
+        ...(normalized.raw || raw),
+        _npfForceDisplay: true,
+        _npfSearchResult: true,
+        _npfForceGroundDisplay: Boolean(forceGroundDisplay)
+    };
+
+    temporaryGlobalTrafficResults.set(key, {
+        raw: rawCopy,
+        forceGroundDisplay: Boolean(forceGroundDisplay),
+        expiresAt:
+            Date.now() + TRAFFIC_TEMPORARY_SEARCH_RESULT_TTL_MS
+    });
+
+    return rawCopy;
+}
+
+function getTemporaryGlobalTrafficRaw() {
+    const now = Date.now();
+    const result = [];
+
+    temporaryGlobalTrafficResults.forEach((entry, key) => {
+        if (!entry || entry.expiresAt <= now) {
+            temporaryGlobalTrafficResults.delete(key);
+            return;
+        }
+        if (entry.raw) result.push(entry.raw);
+    });
+
+    return result;
+}
+
+function getTemporaryTrafficDisplayOverride(aircraft) {
+    const key = buildTrafficAircraftKey(aircraft);
+    if (!key) return null;
+
+    const entry = temporaryGlobalTrafficResults.get(key);
+    if (!entry) return null;
+
+    if (entry.expiresAt <= Date.now()) {
+        temporaryGlobalTrafficResults.delete(key);
+        return null;
+    }
+
+    return {
+        forceDisplay: true,
+        forceGroundDisplay: Boolean(
+            entry.forceGroundDisplay
+            || entry.raw?._npfForceGroundDisplay
+        )
+    };
+}
+
+async function focusTrafficAircraftResult(
+    raw,
+    { forceGroundDisplay = false } = {}
+) {
+    let currentRaw = raw;
+    const normalized = normalizeTrafficAircraft(raw);
+    const identifier = normalized?.hex;
+
+    if (identifier) {
+        try {
+            currentRaw = (
+                await fetchSafeSkyBeaconById(identifier)
+            ) || raw;
+        } catch (_) {}
+    }
+
+    const storedRaw = storeTemporaryGlobalTraffic(
+        currentRaw,
+        { forceGroundDisplay }
+    );
+    const aircraft = normalizeTrafficAircraft(storedRaw);
+
+    if (!aircraft) {
+        throw new Error('Position trafic indisponible');
+    }
+
+    if (!showTrafficLayer) {
+        toggleTrafficLayer(true);
+    } else if (
+        trafficLayer
+        && map
+        && !map.hasLayer(trafficLayer)
+    ) {
+        trafficLayer.addTo(map);
+    }
+
+    const combined = [
+        ...(Array.isArray(lastTrafficAircraftSnapshot)
+            ? lastTrafficAircraftSnapshot
+            : []),
+        storedRaw
+    ];
+
+    renderTrafficAircraft(combined, {
+        points: getTrafficQueryPoints(),
+        provider: { label: 'SafeSky recherche' },
+        now: Date.now()
+    });
+
+    try {
+        map.setView(
+            [aircraft.lat, aircraft.lon],
+            Math.max(10, map.getZoom()),
+            { animate: true }
+        );
+    } catch (_) {}
+
+    const key = buildTrafficAircraftKey(aircraft);
+    setTimeout(() => {
+        try {
+            trafficMarkerRegistry.get(key)?.marker?.openPopup();
+        } catch (_) {}
+    }, 300);
+
+    return aircraft;
+}
+
+async function settleTrackedTrafficWithConcurrency(
+    entries,
+    worker,
+    concurrency = TRAFFIC_TRACKED_FETCH_CONCURRENCY
+) {
+    const source = Array.isArray(entries) ? entries : [];
+    if (!source.length) return [];
+
+    const results = new Array(source.length);
+    let nextIndex = 0;
+    const workerCount = Math.max(
+        1,
+        Math.min(Number(concurrency) || 1, source.length)
+    );
+
+    const runners = Array.from({ length: workerCount }, async () => {
+        while (true) {
+            const index = nextIndex;
+            nextIndex += 1;
+            if (index >= source.length) return;
+
+            try {
+                results[index] = {
+                    status: 'fulfilled',
+                    value: await worker(source[index], index)
+                };
+            } catch (reason) {
+                results[index] = {
+                    status: 'rejected',
+                    reason
+                };
+            }
+        }
+    });
+
+    await Promise.all(runners);
+    return results;
+}
+
+async function fetchTrackedTrafficBeacons() {
+    const entries = getTrackedTrafficIdentifiers();
+    if (!entries.length) return [];
+
+    const settled = await settleTrackedTrafficWithConcurrency(
+        entries,
+        async entry => {
+            if (!isPendingTrackedTrafficIdentifier(entry.id)) {
+                return {
+                    entry,
+                    raw: await fetchSafeSkyBeaconById(entry.id)
+                };
+            }
+
+            const candidates = await searchSafeSkyIdentityExact(
+                entry.callsign
+            );
+            const raw = candidates.find(candidate => {
+                const identity = extractTrackedTrafficIdentity(candidate);
+                return normalizeTrackedTrafficCallsign(identity.callsign)
+                    === normalizeTrackedTrafficCallsign(entry.callsign);
+            }) || null;
+
+            return { entry, raw };
+        }
+    );
+
+    const rawResults = [];
+    let resolvedOneEntry = false;
+
+    settled
+        .filter(result => result.status === 'fulfilled')
+        .map(result => result.value)
+        .forEach(({ entry, raw }) => {
+            if (!raw) return;
+
+            if (
+                isPendingTrackedTrafficIdentifier(entry.id)
+                && mergeResolvedTrackedTrafficIdentity(entry, raw)
+            ) {
+                resolvedOneEntry = true;
+            }
+
+            rawResults.push({
+                ...raw,
+                _npfForceDisplay: true,
+                _npfTracked: true
+            });
+        });
+
+    if (resolvedOneEntry) {
+        refreshTrackedTrafficListUi();
+    }
+
+    return rawResults;
+}
+
+/*
+ * v14.41 — SafeSky est strictement utilisé en lecture.
+ * Ces fonctions restent comme stubs de compatibilité interne, sans requête POST.
+ */
+async function publishOwnSafeSkyPosition() {
+    stopSafeSkyOwnPublication();
+    return false;
+}
+
+function stopSafeSkyOwnPublication() {
+    if (safeSkyOwnPublishTimer) {
+        clearInterval(safeSkyOwnPublishTimer);
+        safeSkyOwnPublishTimer = null;
+    }
+    safeSkyOwnPublishInProgress = false;
+}
+
+function startSafeSkyOwnPublication() {
+    stopSafeSkyOwnPublication();
+}
+
+function syncSafeSkyOwnPublication() {
+    stopSafeSkyOwnPublication();
+}
+
 function getTrafficRadiusNm() {
     return sanitizeTrafficSettings(trafficSettings).radiusNm;
 }
@@ -3686,7 +11007,8 @@ function getOwnTrafficPoint() {
     if (userMarker && typeof userMarker.getLatLng === 'function') {
         const ll = userMarker.getLatLng();
         if (ll && Number.isFinite(ll.lat) && Number.isFinite(ll.lng)) {
-            return { lat: ll.lat, lon: ll.lng, label: 'GPS', kind: 'own' };
+            const simulationPoint = isSimulationMode || lastPosition?.simulation === true;
+            return { lat: ll.lat, lon: ll.lng, label: simulationPoint ? 'simulation' : 'GPS', kind: 'own' };
         }
     }
 
@@ -3694,7 +11016,8 @@ function getOwnTrafficPoint() {
         const lat = Number(lastPosition.lat ?? lastPosition.latitude);
         const lon = Number(lastPosition.lng ?? lastPosition.longitude);
         if (Number.isFinite(lat) && Number.isFinite(lon)) {
-            return { lat, lon, label: 'GPS', kind: 'own' };
+            const simulationPoint = isSimulationMode || lastPosition?.simulation === true;
+            return { lat, lon, label: simulationPoint ? 'simulation' : 'GPS', kind: 'own' };
         }
     }
 
@@ -3710,46 +11033,38 @@ function getFireTrafficPoint() {
 }
 
 function getTrafficQueryPoints() {
-    const settings = sanitizeTrafficSettings(trafficSettings);
-    const points = [];
-
-    if (settings.trafficAroundOwnPosition) {
-        const ownPoint = getOwnTrafficPoint();
-        if (ownPoint) points.push(ownPoint);
-    }
-
-    if (settings.trafficAroundFire) {
-        const firePoint = getFireTrafficPoint();
-        if (firePoint) points.push(firePoint);
-    }
-
-    if (!points.length) {
-        const ownPoint = getOwnTrafficPoint();
-        if (ownPoint) points.push(ownPoint);
-    }
-
-    if (!points.length) {
-        const firePoint = getFireTrafficPoint();
-        if (firePoint) points.push(firePoint);
-    }
-
-    if (!points.length && map && typeof map.getCenter === 'function') {
-        const center = map.getCenter();
-        if (center && Number.isFinite(center.lat) && Number.isFinite(center.lng)) {
-            points.push({ lat: center.lat, lon: center.lng, label: 'centre carte', kind: 'map' });
+    /*
+     * v14.44 — les anciennes zones GPS et feu sont supprimées.
+     * Le rayon SafeSky est toujours appliqué autour du centre actuel de la
+     * carte, ce qui rend le comportement unique et prévisible.
+     */
+    try {
+        const center = map?.getCenter?.();
+        if (
+            center
+            && Number.isFinite(Number(center.lat))
+            && Number.isFinite(Number(center.lng))
+        ) {
+            return [{
+                lat: Number(center.lat),
+                lon: Number(center.lng),
+                label: 'centre carte',
+                kind: 'all'
+            }];
         }
+    } catch (_) {}
+
+    /* Secours de démarrage si Leaflet n'a pas encore fourni son centre. */
+    const ownPoint = getOwnTrafficPoint();
+    if (ownPoint) {
+        return [{
+            ...ownPoint,
+            label: 'centre carte',
+            kind: 'all'
+        }];
     }
 
-    const unique = [];
-    const keys = new Set();
-    points.forEach(point => {
-        const key = `${point.kind}:${Number(point.lat).toFixed(4)}:${Number(point.lon).toFixed(4)}`;
-        if (keys.has(key)) return;
-        keys.add(key);
-        unique.push(point);
-    });
-
-    return unique;
+    return [];
 }
 
 function getOwnTrafficAltitudeFeet() {
@@ -3787,7 +11102,13 @@ function buildTrafficReferenceLabel(points = []) {
 function buildTrafficAircraftKey(ac) {
     if (!ac) return '';
     if (ac.hex) return `hex:${ac.hex}`;
-    return `pos:${ac.callsign}:${Number(ac.lat).toFixed(4)}:${Number(ac.lon).toFixed(4)}`;
+
+    const stableCallsign = String(ac.callsign || '').trim().toUpperCase();
+    if (stableCallsign && stableCallsign !== 'N/A') {
+        return `callsign:${stableCallsign}`;
+    }
+
+    return `pos:${Number(ac.lat).toFixed(4)}:${Number(ac.lon).toFixed(4)}`;
 }
 
 async function fetchTrafficAircraftForPoint(point, providers) {
@@ -3800,7 +11121,7 @@ async function fetchTrafficAircraftForPoint(point, providers) {
         } catch (providerError) {
             const errText = providerError && providerError.message ? providerError.message : String(providerError);
             errors.push(`${provider.label}: ${errText}`);
-            console.warn(`Trafic ADS-B indisponible via ${provider.label} autour ${point.label}:`, providerError);
+            console.warn(`Trafic indisponible via ${provider.label} autour ${point.label}:`, providerError);
         }
     }
 
@@ -3808,11 +11129,92 @@ async function fetchTrafficAircraftForPoint(point, providers) {
 }
 
 // =========================================================================
-// v12.96 TEST — calque trafic ADS-B indicatif
+// v12.96 — calque trafic ADS-B indicatif
 // =========================================================================
 function getTrafficQueryPoint() {
     const points = getTrafficQueryPoints();
     return points.length ? points[0] : null;
+}
+
+
+function buildSafeSkyViewport(point, radiusNm = getTrafficRadiusNm()) {
+    const lat = Number(point?.lat);
+    const lon = Number(point?.lon);
+    const radius = Math.max(5, Math.min(250, Number(radiusNm) || TRAFFIC_RADIUS_NM));
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) {
+        throw new Error('Point SafeSky invalide');
+    }
+
+    /*
+     * 1 degré de latitude ≈ 60 NM.
+     * La longitude est corrigée par le cosinus de la latitude.
+     * Une petite marge évite de couper un trafic placé exactement sur la limite.
+     */
+    const marginFactor = 1.03;
+    const latDelta = (radius / 60) * marginFactor;
+    const cosLatitude = Math.max(0.08, Math.cos(lat * Math.PI / 180));
+    const lonDelta = (radius / (60 * cosLatitude)) * marginFactor;
+
+    const latMin = Math.max(-90, lat - latDelta);
+    const latMax = Math.min(90, lat + latDelta);
+    const lonMin = Math.max(-180, lon - lonDelta);
+    const lonMax = Math.min(180, lon + lonDelta);
+
+    return [latMin, lonMin, latMax, lonMax]
+        .map(value => Number(value).toFixed(4))
+        .join(',');
+}
+
+function feetToSafeSkyMeters(feet) {
+    const numericFeet = Number(feet);
+    if (!Number.isFinite(numericFeet)) return null;
+    return Math.max(0, Math.round(numericFeet / 3.280839895));
+}
+
+function getSafeSkyAltitudeQueryParameters() {
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    const ownAltitudeFt = getOwnTrafficAltitudeFeet();
+
+    let minAltitudeFt = null;
+    let maxAltitudeFt = null;
+
+    if (settings.altitudeFilterMode === 'absolute') {
+        minAltitudeFt = settings.minAltitudeFt;
+        maxAltitudeFt = settings.maxAltitudeFt;
+    } else if (
+        settings.altitudeFilterMode === 'around'
+        && Number.isFinite(ownAltitudeFt)
+    ) {
+        minAltitudeFt = Math.max(
+            0,
+            ownAltitudeFt - settings.relativeAltitudeBandFt
+        );
+        maxAltitudeFt = ownAltitudeFt + settings.relativeAltitudeBandFt;
+    } else if (
+        settings.altitudeFilterMode === 'ground'
+        && Number.isFinite(ownAltitudeFt)
+    ) {
+        minAltitudeFt = 0;
+        maxAltitudeFt = ownAltitudeFt + settings.groundToAboveBandFt;
+    }
+
+    const result = {};
+    const minMeters = feetToSafeSkyMeters(minAltitudeFt);
+    const maxMeters = feetToSafeSkyMeters(maxAltitudeFt);
+
+    /*
+     * Dans l'API SafeSky, zéro signifie « filtre inutilisé ».
+     * Ne transmettre altitude_min que lorsqu'il est strictement positif.
+     */
+    if (Number.isFinite(minMeters) && minMeters > 0) {
+        result.altitude_min = String(minMeters);
+    }
+    if (Number.isFinite(maxMeters) && maxMeters > 0) {
+        result.altitude_max = String(maxMeters);
+    }
+
+    return result;
 }
 
 function buildTrafficApiUrl(point, provider = null) {
@@ -3820,6 +11222,50 @@ function buildTrafficApiUrl(point, provider = null) {
     const lat = Number(point.lat).toFixed(4);
     const lon = Number(point.lon).toFixed(4);
     const radius = Math.max(5, Math.min(250, getTrafficRadiusNm()));
+
+    if (!activeProvider?.baseUrl) {
+        throw new Error(
+            `${activeProvider?.label || 'Source trafic'} non configurée`
+        );
+    }
+
+    if (activeProvider.urlFormat === 'viewport') {
+        const viewport = buildSafeSkyViewport(point, radius);
+        const url = new URL(activeProvider.baseUrl, window.location.href);
+
+        url.searchParams.set('viewport', viewport);
+        const settings = sanitizeTrafficSettings(trafficSettings);
+        url.searchParams.set(
+            'show_grounded',
+            settings.showGroundTraffic ? 'true' : 'false'
+        );
+
+        const altitudeParameters = getSafeSkyAltitudeQueryParameters();
+        Object.entries(altitudeParameters).forEach(([key, value]) => {
+            url.searchParams.set(key, value);
+        });
+
+        if (settings.onlyTrackedIdentifiers) {
+            const identifiers = getResolvedTrackedTrafficIdentifiers();
+
+            /*
+             * Une liste très longue dépasserait la taille raisonnable d'une URL.
+             * Les appareils suivis restent tous interrogés directement plus bas ;
+             * ce filtre viewport n'est utilisé que lorsqu'il tient dans une requête.
+             */
+            if (
+                identifiers.length
+                && identifiers.length <= TRAFFIC_VIEWPORT_IDENTIFIER_QUERY_LIMIT
+            ) {
+                url.searchParams.set(
+                    'identifiers',
+                    identifiers.join(',')
+                );
+            }
+        }
+
+        return url.toString();
+    }
 
     if (activeProvider.urlFormat === 'point') {
         return `${activeProvider.baseUrl}/point/${lat}/${lon}/${radius}`;
@@ -3829,8 +11275,10 @@ function buildTrafficApiUrl(point, provider = null) {
 }
 
 function extractTrafficAircraftList(data) {
-    if (Array.isArray(data?.ac)) return data.ac;
+    if (Array.isArray(data?.beacons)) return data.beacons;
     if (Array.isArray(data?.aircraft)) return data.aircraft;
+    if (Array.isArray(data?.data)) return data.data;
+    if (Array.isArray(data?.ac)) return data.ac;
     if (Array.isArray(data)) return data;
     return [];
 }
@@ -3838,40 +11286,591 @@ function extractTrafficAircraftList(data) {
 async function fetchTrafficAircraftFromProvider(point, provider) {
     const url = buildTrafficApiUrl(point, provider);
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 7500);
+    const timeoutId = setTimeout(
+        () => controller.abort(),
+        TRAFFIC_FETCH_TIMEOUT_MS
+    );
+
     try {
         const response = await fetch(url, {
             cache: 'no-store',
             mode: 'cors',
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
             signal: controller.signal,
-            headers: { 'Accept': 'application/json' }
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'x-api-key': SAFESKY_API_KEY
+            }
         });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        const data = await response.json();
-        return { provider, aircraft: extractTrafficAircraftList(data), raw: data };
+
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (_) {
+            data = null;
+        }
+
+        if (!response.ok || data?.ok === false) {
+            const safeSkyMessage = String(
+                data?.error
+                || data?.message
+                || `HTTP ${response.status}`
+            ).trim();
+            throw new Error(
+                safeSkyMessage || `HTTP ${response.status}`
+            );
+        }
+
+        return {
+            provider,
+            aircraft: extractTrafficAircraftList(data),
+            raw: data
+        };
+    } catch (error) {
+        if (error?.name === 'AbortError') {
+            throw new Error('délai de réponse SafeSky dépassé');
+        }
+
+        if (
+            error instanceof TypeError
+            && /fetch/i.test(String(error.message || ''))
+        ) {
+            throw new Error(
+                'SafeSky direct inaccessible : réseau ou CORS'
+            );
+        }
+
+        throw error;
     } finally {
         clearTimeout(timeoutId);
     }
 }
 
+
+function isSafeSkyAdvisory(raw) {
+    return String(
+        raw?.transponder_type
+        || raw?.transponderType
+        || ''
+    ).trim().toUpperCase() === 'ADVISORY';
+}
+
+function parseSafeSkyOperationArea(raw) {
+    let area = (
+        raw?.operation_area
+        ?? raw?.operationArea
+        ?? null
+    );
+
+    if (typeof area === 'string') {
+        try {
+            area = JSON.parse(area);
+        } catch (_) {
+            area = null;
+        }
+    }
+
+    if (
+        area?.type === 'Feature'
+        && area.geometry
+    ) {
+        return {
+            geometry: area.geometry,
+            properties: area.properties || {}
+        };
+    }
+
+    if (
+        area
+        && typeof area === 'object'
+        && typeof area.type === 'string'
+        && area.coordinates
+    ) {
+        return {
+            geometry: area,
+            properties: area.properties || {}
+        };
+    }
+
+    return null;
+}
+
+function formatSafeSkyAdvisoryAltitude(raw) {
+    const altitudeMeters = Number(
+        raw?.max_altitude
+        ?? raw?.altitude
+    );
+
+    if (!Number.isFinite(altitudeMeters)) {
+        return '--';
+    }
+
+    return `${Math.round(
+        altitudeMeters * 3.280839895
+    )} ft AMSL`;
+}
+
+function buildSafeSkyAdvisoryPopup(raw) {
+    const title = String(
+        raw?.call_sign
+        || raw?.callsign
+        || raw?.id
+        || 'Zone d’activité drone'
+    ).trim();
+
+    const remarks = String(raw?.remarks || '').trim();
+    const updatedAt = Number(raw?.last_update);
+
+    return `
+        <div class="traffic-popup traffic-advisory-popup">
+            <div class="traffic-popup-title">
+                ${escapeHtml(title)}
+            </div>
+            <div class="traffic-popup-subtitle">
+                ZONE D’ACTIVITÉ DRONE DÉCLARÉE
+            </div>
+            <div>Altitude maximale :
+                <b>${escapeHtml(
+                    formatSafeSkyAdvisoryAltitude(raw)
+                )}</b>
+            </div>
+            ${remarks
+                ? `<div>Remarque : <b>${escapeHtml(remarks)}</b></div>`
+                : ''}
+            ${Number.isFinite(updatedAt)
+                ? `<div>Mise à jour : <b>${escapeHtml(
+                    new Date(updatedAt * 1000)
+                        .toLocaleTimeString(
+                            'fr-FR',
+                            {
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            }
+                        )
+                )}</b></div>`
+                : ''}
+            <div class="traffic-popup-warning">
+                Zone déclarative SafeSky — position exacte du drone non garantie
+            </div>
+        </div>
+    `;
+}
+
+function renderSafeSkyAdvisories(rawList) {
+    const targetLayer = trafficAdvisoryLayer || trafficLayer;
+    if (!targetLayer) return 0;
+
+    /*
+     * v14.42 — les zones drone sont isolées des marqueurs mobiles. Leur
+     * rafraîchissement ne détruit donc plus les aéronefs et ne coupe plus
+     * leur animation entre deux réponses SafeSky.
+     */
+    targetLayer.clearLayers();
+
+    const settings = sanitizeTrafficSettings(trafficSettings);
+    if (!settings.showDroneAdvisories) return 0;
+
+    let count = 0;
+
+    (Array.isArray(rawList) ? rawList : [])
+        .filter(isSafeSkyAdvisory)
+        .forEach(raw => {
+            const area = parseSafeSkyOperationArea(raw);
+            const popup = buildSafeSkyAdvisoryPopup(raw);
+            const commonStyle = {
+                pane: 'trafficAdvisoryPane',
+                color: '#7c3aed',
+                weight: 3,
+                opacity: 0.95,
+                fillColor: '#c084fc',
+                fillOpacity: 0.22,
+                dashArray: '10 7',
+                interactive: true
+            };
+
+            if (
+                area?.geometry?.type === 'Point'
+                && Array.isArray(area.geometry.coordinates)
+            ) {
+                const [longitude, latitude] =
+                    area.geometry.coordinates.map(Number);
+                const radius = Math.max(
+                    50,
+                    Number(
+                        area.geometry.radius
+                        ?? area.properties?.radius
+                        ?? raw?.radius
+                        ?? raw?.accuracy
+                        ?? 500
+                    ) || 500
+                );
+
+                if (
+                    Number.isFinite(latitude)
+                    && Number.isFinite(longitude)
+                ) {
+                    L.circle(
+                        [latitude, longitude],
+                        {
+                            ...commonStyle,
+                            radius
+                        }
+                    )
+                        .bindPopup(popup, {
+                            className:
+                                'traffic-aircraft-popup traffic-advisory-leaflet-popup'
+                        })
+                        .addTo(targetLayer);
+                    count += 1;
+                }
+                return;
+            }
+
+            if (area?.geometry) {
+                try {
+                    const geoJsonLayer = L.geoJSON(
+                        {
+                            type: 'Feature',
+                            properties:
+                                area.properties || {},
+                            geometry: area.geometry
+                        },
+                        {
+                            pane: 'trafficAdvisoryPane',
+                            style: () => commonStyle,
+                            pointToLayer: (
+                                feature,
+                                latlng
+                            ) => L.circle(
+                                latlng,
+                                {
+                                    ...commonStyle,
+                                    radius: Math.max(
+                                        50,
+                                        Number(
+                                            feature?.properties
+                                                ?.radius
+                                            ?? raw?.radius
+                                            ?? raw?.accuracy
+                                            ?? 500
+                                        ) || 500
+                                    )
+                                }
+                            )
+                        }
+                    );
+
+                    geoJsonLayer.eachLayer(layer => {
+                        layer.bindPopup(popup, {
+                            className:
+                                'traffic-aircraft-popup traffic-advisory-leaflet-popup'
+                        });
+                        layer.addTo(targetLayer);
+                    });
+                    count += 1;
+                } catch (error) {
+                    console.warn(
+                        'Zone drone GeoJSON invalide:',
+                        error,
+                        raw
+                    );
+                }
+                return;
+            }
+
+            const latitude = Number(
+                raw?.latitude ?? raw?.lat
+            );
+            const longitude = Number(
+                raw?.longitude
+                ?? raw?.lon
+                ?? raw?.lng
+            );
+
+            if (
+                Number.isFinite(latitude)
+                && Number.isFinite(longitude)
+            ) {
+                L.circle(
+                    [latitude, longitude],
+                    {
+                        ...commonStyle,
+                        radius: Math.max(
+                            50,
+                            Number(
+                                raw?.radius
+                                ?? raw?.accuracy
+                                ?? 500
+                            ) || 500
+                        )
+                    }
+                )
+                    .bindPopup(popup, {
+                        className:
+                            'traffic-aircraft-popup traffic-advisory-leaflet-popup'
+                    })
+                    .addTo(targetLayer);
+                count += 1;
+            }
+        });
+
+    return count;
+}
+
+
+function parseTrafficSourceTimestampMs(value, nowMs = Date.now()) {
+    if (value === null || value === undefined || value === '') {
+        return null;
+    }
+
+    let timestampMs = null;
+    const numericValue = Number(value);
+
+    if (Number.isFinite(numericValue)) {
+        /*
+         * SafeSky utilise normalement des secondes Unix. Le garde-fou accepte
+         * aussi les millisecondes afin qu'un changement de format ne fige pas
+         * silencieusement l'extrapolation locale.
+         */
+        if (Math.abs(numericValue) >= 1e12) {
+            timestampMs = numericValue;
+        } else if (Math.abs(numericValue) >= 1e9) {
+            timestampMs = numericValue * 1000;
+        }
+    } else if (typeof value === 'string') {
+        const parsed = Date.parse(value);
+        if (Number.isFinite(parsed)) timestampMs = parsed;
+    }
+
+    if (!Number.isFinite(timestampMs)) return null;
+
+    /* Tolérance à un léger décalage d'horloge, sans accepter une date future. */
+    if (timestampMs > nowMs + 30000) return nowMs;
+    return timestampMs;
+}
+
 function normalizeTrafficAircraft(raw) {
-    if (!raw || !Number.isFinite(Number(raw.lat)) || !Number.isFinite(Number(raw.lon))) return null;
+    if (!raw) return null;
 
-    const callsign = String(raw.flight || raw.callsign || raw.r || raw.hex || '').trim() || 'N/A';
-    const hex = String(raw.hex || '').trim().toUpperCase();
-    const lat = Number(raw.lat);
-    const lon = Number(raw.lon);
-    const seenPos = Number.isFinite(Number(raw.seen_pos)) ? Number(raw.seen_pos) : (Number.isFinite(Number(raw.seen)) ? Number(raw.seen) : null);
-    const altitudeRaw = raw.alt_baro ?? raw.alt_geom ?? raw.altitude;
-    const altitudeFeet = parseTrafficAltitudeFeet(raw);
-    const altitude = altitudeRaw === 'ground' ? 'GND' : (Number.isFinite(Number(altitudeRaw)) ? `${Math.round(Number(altitudeRaw))} ft` : '--');
-    const gs = Number.isFinite(Number(raw.gs)) ? `${Math.round(Number(raw.gs))} kt` : '--';
-    const track = Number.isFinite(Number(raw.track)) ? Number(raw.track) : null;
-    const type = String(raw.t || raw.type || '').trim();
-    const registration = String(raw.r || '').trim();
-    const source = String(raw.type || raw.dbFlags || '').trim();
+    const safeSkyFormat = (
+        raw.latitude !== undefined
+        || raw.longitude !== undefined
+        || raw.beacon_type !== undefined
+        || raw.transponder_type !== undefined
+        || raw.call_sign !== undefined
+    );
 
-    return { callsign, hex, lat, lon, seenPos, altitude, altitudeFeet, gs, track, type, registration, source, raw };
+    /*
+     * SafeSky ADVISORY décrit une zone déclarée d'activité drone.
+     * Ce n'est pas une position mobile : elle ne doit pas utiliser le symbole avion.
+     * Le support cartographique des zones ADVISORY pourra être ajouté séparément.
+     */
+    if (String(raw.transponder_type || '').toUpperCase() === 'ADVISORY') {
+        return null;
+    }
+
+    const latitudeRaw = raw.lat ?? raw.latitude;
+    const longitudeRaw = raw.lon ?? raw.longitude;
+    if (!Number.isFinite(Number(latitudeRaw)) || !Number.isFinite(Number(longitudeRaw))) {
+        return null;
+    }
+
+    const callsign = String(
+        raw.flight
+        || raw.callsign
+        || raw.call_sign
+        || raw.registration
+        || raw.r
+        || raw.id
+        || raw.hex
+        || ''
+    ).trim() || 'N/A';
+
+    const trafficId = String(raw.hex || raw.id || '').trim().toUpperCase();
+    const lat = Number(latitudeRaw);
+    const lon = Number(longitudeRaw);
+
+    let seenPos = null;
+    const normalizedAtMs = Date.now();
+    let sourceTimestampMs = normalizedAtMs;
+    const safeSkyTimestampMs = safeSkyFormat
+        ? parseTrafficSourceTimestampMs(
+            raw.last_update ?? raw.lastUpdate,
+            normalizedAtMs
+        )
+        : null;
+
+    if (Number.isFinite(safeSkyTimestampMs)) {
+        sourceTimestampMs = safeSkyTimestampMs;
+        seenPos = Math.max(
+            0,
+            (normalizedAtMs - sourceTimestampMs) / 1000
+        );
+    } else if (Number.isFinite(Number(raw.seen_pos))) {
+        seenPos = Number(raw.seen_pos);
+        sourceTimestampMs = Date.now() - seenPos * 1000;
+    } else if (Number.isFinite(Number(raw.seen))) {
+        seenPos = Number(raw.seen);
+        sourceTimestampMs = Date.now() - seenPos * 1000;
+    }
+
+    let altitudeFeet = null;
+    let altitude = '--';
+    const safeSkyAltitudeMeters = Number(raw.altitude);
+
+    if (
+        safeSkyFormat
+        && Number.isFinite(safeSkyAltitudeMeters)
+        && safeSkyAltitudeMeters > -9000
+    ) {
+        altitudeFeet = Math.round(
+            safeSkyAltitudeMeters * 3.280839895
+        );
+        altitude = `${altitudeFeet} ft`;
+    } else {
+        const altitudeRaw = raw.alt_baro ?? raw.alt_geom ?? raw.altitude;
+        altitudeFeet = parseTrafficAltitudeFeet(raw);
+        altitude = altitudeRaw === 'ground'
+            ? 'GND'
+            : (Number.isFinite(Number(altitudeRaw)) ? `${Math.round(Number(altitudeRaw))} ft` : '--');
+    }
+
+    let groundSpeedKnots = null;
+    if (safeSkyFormat && Number.isFinite(Number(raw.ground_speed))) {
+        groundSpeedKnots = Number(raw.ground_speed) * 1.943844492;
+    } else if (Number.isFinite(Number(raw.gs))) {
+        groundSpeedKnots = Number(raw.gs);
+    }
+    const gs = Number.isFinite(groundSpeedKnots) ? `${Math.round(groundSpeedKnots)} kt` : '--';
+
+    const trackRaw = safeSkyFormat ? raw.course : raw.track;
+    const track = Number.isFinite(Number(trackRaw)) ? Number(trackRaw) : null;
+    const beaconType = String(raw.beacon_type || '').trim().toUpperCase();
+    const emitterCategory = String(
+        raw.category
+        || raw.emitter_category
+        || raw.emitterCategory
+        || ''
+    ).trim().toUpperCase();
+    const type = String(
+        raw.beacon_type
+        || raw.t
+        || raw.aircraft_type
+        || raw.type
+        || ''
+    ).trim();
+
+    const registration = String(
+        raw.registration
+        || raw.registration_number
+        || raw.tail_number
+        || raw.tail
+        || raw.r
+        || ''
+    ).trim();
+
+    const source = String(
+        raw.transponder_type
+        || raw.source
+        || raw.type
+        || raw.dbFlags
+        || ''
+    ).trim();
+
+    const status = String(raw.status || '').trim().toUpperCase();
+    const remarks = String(raw.remarks || '').trim();
+
+    /*
+     * Ces champs ne sont pas garantis par le modèle public SafeSky, mais ils
+     * sont conservés lorsqu'une réponse enrichie les fournit.
+     */
+    const operatorName = String(
+        raw.operator_name
+        || raw.operator
+        || raw.airline_name
+        || raw.airline
+        || raw.company_name
+        || raw.company
+        || raw.owner_name
+        || raw.owner
+        || ''
+    ).trim();
+
+    const aircraftModel = String(
+        raw.aircraft_model
+        || raw.aircraft_model_name
+        || raw.model_name
+        || raw.model
+        || raw.type_description
+        || raw.aircraft_description
+        || raw.icao_type_designator
+        || raw.type_designator
+        || ''
+    ).trim();
+
+    let verticalRateFpm = null;
+    if (safeSkyFormat && Number.isFinite(Number(raw.vertical_rate))) {
+        verticalRateFpm = Math.round(
+            Number(raw.vertical_rate) * 196.8503937
+        );
+    }
+
+    const turnRateDegPerSec = Number.isFinite(
+        Number(raw.turn_rate)
+    )
+        ? Number(raw.turn_rate)
+        : null;
+
+    const forceDisplay = Boolean(
+        raw._npfForceDisplay
+        || raw._npfTracked
+        || raw._npfSearchResult
+    );
+
+    if (status === 'INACTIVE') {
+        return null;
+    }
+
+    const isGrounded = (
+        status === 'GROUNDED'
+        || String(raw.alt_baro || '').toLowerCase() === 'ground'
+    );
+
+    if (isGrounded) {
+        altitude = 'SOL';
+    }
+
+    return {
+        callsign,
+        hex: trafficId,
+        lat,
+        lon,
+        seenPos,
+        sourceTimestampMs,
+        receivedAtMs: normalizedAtMs,
+        altitude,
+        altitudeFeet,
+        gs,
+        groundSpeedKnots,
+        track,
+        turnRateDegPerSec,
+        type,
+        beaconType,
+        emitterCategory,
+        registration,
+        source,
+        status,
+        isGrounded,
+        remarks,
+        operatorName,
+        aircraftModel,
+        verticalRateFpm,
+        forceDisplay,
+        providerFormat: safeSkyFormat ? 'safesky' : 'readsb',
+        raw
+    };
 }
 
 function formatTrafficAge(seconds) {
@@ -3880,92 +11879,2084 @@ function formatTrafficAge(seconds) {
     return `${Math.round(seconds / 60)} min`;
 }
 
+function getTrafficRelativeAltitudeState(aircraft) {
+    if (aircraft?.isGrounded) {
+        return {
+            className: 'traffic-altitude-grounded',
+            label: 'Trafic au sol',
+            deltaFt: null
+        };
+    }
+
+    const ownAltitudeFt = getOwnTrafficAltitudeFeet();
+    const trafficAltitudeFt = Number(aircraft?.altitudeFeet);
+
+    if (!Number.isFinite(ownAltitudeFt) || !Number.isFinite(trafficAltitudeFt)) {
+        return {
+            className: 'traffic-altitude-unknown',
+            label: 'Altitude relative inconnue',
+            deltaFt: null
+        };
+    }
+
+    const deltaFt = Math.round(trafficAltitudeFt - ownAltitudeFt);
+
+    if (Math.abs(deltaFt) <= 500) {
+        return {
+            className: 'traffic-altitude-same',
+            label: 'Même tranche d’altitude ±500 ft',
+            deltaFt
+        };
+    }
+
+    if (deltaFt < -500) {
+        return {
+            className: 'traffic-altitude-below',
+            label: 'Trafic en dessous',
+            deltaFt
+        };
+    }
+
+    return {
+        className: 'traffic-altitude-above',
+        label: 'Trafic au-dessus',
+        deltaFt
+    };
+}
+
+
+function resolveTrafficVisualType(aircraft) {
+    const safeSkyType = String(aircraft?.beaconType || '').trim().toUpperCase();
+    const emitterCategory = String(aircraft?.emitterCategory || '').trim().toUpperCase();
+    const designator = String(aircraft?.type || '').trim().toUpperCase();
+
+    /*
+     * Priorité 1 : catégorie explicite SafeSky.
+     */
+    const safeSkyMapping = {
+        JET: 'jet',
+        HELICOPTER: 'helicopter',
+        GLIDER: 'glider',
+        UAV: 'uav',
+        BALLOON: 'balloon',
+        AIRSHIP: 'airship',
+        PARACHUTE: 'parachute',
+        PARA_GLIDER: 'paraglider',
+        HAND_GLIDER: 'hangglider',
+        HANG_GLIDER: 'hangglider',
+        GYROCOPTER: 'gyrocopter',
+        MILITARY: 'military',
+        FLEX_WING_TRIKES: 'pendular',
+        PARA_MOTOR: 'paramotor',
+        THREE_AXES_LIGHT_PLANE: 'ultralight',
+        MOTORPLANE: 'airplane',
+        PAV: 'pav',
+        STATIC_OBJECT: 'static'
+    };
+    if (safeSkyMapping[safeSkyType]) return safeSkyMapping[safeSkyType];
+
+    /*
+     * Priorité 2 : catégorie d'émetteur ADS-B/readsb.
+     * Elle permet déjà d'afficher correctement hélicoptères, planeurs,
+     * ballons, parachutistes, ULM et drones avant l'arrivée de SafeSky.
+     */
+    const emitterMapping = {
+        A0: 'airplane',
+        A1: 'airplane',
+        A2: 'airplane',
+        A3: 'jet',
+        A4: 'jet',
+        A5: 'jet',
+        A6: 'military',
+        A7: 'helicopter',
+        B0: 'airplane',
+        B1: 'glider',
+        B2: 'balloon',
+        B3: 'parachute',
+        B4: 'ultralight',
+        B5: 'airplane',
+        B6: 'uav',
+        B7: 'airplane',
+        C0: 'static',
+        C1: 'static',
+        C2: 'static',
+        C3: 'static',
+        C4: 'static'
+    };
+    if (emitterMapping[emitterCategory]) return emitterMapping[emitterCategory];
+
+    /*
+     * Priorité 3 : désignateur ICAO de type.
+     *
+     * Cette classification ne prétend pas reproduire la silhouette exacte de
+     * chaque modèle. Elle choisit la bonne grande famille visuelle.
+     */
+    const widebodyJetPattern = /^(?:A30[06B]|A310|A33[0-9]|A34[0-9]|A35[0-9]|A38[08]|B74[1-8RS]|B76[2-4]|B77[2-39LW]|B78[89X]|DC10|L101|IL96|AN12[4-9]|C5M)/;
+    if (widebodyJetPattern.test(designator)) {
+        return 'widebody-jet';
+    }
+
+    const narrowbodyJetPattern = /^(?:A18[89]|A19[0-9N]|A20N|A21N|A22[0-9]|A31[89]|A32[0-9]|B70[37]|B71[27]|B72[0-2]|B73[1-9]|B37M|B38M|B39M|B75[23]|BCS[13]|F70|F100|MD8[0-9]|MD90|DC9)/;
+    if (narrowbodyJetPattern.test(designator)) {
+        return 'narrowbody-jet';
+    }
+
+    const regionalJetPattern = /^(?:CRJ[1-9X]|E17[05]|E19[05]|E29[05]|E135|E145|E170|E175|E190|E195|ARJ2|RJ1H|RJ70|RJ85|RJ1X)/;
+    if (regionalJetPattern.test(designator)) {
+        return 'regional-jet';
+    }
+
+    const turbopropDesignatorPattern = /^(?:AT4[3-6]|AT7[2-6]|DH8[ABCD]|Q400|SF34|E120|F50|F60|D328|C212|C295|CN35|AN2[468]|AN32|L410|BE20|BE30|B350|SW4|JS3[12]|JS41|C130|C160|P3|P8)/;
+    if (turbopropDesignatorPattern.test(designator)) {
+        return 'turboprop';
+    }
+
+    const lightTwinPattern = /^(?:BE5[568]|BE9[59]|BE10|BE18|BE24|BE33|BE35|BE36|BE50|BE55|BE58|BE60|BE65|BE76|BE77|BE80|BE90|C303|C310|C320|C335|C336|C337|C340|C401|C402|C404|C411|C414|C421|C425|C441|DA42|DA62|PA23|PA30|PA31|PA34|PA39|PA44|P68|BN2|AC50|AC56|AC68)/;
+    if (lightTwinPattern.test(designator)) {
+        return 'light-twin';
+    }
+
+    const lightSinglePattern = /^(?:C1[025-9][025-9]|C20[568]|C21[02]|C22[0-9]|C23[0-9]|C24[0-9]|C25[0-9]|C26[0-9]|C27[0-9]|C28[0-9]|C182|C172|C152|C150|C206|C210|PA18|PA20|PA22|PA24|PA28|PA32|PA38|SR20|SR22|DA20|DA40|DR40|DR30|RALL|JAB[24]|VL3|WT9|PIVI|M20[ABCEJMKRS]|BE23|BE24|BE33|BE35|BE36)/;
+    if (lightSinglePattern.test(designator)) {
+        return 'light-single';
+    }
+
+    const helicopterDesignatorPattern = /^(?:H[0-9A-Z]{1,3}|EC[0-9A-Z]{2,4}|AS[0-9A-Z]{2,4}|SA[0-9A-Z]{2,4}|R22|R44|R66|B06|B47|S76|AW[0-9A-Z]{2,4}|BK17|H145|H135|H160|H175|H225|NH90|TIGR)/;
+    if (helicopterDesignatorPattern.test(designator)) {
+        return 'helicopter';
+    }
+
+    const gliderDesignatorPattern = /^(?:GLID|ASW|DG[0-9A-Z]*|DUOD|LS[0-9A-Z]*|JS[0-9A-Z]*|SZD|ASK|ASTR|VENT|DISC|NIMB|JANU|ARCUS)/;
+    if (gliderDesignatorPattern.test(designator)) {
+        return 'glider';
+    }
+
+    const gyrocopterDesignatorPattern = /^(?:GYRO|MTO|CAVAL|MAGN|ELA|XENON)/;
+    if (gyrocopterDesignatorPattern.test(designator)) {
+        return 'gyrocopter';
+    }
+
+    return 'airplane';
+}
+
+function getTrafficTypeDisplayLabel(aircraft) {
+    const safeSkyType = String(
+        aircraft?.beaconType
+        || aircraft?.type
+        || ''
+    ).trim().toUpperCase();
+
+    const labels = {
+        JET: 'JET',
+        MOTORPLANE: 'AVION',
+        THREE_AXES_LIGHT_PLANE: 'ULM',
+        HELICOPTER: 'HÉLICOPTÈRE',
+        GLIDER: 'PLANEUR',
+        UAV: 'DRONE',
+        BALLOON: 'BALLON',
+        AIRSHIP: 'DIRIGEABLE',
+        PARACHUTE: 'PARACHUTISTE',
+        PARA_GLIDER: 'PARAPENTE',
+        HAND_GLIDER: 'DELTAPLANE',
+        HANG_GLIDER: 'DELTAPLANE',
+        GYROCOPTER: 'AUTOGIRE',
+        MILITARY: 'MILITAIRE',
+        FLEX_WING_TRIKES: 'PENDULAIRE',
+        PARA_MOTOR: 'PARAMOTEUR',
+        PAV: 'PAV',
+        STATIC_OBJECT: 'OBJET STATIQUE'
+    };
+
+    if (labels[safeSkyType]) {
+        return labels[safeSkyType];
+    }
+
+    /*
+     * Repli sur la catégorie visuelle lorsque SafeSky ne fournit pas de type
+     * exploitable. Les désignations techniques ne sont jamais montrées.
+     */
+    const visual = getTrafficAircraftVisualDefinition(aircraft);
+    return String(visual?.label || 'AVION').toUpperCase();
+}
+
+
+function getTrafficAircraftVisualDefinition(aircraft) {
+    const visualType = resolveTrafficVisualType(aircraft);
+
+    /*
+     * v14.26 — pictogrammes originaux volontairement rapprochés du langage
+     * graphique SafeSky montré en référence :
+     * - silhouettes simples et monochromes ;
+     * - vues de dessus pour les aéronefs directionnels ;
+     * - pictogrammes filaires pour hélicoptère, drones et voilures légères ;
+     * - proportions homogènes dans un viewBox 64 × 64.
+     */
+    const definitions = {
+        airplane: {
+            className: 'airplane',
+            directional: true,
+            label: 'AVION',
+            svg: `
+                <!-- Avion léger : aile droite et empennage droit -->
+                <path class="ss-fill" d="M29 4h6l1.2 21H58v7H36.5l-.8 14H47v6H35.4L34.7 59h-5.4l-.7-7H17v-6h11.3l-.8-14H6v-7h21.8L29 4Z"/>
+                <rect class="ss-fill" x="27" y="1.8" width="10" height="4.4" rx="1"/>
+            `
+        },
+        jet: {
+            className: 'jet',
+            directional: true,
+            label: 'JET',
+            svg: `
+                <!-- Jet : ailes et empennage volontairement en flèche -->
+                <path class="ss-fill" d="M30 2h4l4.7 21.5 18 10.7v6.5l-18.9-5.6-1.7 10.7 10.8 8.8v4.2L32 55l-14.9 3.8v-4.2l10.8-8.8-1.7-10.7-18.9 5.6v-6.5l18-10.7L30 2Z"/>
+            `
+        },
+        helicopter: {
+            className: 'helicopter',
+            directional: true,
+            label: 'HÉLICOPTÈRE',
+            svg: `
+                <g class="ss-line">
+                    <path d="M32 8v39"/>
+                    <path d="M13 13l38 38"/>
+                    <path d="M51 13 13 51"/>
+                    <path d="M23 30h18"/>
+                    <path d="M32 47v10"/>
+                    <path d="M26 57h12"/>
+                </g>
+                <ellipse class="ss-fill" cx="32" cy="32" rx="6.5" ry="13"/>
+                <circle class="ss-ring" cx="32" cy="18" r="3.3"/>
+            `
+        },
+        glider: {
+            className: 'glider',
+            directional: true,
+            label: 'PLANEUR',
+            svg: `
+                <!-- Planeur : grande aile droite et empennage sans flèche -->
+                <path class="ss-fill" d="M30.5 3h3l1.1 26H62v4.8H34.8l-.7 16.2h8.4v4.5h-8.6L33.5 61h-3l-.4-6.5h-8.6V50h8.4l-.7-16.2H2V29h27.4l1.1-26Z"/>
+                <path class="ss-cut" d="M31.2 7h1.6v14h-1.6Z"/>
+            `
+        },
+        uav: {
+            className: 'uav',
+            directional: false,
+            label: 'DRONE',
+            svg: `
+                <g class="ss-line">
+                    <path d="M22 22l20 20M42 22 22 42"/>
+                    <path d="M32 25v14M25 32h14"/>
+                </g>
+                <circle class="ss-ring" cx="17" cy="17" r="8"/>
+                <circle class="ss-ring" cx="47" cy="17" r="8"/>
+                <circle class="ss-ring" cx="17" cy="47" r="8"/>
+                <circle class="ss-ring" cx="47" cy="47" r="8"/>
+                <rect class="ss-fill" x="26" y="26" width="12" height="12" rx="3"/>
+            `
+        },
+        pav: {
+            className: 'pav',
+            directional: false,
+            label: 'PAV',
+            svg: `
+                <g class="ss-line">
+                    <path d="M32 11v10M32 43v10M14 21l9 6M41 37l9 6M14 43l9-6M41 27l9-6"/>
+                </g>
+                <circle class="ss-ring" cx="32" cy="8" r="6"/>
+                <circle class="ss-ring" cx="54" cy="20" r="6"/>
+                <circle class="ss-ring" cx="54" cy="44" r="6"/>
+                <circle class="ss-ring" cx="32" cy="56" r="6"/>
+                <circle class="ss-ring" cx="10" cy="44" r="6"/>
+                <circle class="ss-ring" cx="10" cy="20" r="6"/>
+                <circle class="ss-ring" cx="32" cy="32" r="11"/>
+                <circle class="ss-fill" cx="32" cy="32" r="4"/>
+            `
+        },
+        balloon: {
+            className: 'balloon',
+            directional: false,
+            label: 'BALLON',
+            svg: `
+                <path class="ss-fill" d="M32 5c13 0 21 9 21 21 0 11-7 19-16 25h-10C18 45 11 37 11 26 11 14 19 5 32 5Z"/>
+                <path class="ss-cut" d="M22 10c-2 11-1 26 7 39M42 10c2 11 1 26-7 39M12 26h40"/>
+                <rect class="ss-fill" x="27" y="53" width="10" height="7" rx="1.5"/>
+            `
+        },
+        airship: {
+            className: 'airship',
+            directional: true,
+            label: 'DIRIGEABLE',
+            svg: `
+                <ellipse class="ss-fill" cx="30" cy="31" rx="25" ry="14"/>
+                <path class="ss-fill" d="M51 25l10-7v10l-5 3 5 3v10l-10-7Z"/>
+                <path class="ss-cut" d="M10 31h40"/>
+                <path class="ss-fill" d="M26 45h12l-2 7h-8l-2-7Z"/>
+            `
+        },
+        parachute: {
+            className: 'parachute',
+            directional: false,
+            label: 'PARACHUTISTE',
+            svg: `
+                <path class="ss-fill ss-hangglider-color" d="M7 29C9 15 19 7 32 7s23 8 25 22H7Z"/>
+                <path class="ss-cut" d="M17 28c2-9 7-15 15-20M47 28C45 19 40 13 32 8M32 8v20"/>
+                <g class="ss-line ss-hangglider-line">
+                    <path d="M12 29l17 18M52 29 35 47M24 29l7 18M40 29l-7 18"/>
+                    <path d="M32 47v8M26 60l6-5 6 5"/>
+                </g>
+                <circle class="ss-fill ss-hangglider-color" cx="32" cy="48" r="3.5"/>
+            `
+        },
+        paraglider: {
+            className: 'paraglider',
+            directional: false,
+            label: 'PARAPENTE',
+            svg: `
+                <!-- Parapente : voilure segmentée et petit pilote -->
+                <path class="ss-fill ss-paraglider-color" d="M4 30C9 16 19 8 32 8s23 8 28 22c-9-4.7-18.3-7-28-7S13 25.3 4 30Z"/>
+                <path class="ss-cut" d="M12 26.8c3.1-8 7.1-13 12-16M23.5 24.2c1.5-7.7 4.3-13 8.5-16.2M40.5 24.2c-1.5-7.7-4.3-13-8.5-16.2M52 26.8c-3.1-8-7.1-13-12-16"/>
+                <rect class="ss-fill ss-paraglider-color" x="27" y="38.5" width="10" height="5.5" rx="2"/>
+                <path class="ss-line ss-paraglider-line" d="M10 28.5 29 39M54 28.5 35 39M22 24.5 31 39M42 24.5 33 39"/>
+            `
+        },
+        hangglider: {
+            className: 'hangglider',
+            directional: true,
+            label: 'DELTAPLANE',
+            svg: `
+                <!-- Deltaplane : chevron simple et barre/pilote sous l'aile -->
+                <path class="ss-fill ss-hangglider-color" d="M7 37 32 17l25 20-25-9.2L7 37Z"/>
+                <rect class="ss-fill ss-hangglider-color" x="26.5" y="42.5" width="11" height="4.5" rx="1.6"/>
+            `
+        },
+        gyrocopter: {
+            className: 'gyrocopter',
+            directional: true,
+            label: 'AUTOGIRE',
+            svg: `
+                <g class="ss-line">
+                    <path d="M6 10h52"/>
+                    <path d="M32 10v24"/>
+                    <path d="M21 35h26l10 9H31l-8 8H10"/>
+                    <path d="M44 34l8-11"/>
+                </g>
+                <circle class="ss-ring" cx="18" cy="53" r="6"/>
+                <circle class="ss-ring" cx="47" cy="53" r="6"/>
+                <circle class="ss-fill" cx="32" cy="31" r="5"/>
+            `
+        },
+        military: {
+            className: 'military',
+            directional: true,
+            label: 'MILITAIRE',
+            svg: `
+                <path class="ss-fill" d="M30 3h4l5 20 17 10v7l-18-4-2 10 10 9v5l-14-5-14 5v-5l10-9-2-10-18 4v-7l17-10 5-20Z"/>
+                <path class="ss-cut" d="M32 9v42"/>
+            `
+        },
+        'widebody-jet': {
+            className: 'widebody-jet',
+            directional: true,
+            label: 'JET',
+            svg: `
+                <path class="ss-fill" d="M28 3h8l5 20 18 10v8l-20-5-2 11 11 9v4l-16-4-16 4v-4l11-9-2-11-20 5v-8l18-10 5-20Z"/>
+            `
+        },
+        'narrowbody-jet': {
+            className: 'narrowbody-jet',
+            directional: true,
+            label: 'JET',
+            svg: `
+                <path class="ss-fill" d="M29 3h6l4 21 18 9v7l-19-4-2 11 10 8v4l-14-3-14 3v-4l10-8-2-11-19 4v-7l18-9 4-21Z"/>
+            `
+        },
+        'regional-jet': {
+            className: 'regional-jet',
+            directional: true,
+            label: 'JET',
+            svg: `
+                <path class="ss-fill" d="M29 5h6l3 20 16 8v6l-17-3-2 12 8 7v4l-11-3-11 3v-4l8-7-2-12-17 3v-6l16-8 3-20Z"/>
+            `
+        },
+        turboprop: {
+            className: 'turboprop',
+            directional: true,
+            label: 'AVION',
+            svg: `
+                <path class="ss-fill" d="M29 4h6l2 20 20 8v6l-20-3-1 13 8 7v4l-12-3-12 3v-4l8-7-1-13-20 3v-6l20-8 2-20Z"/>
+                <g class="ss-line">
+                    <circle cx="16" cy="31" r="5"/>
+                    <circle cx="48" cy="31" r="5"/>
+                    <path d="M16 23v16M8 31h16M48 23v16M40 31h16"/>
+                </g>
+            `
+        },
+        'light-single': {
+            className: 'light-single',
+            directional: true,
+            label: 'AVION',
+            svg: `
+                <path class="ss-fill" d="M29 5h6l1 18 18 8v6l-18-3v14l8 7v4l-12-3-12 3v-4l8-7V34l-18 3v-6l18-8 1-18Z"/>
+                <path class="ss-cut" d="M25 18h14"/>
+            `
+        },
+        'light-twin': {
+            className: 'light-twin',
+            directional: true,
+            label: 'AVION',
+            svg: `
+                <path class="ss-fill" d="M29 5h6l1 18 19 8v6l-19-3v14l8 7v4l-12-3-12 3v-4l8-7V34L9 37v-6l19-8 1-18Z"/>
+                <circle class="ss-ring" cx="18" cy="29" r="4"/>
+                <circle class="ss-ring" cx="46" cy="29" r="4"/>
+            `
+        },
+        ultralight: {
+            className: 'ultralight',
+            directional: true,
+            label: 'ULM',
+            svg: `
+                <!-- ULM 3 axes : aile droite et empennage rectangulaire -->
+                <path class="ss-fill" d="M29 5h6l1.1 20H57v7H36.3l-.8 14.5h10v6H35.2L34.5 59h-5l-.7-6.5H18.5v-6h10l-.8-14.5H7v-7h20.9L29 5Z"/>
+                <rect class="ss-fill" x="27" y="2.5" width="10" height="4.5" rx="1.2"/>
+            `
+        },
+        pendular: {
+            className: 'pendular',
+            directional: true,
+            label: 'PENDULAIRE',
+            svg: `
+                <path class="ss-fill ss-hangglider-color" d="M4 22 32 7l28 15-28 8L4 22Z"/>
+                <path class="ss-cut" d="M32 8v21M8 22h48"/>
+                <g class="ss-line ss-hangglider-line">
+                    <path d="M32 29v14M23 50l9-7 9 7"/>
+                    <path d="M25 54h14"/>
+                </g>
+                <circle class="ss-ring ss-hangglider-ring" cx="24" cy="55" r="4"/>
+                <circle class="ss-ring ss-hangglider-ring" cx="40" cy="55" r="4"/>
+                <circle class="ss-fill ss-hangglider-color" cx="32" cy="42" r="3"/>
+            `
+        },
+        paramotor: {
+            className: 'paramotor',
+            directional: false,
+            label: 'PARAMOTEUR',
+            svg: `
+                <path class="ss-fill ss-paraglider-color" d="M7 22C15 11 23 7 32 7s17 4 25 15c-9-4-17-6-25-6S16 18 7 22Z"/>
+                <g class="ss-line ss-paraglider-line">
+                    <path d="M12 22l17 21M52 22 35 43M23 19l8 24M41 19l-8 24"/>
+                    <path d="M32 43v10M27 59l5-6 5 6"/>
+                </g>
+                <circle class="ss-fill ss-paraglider-color" cx="32" cy="44" r="3.5"/>
+                <circle class="ss-ring ss-paraglider-ring" cx="42" cy="47" r="8"/>
+                <path class="ss-line ss-paraglider-line" d="M42 39v16M34 47h16"/>
+            `
+        },
+        static: {
+            className: 'static',
+            directional: false,
+            label: 'OBJET STATIQUE',
+            svg: `
+                <g class="ss-line">
+                    <path d="M32 8v48M8 32h48"/>
+                    <circle cx="32" cy="32" r="13"/>
+                </g>
+                <circle class="ss-fill" cx="32" cy="32" r="5"/>
+            `
+        }
+    };
+
+    return definitions[visualType] || definitions.airplane;
+}
+
+function getTrafficCompactIdentifier(aircraft) {
+    const callsign = String(aircraft?.callsign || '').trim().toUpperCase();
+    const registration = String(aircraft?.registration || '').trim().toUpperCase();
+    const trafficId = String(aircraft?.hex || '').trim().toUpperCase();
+
+    const invalidValues = new Set(['', 'N/A', 'UNKNOWN', '--']);
+
+    /*
+     * L'indicatif opérationnel est prioritaire lorsqu'il est réellement fourni.
+     * S'il n'est pas exploitable, utiliser l'immatriculation puis l'identifiant.
+     */
+    if (!invalidValues.has(callsign)) {
+        return callsign;
+    }
+
+    if (!invalidValues.has(registration)) {
+        return registration;
+    }
+
+    if (!invalidValues.has(trafficId)) {
+        return trafficId;
+    }
+
+    return '';
+}
+
+
+const TRAFFIC_AIRLINE_ICAO_NAMES = Object.freeze({
+    AFR: 'Air France',
+    TVF: 'Transavia France',
+    CCM: 'Air Corsica',
+    HOP: 'HOP!',
+    FPO: 'ASL Airlines France',
+    CRL: 'Corsair',
+    RYR: 'Ryanair',
+    EZY: 'easyJet',
+    EJU: 'easyJet Europe',
+    VOE: 'Volotea',
+    VLG: 'Vueling',
+    IBE: 'Iberia',
+    I2L: 'Iberia Express',
+    BAW: 'British Airways',
+    DLH: 'Lufthansa',
+    SWR: 'Swiss',
+    BEL: 'Brussels Airlines',
+    KLM: 'KLM',
+    TAP: 'TAP Air Portugal',
+    ITY: 'ITA Airways',
+    SAS: 'SAS',
+    NSZ: 'Norwegian',
+    WZZ: 'Wizz Air',
+    EIN: 'Aer Lingus',
+    THY: 'Turkish Airlines',
+    UAE: 'Emirates',
+    QTR: 'Qatar Airways',
+    ETD: 'Etihad Airways',
+    AAL: 'American Airlines',
+    DAL: 'Delta Air Lines',
+    UAL: 'United Airlines',
+    FDX: 'FedEx Express',
+    UPS: 'UPS Airlines'
+});
+
+function getTrafficCompanyName(aircraft) {
+    const directName = String(aircraft?.operatorName || '').trim();
+    if (directName) {
+        return directName;
+    }
+
+    const callsign = String(aircraft?.callsign || '')
+        .trim()
+        .toUpperCase();
+
+    const prefixMatch = callsign.match(/^([A-Z]{3})/);
+    if (!prefixMatch) {
+        return '';
+    }
+
+    return TRAFFIC_AIRLINE_ICAO_NAMES[prefixMatch[1]] || '';
+}
+
+function getTrafficAircraftModel(aircraft) {
+    const rawModel = String(aircraft?.aircraftModel || '').trim();
+    if (!rawModel) {
+        return '';
+    }
+
+    const technicalValues = new Set([
+        String(aircraft?.beaconType || '').trim().toUpperCase(),
+        String(aircraft?.source || '').trim().toUpperCase(),
+        'UNKNOWN',
+        'MOTORPLANE',
+        'THREE_AXES_LIGHT_PLANE',
+        'JET',
+        'HELICOPTER',
+        'GLIDER',
+        'UAV'
+    ]);
+
+    if (technicalValues.has(rawModel.toUpperCase())) {
+        return '';
+    }
+
+    return rawModel;
+}
+
+function getTrafficPermanentIdentifier(aircraft) {
+    const registration = String(aircraft?.registration || '')
+        .trim()
+        .toUpperCase();
+
+    if (registration) {
+        return registration;
+    }
+
+    return getTrafficCompactIdentifier(aircraft);
+}
+
+function getTrafficPermanentType(aircraft) {
+    return (
+        getTrafficAircraftModel(aircraft)
+        || getTrafficTypeDisplayLabel(aircraft)
+    );
+}
+
+function compactTrafficLabelText(value, maxLength = 18) {
+    const text = String(value || '').trim();
+    if (text.length <= maxLength) {
+        return text;
+    }
+    return `${text.slice(0, Math.max(1, maxLength - 1))}…`;
+}
+
+function getTrafficVerticalTrend(aircraft) {
+    const verticalRateFpm = Number(aircraft?.verticalRateFpm);
+
+    if (!Number.isFinite(verticalRateFpm) || aircraft?.isGrounded) {
+        return {
+            symbol: '',
+            className: 'traffic-trend-level',
+            label: ''
+        };
+    }
+
+    if (verticalRateFpm > 0) {
+        return {
+            /*
+             * Le sélecteur de présentation texte évite un rendu emoji sur
+             * Safari/iPadOS et conserve une flèche aéronautique nette.
+             */
+            symbol: '↗︎',
+            className: 'traffic-trend-climb',
+            label: 'Montée'
+        };
+    }
+
+    if (verticalRateFpm < 0) {
+        return {
+            symbol: '↘︎',
+            className: 'traffic-trend-descent',
+            label: 'Descente'
+        };
+    }
+
+    return {
+        symbol: '',
+        className: 'traffic-trend-level',
+        label: ''
+    };
+}
+
+/*
+ * v14.79 — vecteur vitesse par traits de 50 kt.
+ * 0 à 50 kt : 1 trait ; puis un trait supplémentaire par tranche de 50 kt.
+ */
+const TRAFFIC_VECTOR_SPEED_STEP_KT = 50;
+const TRAFFIC_VECTOR_SEGMENT_LENGTH_PX = 8;
+const TRAFFIC_VECTOR_SEGMENT_GAP_PX = 5;
+const TRAFFIC_VECTOR_MAX_SEGMENTS = 20;
+const TRAFFIC_VECTOR_CANVAS_CENTER_PX = 280;
+const TRAFFIC_VECTOR_CANVAS_SIZE_PX = 560;
+
+function getTrafficSpeedVectorSegmentCount(aircraft) {
+    const rawSpeedKnots = aircraft?.groundSpeedKnots;
+
+    if (
+        rawSpeedKnots === null
+        || rawSpeedKnots === undefined
+        || rawSpeedKnots === ''
+    ) {
+        return 0;
+    }
+
+    const speedKnots = Number(rawSpeedKnots);
+    if (!Number.isFinite(speedKnots)) return 0;
+
+    return Math.max(
+        1,
+        Math.min(
+            TRAFFIC_VECTOR_MAX_SEGMENTS,
+            Math.ceil(Math.max(0, speedKnots) / TRAFFIC_VECTOR_SPEED_STEP_KT)
+        )
+    );
+}
+
+function getTrafficSpeedVectorLengthPx(aircraft) {
+    const segmentCount = getTrafficSpeedVectorSegmentCount(aircraft);
+    if (!segmentCount) return 0;
+
+    return (
+        segmentCount * TRAFFIC_VECTOR_SEGMENT_LENGTH_PX
+        + (segmentCount - 1) * TRAFFIC_VECTOR_SEGMENT_GAP_PX
+    );
+}
+
+
+
+const TRAFFIC_VECTOR_TURN_HORIZON_SECONDS = 8;
+
+function buildTrafficCurvedVectorPath(
+    vectorLengthPx,
+    turnRateDegPerSec
+) {
+    const canvasCenter = TRAFFIC_VECTOR_CANVAS_CENTER_PX;
+    const length = Math.max(
+        0,
+        Number(vectorLengthPx) || 0
+    );
+
+    if (length <= 0) return '';
+
+    const turnAngleDeg = Math.max(
+        -70,
+        Math.min(
+            70,
+            (
+                Number(turnRateDegPerSec) || 0
+            ) * TRAFFIC_VECTOR_TURN_HORIZON_SECONDS
+        )
+    );
+    const turnAngleRad = turnAngleDeg * Math.PI / 180;
+
+    if (Math.abs(turnAngleDeg) < 2) {
+        return `M ${canvasCenter} ${canvasCenter} L ${canvasCenter} ${canvasCenter - length}`;
+    }
+
+    const endX = canvasCenter
+        + Math.sin(turnAngleRad) * length;
+    const endY = canvasCenter
+        - Math.cos(turnAngleRad) * length;
+    const controlAngle = turnAngleRad * 0.48;
+    const controlDistance = length * 0.58;
+    const controlX = canvasCenter
+        + Math.sin(controlAngle) * controlDistance;
+    const controlY = canvasCenter
+        - Math.cos(controlAngle) * controlDistance;
+
+    return [
+        `M ${canvasCenter} ${canvasCenter}`,
+        `Q ${controlX.toFixed(2)} ${controlY.toFixed(2)}`,
+        `${endX.toFixed(2)} ${endY.toFixed(2)}`
+    ].join(' ');
+}
+
+function buildTrafficVectorHtml(
+    aircraft,
+    track,
+    vectorLengthPx
+) {
+    const segmentCount = getTrafficSpeedVectorSegmentCount(aircraft);
+    if (vectorLengthPx <= 0 || segmentCount <= 0) return '';
+
+    const path = buildTrafficCurvedVectorPath(
+        vectorLengthPx,
+        aircraft?.turnRateDegPerSec
+    );
+
+    if (!path) return '';
+
+    /*
+     * `pathLength` calibre exactement le motif 8 px / 5 px : la longueur
+     * calculée se termine après le dernier trait, sans demi-segment final.
+     */
+    return `
+        <span class="traffic-aircraft-vector-wrap"
+              data-speed-segments="${segmentCount}"
+              style="transform: rotate(${track}deg);">
+            <svg class="traffic-speed-vector-svg"
+                 viewBox="0 0 ${TRAFFIC_VECTOR_CANVAS_SIZE_PX} ${TRAFFIC_VECTOR_CANVAS_SIZE_PX}"
+                 aria-hidden="true"
+                 focusable="false">
+                <path class="traffic-speed-vector-path"
+                      pathLength="${vectorLengthPx}"
+                      d="${path}"></path>
+            </svg>
+        </span>
+    `;
+}
+
+function destinationFromBearingDistance(
+    latitude,
+    longitude,
+    bearingDegrees,
+    distanceMeters
+) {
+    const earthRadiusMeters = 6371008.8;
+    const angularDistance =
+        distanceMeters / earthRadiusMeters;
+    const bearing =
+        bearingDegrees * Math.PI / 180;
+    const latitudeRad =
+        latitude * Math.PI / 180;
+    const longitudeRad =
+        longitude * Math.PI / 180;
+
+    const destinationLatitude = Math.asin(
+        Math.sin(latitudeRad)
+            * Math.cos(angularDistance)
+        + Math.cos(latitudeRad)
+            * Math.sin(angularDistance)
+            * Math.cos(bearing)
+    );
+
+    const destinationLongitude = longitudeRad
+        + Math.atan2(
+            Math.sin(bearing)
+                * Math.sin(angularDistance)
+                * Math.cos(latitudeRad),
+            Math.cos(angularDistance)
+                - Math.sin(latitudeRad)
+                * Math.sin(destinationLatitude)
+        );
+
+    return {
+        lat: destinationLatitude * 180 / Math.PI,
+        lon: (
+            (
+                destinationLongitude * 180 / Math.PI
+                + 540
+            ) % 360
+        ) - 180
+    };
+}
+
+function extrapolateTrafficAircraft(
+    aircraft,
+    targetTimestampMs = Date.now()
+) {
+    if (!aircraft) return null;
+
+    const baseLatitude = Number(aircraft.lat);
+    const baseLongitude = Number(aircraft.lon);
+    const speedMps = Number(
+        aircraft.groundSpeedKnots
+    ) / 1.943844492;
+    const trackValue = aircraft.track;
+    const baseTrack = (
+        trackValue === null
+        || trackValue === undefined
+        || trackValue === ''
+    )
+        ? NaN
+        : Number(trackValue);
+    const turnRate = Number(
+        aircraft.turnRateDegPerSec
+    ) || 0;
+    const sourceTimestampMs = Number(
+        aircraft.sourceTimestampMs
+    ) || targetTimestampMs;
+    const receivedAtMs = Number.isFinite(
+        Number(aircraft.receivedAtMs)
+    )
+        ? Number(aircraft.receivedAtMs)
+        : sourceTimestampMs;
+
+    if (
+        aircraft.isGrounded
+        || !Number.isFinite(baseLatitude)
+        || !Number.isFinite(baseLongitude)
+        || !Number.isFinite(speedMps)
+        || speedMps <= 0
+        || !Number.isFinite(baseTrack)
+    ) {
+        return {
+            lat: baseLatitude,
+            lon: baseLongitude,
+            track: Number.isFinite(baseTrack)
+                ? baseTrack
+                : 0
+        };
+    }
+
+    /*
+     * v14.72 — séparation des deux temps.
+     *
+     * Avant : la limite de 8 s partait de last_update SafeSky. Un point reçu
+     * avec 8 s d'âge avait donc déjà épuisé toute son extrapolation et restait
+     * immobile entre deux réponses.
+     *
+     * Maintenant :
+     * 1) on rattrape raisonnablement l'âge du point jusqu'à sa réception ;
+     * 2) on continue à le faire avancer pendant 15 s APRÈS cette réception.
+     */
+    const sourceCatchupSeconds = Math.max(
+        0,
+        Math.min(
+            TRAFFIC_SOURCE_CATCHUP_MAX_SECONDS,
+            (receivedAtMs - sourceTimestampMs) / 1000
+        )
+    );
+    const liveElapsedSeconds = Math.max(
+        0,
+        Math.min(
+            TRAFFIC_MAX_EXTRAPOLATION_SECONDS,
+            (targetTimestampMs - receivedAtMs) / 1000
+        )
+    );
+    const elapsedSeconds =
+        sourceCatchupSeconds + liveElapsedSeconds;
+
+    if (elapsedSeconds <= 0) {
+        return {
+            lat: baseLatitude,
+            lon: baseLongitude,
+            track: baseTrack
+        };
+    }
+
+    let latitude = baseLatitude;
+    let longitude = baseLongitude;
+    let track = baseTrack;
+    let remaining = elapsedSeconds;
+
+    /*
+     * Intégration par pas de 0,25 s : suffisamment fluide pour un virage tout
+     * en restant légère sur iPad, même avec plusieurs dizaines de trafics.
+     */
+    while (remaining > 0.0001) {
+        const step = Math.min(0.25, remaining);
+        const midTrack = track + turnRate * step * 0.5;
+        const destination = destinationFromBearingDistance(
+            latitude,
+            longitude,
+            midTrack,
+            speedMps * step
+        );
+
+        latitude = destination.lat;
+        longitude = destination.lon;
+        track = (
+            (
+                track + turnRate * step
+            ) % 360
+            + 360
+        ) % 360;
+        remaining -= step;
+    }
+
+    return {
+        lat: latitude,
+        lon: longitude,
+        track
+    };
+}
+
+function normalizeTrafficTrackDegrees(value) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric)) return null;
+    return ((numeric % 360) + 360) % 360;
+}
+
+function interpolateTrafficTrackDegrees(fromTrack, toTrack, progress) {
+    const from = normalizeTrafficTrackDegrees(fromTrack);
+    const to = normalizeTrafficTrackDegrees(toTrack);
+    if (!Number.isFinite(to)) return Number.isFinite(from) ? from : 0;
+    if (!Number.isFinite(from)) return to;
+
+    const shortestDelta = ((to - from + 540) % 360) - 180;
+    return normalizeTrafficTrackDegrees(from + shortestDelta * progress);
+}
+
+function interpolateTrafficLongitude(fromLongitude, toLongitude, progress) {
+    const from = Number(fromLongitude);
+    const to = Number(toLongitude);
+    if (!Number.isFinite(from)) return to;
+    if (!Number.isFinite(to)) return from;
+
+    const shortestDelta = ((to - from + 540) % 360) - 180;
+    return ((from + shortestDelta * progress + 540) % 360) - 180;
+}
+
+
+function applyTrafficMotionFallbackFromHistory(
+    previousAircraft,
+    aircraft
+) {
+    if (
+        !previousAircraft
+        || !aircraft
+        || aircraft.isGrounded
+    ) {
+        return aircraft;
+    }
+
+    const previousLat = Number(previousAircraft.lat);
+    const previousLon = Number(previousAircraft.lon);
+    const currentLat = Number(aircraft.lat);
+    const currentLon = Number(aircraft.lon);
+
+    if (
+        !Number.isFinite(previousLat)
+        || !Number.isFinite(previousLon)
+        || !Number.isFinite(currentLat)
+        || !Number.isFinite(currentLon)
+    ) {
+        return aircraft;
+    }
+
+    const previousSourceAt = Number(
+        previousAircraft.sourceTimestampMs
+    );
+    const currentSourceAt = Number(
+        aircraft.sourceTimestampMs
+    );
+    const previousReceivedAt = Number(
+        previousAircraft.receivedAtMs
+    );
+    const currentReceivedAt = Number(
+        aircraft.receivedAtMs
+    );
+
+    let elapsedSeconds = (
+        Number.isFinite(previousSourceAt)
+        && Number.isFinite(currentSourceAt)
+    )
+        ? (currentSourceAt - previousSourceAt) / 1000
+        : NaN;
+
+    if (
+        !Number.isFinite(elapsedSeconds)
+        || elapsedSeconds < TRAFFIC_MOTION_ESTIMATION_MIN_SECONDS
+        || elapsedSeconds > TRAFFIC_MOTION_ESTIMATION_MAX_SECONDS
+    ) {
+        elapsedSeconds = (
+            Number.isFinite(previousReceivedAt)
+            && Number.isFinite(currentReceivedAt)
+        )
+            ? (currentReceivedAt - previousReceivedAt) / 1000
+            : NaN;
+    }
+
+    if (
+        !Number.isFinite(elapsedSeconds)
+        || elapsedSeconds < TRAFFIC_MOTION_ESTIMATION_MIN_SECONDS
+        || elapsedSeconds > TRAFFIC_MOTION_ESTIMATION_MAX_SECONDS
+    ) {
+        return aircraft;
+    }
+
+    const distanceNm = calculateDistanceInNm(
+        previousLat,
+        previousLon,
+        currentLat,
+        currentLon
+    );
+
+    if (
+        !Number.isFinite(distanceNm)
+        || distanceNm < 0.002
+    ) {
+        return aircraft;
+    }
+
+    const estimatedSpeedKnots =
+        distanceNm * 3600 / elapsedSeconds;
+
+    if (
+        !Number.isFinite(estimatedSpeedKnots)
+        || estimatedSpeedKnots <= 1
+        || estimatedSpeedKnots
+            > TRAFFIC_MOTION_ESTIMATION_MAX_SPEED_KNOTS
+    ) {
+        return aircraft;
+    }
+
+    const currentSpeedKnots = Number(
+        aircraft.groundSpeedKnots
+    );
+
+    /*
+     * Certaines balises SafeSky fournissent la position et la route sans
+     * ground_speed exploitable. Le déplacement entre les deux derniers points
+     * devient alors la vitesse locale de secours.
+     */
+    if (
+        !Number.isFinite(currentSpeedKnots)
+        || currentSpeedKnots <= 1
+    ) {
+        aircraft.groundSpeedKnots =
+            estimatedSpeedKnots;
+        aircraft.gs =
+            `${Math.round(estimatedSpeedKnots)} kt`;
+    }
+
+    const currentTrackValue = aircraft.track;
+    if (
+        currentTrackValue === null
+        || currentTrackValue === undefined
+        || currentTrackValue === ''
+        || !Number.isFinite(Number(currentTrackValue))
+    ) {
+        aircraft.track = calculateBearing(
+            previousLat,
+            previousLon,
+            currentLat,
+            currentLon
+        );
+    }
+
+    return aircraft;
+}
+
+function getTrafficReconciledPosition(entry, predicted, nowMs) {
+    const correction = entry?.correction;
+    if (!correction) return predicted;
+
+    const durationMs = Math.max(
+        1,
+        Number(correction.durationMs)
+            || TRAFFIC_RECONCILIATION_DURATION_MS
+    );
+    const rawProgress = Math.max(
+        0,
+        Math.min(1, (nowMs - correction.startedAt) / durationMs)
+    );
+
+    /* Courbe douce sans ralentir durablement la trajectoire. */
+    const progress = rawProgress * rawProgress * (3 - 2 * rawProgress);
+    const rendered = {
+        lat: correction.fromLat
+            + (predicted.lat - correction.fromLat) * progress,
+        lon: interpolateTrafficLongitude(
+            correction.fromLon,
+            predicted.lon,
+            progress
+        ),
+        track: interpolateTrafficTrackDegrees(
+            correction.fromTrack,
+            predicted.track,
+            progress
+        )
+    };
+
+    if (rawProgress >= 1) {
+        entry.correction = null;
+    }
+
+    return rendered;
+}
+
+function applyTrafficMarkerTrack(marker, track) {
+    if (!marker || !Number.isFinite(Number(track))) return;
+
+    const normalizedTrack = normalizeTrafficTrackDegrees(track);
+    const markerElement = marker.getElement?.();
+    const arrow = markerElement?.querySelector(
+        '.traffic-aircraft-arrow'
+    );
+    const vector = markerElement?.querySelector(
+        '.traffic-aircraft-vector-wrap'
+    );
+    const aircraft = marker._npfTrafficAircraft;
+    const visual = getTrafficAircraftVisualDefinition(aircraft);
+
+    if (arrow && visual?.directional) {
+        arrow.style.transform =
+            `translate(-50%, -50%) rotate(${normalizedTrack}deg)`;
+    }
+
+    if (vector) {
+        vector.style.transform =
+            `rotate(${normalizedTrack}deg)`;
+    }
+}
+
+function prepareTrafficMarkerReconciliation(entry, aircraft, nowMs) {
+    if (!entry?.marker || !aircraft) return;
+
+    const markerLatLng = entry.marker.getLatLng?.();
+    const predicted = extrapolateTrafficAircraft(aircraft, nowMs);
+
+    entry.aircraft = aircraft;
+    entry.marker._npfTrafficAircraft = aircraft;
+
+    if (
+        !markerLatLng
+        || !predicted
+        || !Number.isFinite(markerLatLng.lat)
+        || !Number.isFinite(markerLatLng.lng)
+        || !Number.isFinite(predicted.lat)
+        || !Number.isFinite(predicted.lon)
+    ) {
+        entry.correction = null;
+        return;
+    }
+
+    const correctionDistanceNm = calculateDistanceInNm(
+        markerLatLng.lat,
+        markerLatLng.lng,
+        predicted.lat,
+        predicted.lon
+    );
+
+    if (
+        !Number.isFinite(correctionDistanceNm)
+        || correctionDistanceNm > TRAFFIC_RECONCILIATION_MAX_DISTANCE_NM
+    ) {
+        entry.correction = null;
+        entry.marker.setLatLng([predicted.lat, predicted.lon]);
+        entry.renderedTrack = predicted.track;
+        applyTrafficMarkerTrack(entry.marker, predicted.track);
+        return;
+    }
+
+    entry.correction = {
+        fromLat: markerLatLng.lat,
+        fromLon: markerLatLng.lng,
+        fromTrack: Number.isFinite(entry.renderedTrack)
+            ? entry.renderedTrack
+            : predicted.track,
+        startedAt: nowMs,
+        durationMs: TRAFFIC_RECONCILIATION_DURATION_MS
+    };
+}
+
+function removeTrafficMarkerEntry(key, entry) {
+    try {
+        if (entry?.marker && trafficLayer) {
+            trafficLayer.removeLayer(entry.marker);
+        }
+    } catch (_) {}
+    trafficMarkerRegistry.delete(key);
+}
+
+function clearTrafficDisplay() {
+    stopTrafficSmoothAnimation();
+
+    Array.from(trafficMarkerRegistry.entries())
+        .forEach(([key, entry]) => {
+            removeTrafficMarkerEntry(key, entry);
+        });
+
+    try {
+        trafficAdvisoryLayer?.clearLayers?.();
+    } catch (_) {}
+}
+
+function stopTrafficSmoothAnimation() {
+    if (trafficSmoothAnimationFrame) {
+        cancelAnimationFrame(
+            trafficSmoothAnimationFrame
+        );
+        trafficSmoothAnimationFrame = null;
+    }
+    trafficSmoothAnimationLastAt = 0;
+}
+
+function updateTrafficSmoothPositions(timestamp) {
+    if (
+        !showTrafficLayer
+        || !trafficLayer
+        || (
+            typeof document !== 'undefined'
+            && document.visibilityState === 'hidden'
+        )
+    ) {
+        stopTrafficSmoothAnimation();
+        return;
+    }
+
+    if (
+        timestamp - trafficSmoothAnimationLastAt
+        >= TRAFFIC_SMOOTH_FRAME_INTERVAL_MS
+    ) {
+        trafficSmoothAnimationLastAt = timestamp;
+        const now = Date.now();
+
+        trafficMarkerRegistry.forEach(entry => {
+            const marker = entry?.marker;
+            const aircraft = entry?.aircraft;
+            if (!marker || !aircraft) return;
+
+            const predicted = extrapolateTrafficAircraft(
+                aircraft,
+                now
+            );
+            if (
+                !predicted
+                || !Number.isFinite(predicted.lat)
+                || !Number.isFinite(predicted.lon)
+            ) {
+                return;
+            }
+
+            const rendered = getTrafficReconciledPosition(
+                entry,
+                predicted,
+                now
+            );
+
+            try {
+                marker.setLatLng([
+                    rendered.lat,
+                    rendered.lon
+                ]);
+                entry.renderedTrack = rendered.track;
+                applyTrafficMarkerTrack(
+                    marker,
+                    rendered.track
+                );
+            } catch (_) {}
+        });
+    }
+
+    trafficSmoothAnimationFrame =
+        requestAnimationFrame(
+            updateTrafficSmoothPositions
+        );
+}
+
+function startTrafficSmoothAnimation() {
+    if (
+        !showTrafficLayer
+        || !trafficMarkerRegistry.size
+        || trafficSmoothAnimationFrame
+    ) {
+        return;
+    }
+
+    trafficSmoothAnimationLastAt = 0;
+    trafficSmoothAnimationFrame =
+        requestAnimationFrame(
+            updateTrafficSmoothPositions
+        );
+}
+
+
 function buildTrafficMarkerIcon(aircraft) {
-    const track = Number.isFinite(aircraft.track) ? aircraft.track : 0;
+    const hasTrack = Number.isFinite(aircraft.track);
+    const track = hasTrack ? aircraft.track : 0;
     const settings = sanitizeTrafficSettings(trafficSettings);
-    const altitudeHtml = settings.showAltitudeLabel && aircraft.altitude && aircraft.altitude !== '--'
-        ? `<span class="traffic-aircraft-altitude-label">${escapeHtml(aircraft.altitude)}</span>`
-        : '';
+    const altitudeState = getTrafficRelativeAltitudeState(aircraft);
+    const visual = getTrafficAircraftVisualDefinition(aircraft);
+    const isTrackedAircraft = isTrafficAircraftTracked(aircraft);
+    const symbolRotation = visual.directional && hasTrack ? track : 0;
+    const vectorLengthPx = hasTrack
+        ? getTrafficSpeedVectorLengthPx(aircraft)
+        : 0;
+
+    /*
+     * L'étiquette reste opposée à la route, mais son BORD le plus proche est
+     * désormais ancré sur le point calculé. Sa largeur ne peut donc plus
+     * revenir recouvrir l'icône, même lorsqu'elle est placée à gauche ou à
+     * droite du trafic.
+     */
+    const markerCenterPx = 21;
+    const labelEdgeDistancePx = 24;
+    const trackRadians = track * Math.PI / 180;
+    const oppositeX = -Math.sin(trackRadians);
+    const oppositeY = Math.cos(trackRadians);
+    const altitudeLabelLeft = markerCenterPx
+        + oppositeX * labelEdgeDistancePx;
+    const altitudeLabelTop = markerCenterPx
+        + oppositeY * labelEdgeDistancePx;
+
+    /*
+     * Huit secteurs déterminent le coin ou le bord de l'étiquette à utiliser.
+     * Le placement reste stable lors des changements légers de route.
+     */
+    const labelSector = Math.round(
+        (((track % 360) + 360) % 360) / 45
+    ) % 8;
+    const labelAnchorClasses = [
+        'traffic-label-anchor-top',
+        'traffic-label-anchor-top-right',
+        'traffic-label-anchor-right',
+        'traffic-label-anchor-bottom-right',
+        'traffic-label-anchor-bottom',
+        'traffic-label-anchor-bottom-left',
+        'traffic-label-anchor-left',
+        'traffic-label-anchor-top-left'
+    ];
+    const labelAnchorClass = labelAnchorClasses[labelSector];
+
+    const permanentIdentifier = compactTrafficLabelText(
+        getTrafficPermanentIdentifier(aircraft),
+        12
+    );
+    const permanentType = compactTrafficLabelText(
+        getTrafficPermanentType(aircraft),
+        18
+    );
+    const permanentAltitude = (
+        aircraft.altitude
+        && aircraft.altitude !== '--'
+    ) ? aircraft.altitude : '';
+    const verticalTrend = getTrafficVerticalTrend(aircraft);
+
+    const firstLineParts = [
+        permanentIdentifier,
+        permanentType
+    ].filter(Boolean);
+
+    const secondLineParts = [
+        permanentAltitude,
+        verticalTrend.symbol
+    ].filter(Boolean);
+
+    const altitudeHtml = (
+        settings.showAltitudeLabel
+        && (firstLineParts.length || secondLineParts.length)
+    ) ? `
+        <span class="traffic-aircraft-altitude-label ${labelAnchorClass}"
+              style="--traffic-alt-left:${altitudeLabelLeft.toFixed(1)}px;--traffic-alt-top:${altitudeLabelTop.toFixed(1)}px;">
+            ${firstLineParts.length ? `
+                <span class="traffic-label-line traffic-label-line-primary">
+                    ${firstLineParts.map(escapeHtml).join('<span class="traffic-label-space"> </span>')}
+                </span>
+            ` : ''}
+            ${secondLineParts.length ? `
+                <span class="traffic-label-line traffic-label-line-secondary">
+                    ${permanentAltitude ? `<span>${escapeHtml(permanentAltitude)}</span>` : ''}
+                    ${verticalTrend.symbol ? `<span class="traffic-vertical-trend ${verticalTrend.className}" aria-label="${escapeHtml(verticalTrend.label)}">${escapeHtml(verticalTrend.symbol)}</span>` : ''}
+                </span>
+            ` : ''}
+        </span>
+    ` : '';
+
+    /*
+     * v14.26 — chaque catégorie fournit son propre pictogramme SVG, composé de
+     * formes simples proches du langage graphique montré dans SafeSky.
+     */
+    const symbolSvg = `<svg viewBox="0 0 64 64" preserveAspectRatio="xMidYMid meet" focusable="false" aria-hidden="true">${visual.svg}</svg>`;
+
+    const vectorHtml = buildTrafficVectorHtml(
+        aircraft,
+        track,
+        vectorLengthPx
+    );
 
     return L.divIcon({
         className: 'traffic-aircraft-icon',
-        html: `<span class="traffic-aircraft-symbol-wrap"><span class="traffic-aircraft-vector-wrap" style="transform: rotate(${track}deg);"><span class="traffic-aircraft-dotted-vector"></span></span><span class="traffic-aircraft-arrow" style="transform: translate(-50%, -50%) rotate(${track}deg);">▲</span>${altitudeHtml}</span>`,
-        iconSize: [128, 128],
-        iconAnchor: [64, 64],
-        popupAnchor: [0, -52]
+        html: `<span class="traffic-aircraft-symbol-wrap ${altitudeState.className} ${aircraft.isGrounded ? 'traffic-status-grounded' : 'traffic-status-airborne'} traffic-type-${visual.className}${isTrackedAircraft ? ' traffic-aircraft-tracked' : ''}">${vectorHtml}<span class="traffic-aircraft-arrow" aria-label="${escapeHtml(visual.label)}" style="transform: translate(-50%, -50%) rotate(${symbolRotation}deg);">${symbolSvg}</span>${altitudeHtml}</span>`,
+        iconSize: [42, 42],
+        iconAnchor: [21, 21],
+        popupAnchor: [0, -13]
     });
+}
+
+function buildTrafficAircraftPopupHtml(
+    ac,
+    {
+        useAroundAltitude,
+        relativeMinAltitudeFt,
+        relativeMaxAltitudeFt,
+        useGroundToAboveAltitude,
+        groundToAboveMaxAltitudeFt
+    }
+) {
+    const title = escapeHtml(
+        ac.registration
+        || ac.callsign
+        || ac.hex
+        || 'Trafic'
+    );
+    const displayType = getTrafficTypeDisplayLabel(ac);
+    const aircraftModel = getTrafficAircraftModel(ac);
+    const companyName = getTrafficCompanyName(ac);
+    const subtitle = [
+        displayType,
+        ac.source,
+        ac.registration,
+        ac.hex
+    ].filter(Boolean).map(escapeHtml).join(' · ');
+    const reference = ac._trafficReference;
+    const distance = reference ? reference.distance : null;
+    const referenceLabel = reference?.point?.label
+        ? escapeHtml(reference.point.label)
+        : '';
+    const altitudeState = getTrafficRelativeAltitudeState(ac);
+    const trackedTrafficEntry = findTrackedTrafficEntryForAircraft(ac);
+    const permanentTrackedTraffic = isPermanentTrackedTrafficEntry(
+        trackedTrafficEntry
+    );
+    const relativeAltitudeText = Number.isFinite(altitudeState.deltaFt)
+        ? `${altitudeState.deltaFt > 0 ? '+' : ''}${altitudeState.deltaFt} ft`
+        : '--';
+
+    return `
+        <div class="traffic-popup">
+            <div class="traffic-popup-title">${title}</div>
+            ${subtitle ? `<div class="traffic-popup-subtitle">${subtitle}</div>` : ''}
+            ${companyName ? `<div>Compagnie : <b>${escapeHtml(companyName)}</b></div>` : ''}
+            ${aircraftModel ? `<div>Type d’avion : <b>${escapeHtml(aircraftModel)}</b></div>` : ''}
+            ${ac.registration ? `<div>Immatriculation : <b>${escapeHtml(ac.registration)}</b></div>` : ''}
+            ${ac.callsign && ac.callsign !== ac.registration ? `<div>Indicatif : <b>${escapeHtml(ac.callsign)}</b></div>` : ''}
+            <div>Catégorie : <b>${escapeHtml(displayType)}</b></div>
+            <div>Altitude : <b>${escapeHtml(ac.altitude)}</b></div>
+            <div>Écart avec moi : <b>${escapeHtml(relativeAltitudeText)}</b> — ${escapeHtml(altitudeState.label)}</div>
+            <div>Vitesse sol : <b>${escapeHtml(ac.gs)}</b></div>
+            <div>Route : <b>${Number.isFinite(ac.track) ? Math.round(ac.track) + '°' : '--'}</b></div>
+            ${Number.isFinite(ac.turnRateDegPerSec) ? `<div>Taux de virage : <b>${ac.turnRateDegPerSec > 0 ? '+' : ''}${Number(ac.turnRateDegPerSec).toFixed(1)}°/s</b></div>` : ''}
+            ${Number.isFinite(ac.verticalRateFpm) ? `<div>Vitesse verticale : <b>${ac.verticalRateFpm > 0 ? '+' : ''}${Math.round(ac.verticalRateFpm)} ft/min</b></div>` : ''}
+            ${ac.remarks ? `<div>Remarque : <b>${escapeHtml(ac.remarks)}</b></div>` : ''}
+            ${Number.isFinite(distance) ? `<div>Distance ${referenceLabel ? `à ${referenceLabel}` : ''} : <b>${Math.round(distance)} Nm</b></div>` : ''}
+            <div>Âge position : <b>${escapeHtml(formatTrafficAge(ac.seenPos))}</b></div>
+            ${useAroundAltitude ? `<div>Filtre altitude : <b>${Math.round(relativeMinAltitudeFt)} / ${Math.round(relativeMaxAltitudeFt)} ft</b></div>` : ''}
+            ${useGroundToAboveAltitude ? `<div>Filtre altitude : <b>sol / ${Math.round(groundToAboveMaxAltitudeFt)} ft</b></div>` : ''}
+            ${ac.hex ? `<button type="button" class="traffic-popup-track-button"${permanentTrackedTraffic ? ' disabled title="Indicatif permanent intégré à NPF"' : ''}>${permanentTrackedTraffic ? 'Suivi permanent' : (trackedTrafficEntry ? 'Retirer de la liste suivie' : 'Ajouter à la liste suivie')}</button>` : ''}
+            ${ac.hex ? `<button type="button" class="traffic-popup-own-button">${isOwnTrafficAircraft(ac) ? 'Mon avion masqué' : 'Définir comme mon avion et masquer'}</button>` : ''}
+            <div class="traffic-popup-warning">Trafic SafeSky/ADS-B indicatif — non certifié</div>
+        </div>`;
+}
+
+function installTrafficMarkerPopupInteraction(marker) {
+    if (!marker || marker._npfTrafficPopupInteractionInstalled) return;
+    marker._npfTrafficPopupInteractionInstalled = true;
+
+    marker.on('popupopen', () => {
+        const ac = marker._npfTrafficAircraft;
+        const popupElement = marker.getPopup()?.getElement?.();
+        const trackButton = popupElement?.querySelector(
+            '.traffic-popup-track-button'
+        );
+        const ownAircraftButton = popupElement?.querySelector(
+            '.traffic-popup-own-button'
+        );
+
+        if (trackButton && ac?.hex) {
+            const updateTrackButtonState = () => {
+                const currentAircraft = marker._npfTrafficAircraft;
+                const trackedEntry = findTrackedTrafficEntryForAircraft(
+                    currentAircraft
+                );
+                const permanentEntry = isPermanentTrackedTrafficEntry(
+                    trackedEntry
+                );
+
+                trackButton.disabled = permanentEntry;
+                trackButton.textContent = permanentEntry
+                    ? 'Suivi permanent'
+                    : (trackedEntry
+                        ? 'Retirer de la liste suivie'
+                        : 'Ajouter à la liste suivie');
+                trackButton.title = permanentEntry
+                    ? 'Indicatif permanent intégré à NPF'
+                    : '';
+            };
+
+            updateTrackButtonState();
+            trackButton.onclick = () => {
+                const currentAircraft = marker._npfTrafficAircraft;
+                if (!currentAircraft?.hex) return;
+
+                const trackedEntry = findTrackedTrafficEntryForAircraft(
+                    currentAircraft
+                );
+                if (isPermanentTrackedTrafficEntry(trackedEntry)) {
+                    updateTrackButtonState();
+                    return;
+                }
+
+                if (trackedEntry) {
+                    removeTrackedTrafficIdentifier(trackedEntry.id);
+                } else {
+                    addTrackedTrafficIdentifier(currentAircraft);
+                }
+                updateTrackButtonState();
+            };
+        }
+
+        if (ownAircraftButton && ac?.hex) {
+            ownAircraftButton.onclick = () => {
+                const currentAircraft = marker._npfTrafficAircraft;
+                if (!currentAircraft?.hex) return;
+                setOwnTrafficAircraftSession(currentAircraft);
+            };
+        }
+    });
+}
+
+/*
+ * v14.57 — fermeture de la fiche trafic par clic réel sur le fond de carte.
+ * Le déplacement, le zoom, le pincement et la molette ne ferment pas la fiche.
+ */
+function closeOpenTrafficAircraftPopup() {
+    let closedOne = false;
+
+    trafficMarkerRegistry.forEach(entry => {
+        const marker = entry?.marker;
+        if (
+            !marker
+            || typeof marker.isPopupOpen !== 'function'
+            || !marker.isPopupOpen()
+        ) {
+            return;
+        }
+
+        try {
+            marker.closePopup();
+            closedOne = true;
+        } catch (_) {}
+    });
+
+    return closedOne;
+}
+
+function installTrafficPopupMapDismissInteraction() {
+    if (
+        !map
+        || typeof map.getContainer !== 'function'
+        || map.__npfTrafficPopupMapDismissInstalled
+    ) {
+        return;
+    }
+
+    const container = map.getContainer();
+    if (!container) return;
+
+    map.__npfTrafficPopupMapDismissInstalled = true;
+
+    let startPoint = null;
+    let touchHadMultipleFingers = false;
+    let gestureMoved = false;
+    let suppressMapClickUntil = 0;
+    let pendingMapCloseTimer = null;
+
+    const cancelPendingMapClose = () => {
+        if (!pendingMapCloseTimer) return;
+        clearTimeout(pendingMapCloseTimer);
+        pendingMapCloseTimer = null;
+    };
+
+    const getEventPoint = event => {
+        const touch = event?.touches?.[0]
+            || event?.changedTouches?.[0]
+            || null;
+        const source = touch || event;
+        const x = Number(source?.clientX);
+        const y = Number(source?.clientY);
+        return Number.isFinite(x) && Number.isFinite(y)
+            ? { x, y }
+            : null;
+    };
+
+    const eventTargetsMapBackground = event => {
+        const target = event?.originalEvent?.target || event?.target;
+        if (!target || typeof target.closest !== 'function') return true;
+        return !target.closest(
+            '.leaflet-popup, .leaflet-marker-icon, .leaflet-control, button, input, select, textarea, a'
+        );
+    };
+
+    const beginGesture = event => {
+        touchHadMultipleFingers = Boolean(
+            event?.touches && event.touches.length > 1
+        );
+        gestureMoved = touchHadMultipleFingers;
+        startPoint = getEventPoint(event);
+
+        if (touchHadMultipleFingers) {
+            suppressMapClickUntil = Date.now() + 450;
+        }
+    };
+
+    const moveGesture = event => {
+        if (event?.touches && event.touches.length > 1) {
+            touchHadMultipleFingers = true;
+            gestureMoved = true;
+            suppressMapClickUntil = Date.now() + 450;
+            return;
+        }
+
+        if (!startPoint) return;
+        const point = getEventPoint(event);
+        if (!point) return;
+
+        if (
+            Math.hypot(
+                point.x - startPoint.x,
+                point.y - startPoint.y
+            ) > 8
+        ) {
+            gestureMoved = true;
+            suppressMapClickUntil = Date.now() + 350;
+        }
+    };
+
+    const endGesture = () => {
+        if (gestureMoved || touchHadMultipleFingers) {
+            suppressMapClickUntil = Math.max(
+                suppressMapClickUntil,
+                Date.now() + 300
+            );
+        }
+        startPoint = null;
+        gestureMoved = false;
+        touchHadMultipleFingers = false;
+    };
+
+    container.addEventListener('touchstart', beginGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('touchmove', moveGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('touchend', endGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('touchcancel', endGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('pointerdown', beginGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('pointermove', moveGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('pointerup', endGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('pointercancel', endGesture, {
+        passive: true,
+        capture: true
+    });
+    container.addEventListener('wheel', () => {
+        cancelPendingMapClose();
+        suppressMapClickUntil = Date.now() + 350;
+    }, {
+        passive: true,
+        capture: true
+    });
+
+    map.on('dragstart zoomstart', () => {
+        cancelPendingMapClose();
+        suppressMapClickUntil = Date.now() + 350;
+    });
+    map.on('dragend zoomend', () => {
+        suppressMapClickUntil = Math.max(
+            suppressMapClickUntil,
+            Date.now() + 220
+        );
+    });
+
+    map.on('dblclick', cancelPendingMapClose);
+
+    map.on('click', event => {
+        if (Date.now() < suppressMapClickUntil) return;
+        if (!eventTargetsMapBackground(event)) return;
+
+        /*
+         * Petit délai pour distinguer le clic simple d'un double appui de zoom.
+         * Tout début de déplacement ou de zoom annule cette fermeture.
+         */
+        cancelPendingMapClose();
+        pendingMapCloseTimer = setTimeout(() => {
+            pendingMapCloseTimer = null;
+            if (Date.now() < suppressMapClickUntil) return;
+            closeOpenTrafficAircraftPopup();
+        }, 320);
+    });
+}
+
+function updateTrafficMarkerPopup(marker, popupHtml) {
+    const popupOptions = {
+        autoPan: false,
+        closeOnClick: false,
+        closeButton: true,
+        autoClose: true,
+        offset: L.point(0, 0),
+        className: 'traffic-aircraft-popup'
+    };
+
+    const popup = marker.getPopup?.();
+    if (popup) {
+        popup.setContent(popupHtml);
+    } else {
+        marker.bindPopup(popupHtml, popupOptions);
+    }
+
+    installTrafficMarkerPopupInteraction(marker);
 }
 
 function renderTrafficAircraft(aircraftList, meta = {}) {
     if (!trafficLayer) return;
-    trafficLayer.clearLayers();
+
+    if (meta?.skipSnapshot !== true) {
+        lastTrafficAircraftSnapshot = Array.isArray(aircraftList)
+            ? aircraftList.slice()
+            : [];
+        lastTrafficRenderMeta = {
+            ...meta,
+            points: Array.isArray(meta?.points)
+                ? meta.points.map(point => ({ ...point }))
+                : meta?.points
+        };
+    }
+
+    let openTrafficPopupKey = '';
+    trafficMarkerRegistry.forEach((entry, key) => {
+        if (
+            !openTrafficPopupKey
+            && entry?.marker
+            && typeof entry.marker.isPopupOpen === 'function'
+            && entry.marker.isPopupOpen()
+        ) {
+            openTrafficPopupKey = key;
+        }
+    });
 
     const settings = sanitizeTrafficSettings(trafficSettings);
-    const points = Array.isArray(meta.points) && meta.points.length ? meta.points : (meta.point ? [meta.point] : []);
+    const advisoryCount = renderSafeSkyAdvisories(aircraftList);
+    const points = Array.isArray(meta.points) && meta.points.length
+        ? meta.points
+        : (meta.point ? [meta.point] : []);
+    const showAllTraffic = true;
     const ownAltitudeFt = getOwnTrafficAltitudeFeet();
-    const useRelativeAltitude = settings.relativeAltitudeEnabled && Number.isFinite(ownAltitudeFt);
-    const relativeMinAltitudeFt = useRelativeAltitude ? ownAltitudeFt - settings.relativeAltitudeBandFt : null;
-    const relativeMaxAltitudeFt = useRelativeAltitude ? ownAltitudeFt + settings.relativeAltitudeBandFt : null;
+
+    const useAroundAltitude = (
+        settings.altitudeFilterMode === 'around'
+        && Number.isFinite(ownAltitudeFt)
+    );
+    const useGroundToAboveAltitude = (
+        settings.altitudeFilterMode === 'ground'
+        && Number.isFinite(ownAltitudeFt)
+    );
+
+    const relativeMinAltitudeFt = useAroundAltitude
+        ? ownAltitudeFt - settings.relativeAltitudeBandFt
+        : null;
+    const relativeMaxAltitudeFt = useAroundAltitude
+        ? ownAltitudeFt + settings.relativeAltitudeBandFt
+        : null;
+    const groundToAboveMaxAltitudeFt = useGroundToAboveAltitude
+        ? ownAltitudeFt + settings.groundToAboveBandFt
+        : null;
+
+    const trackedIdentifierSet = getTrackedTrafficIdentifierSet();
     const uniqueAircraft = [];
     const seenAircraft = new Set();
 
-    aircraftList
+    (Array.isArray(aircraftList) ? aircraftList : [])
         .map(normalizeTrafficAircraft)
         .filter(Boolean)
-        .filter(ac => !Number.isFinite(ac.seenPos) || ac.seenPos <= TRAFFIC_MAX_SEEN_SECONDS)
-        .filter(ac => settings.relativeAltitudeEnabled || ac.altitudeFeet === null || ac.altitudeFeet >= settings.minAltitudeFt)
-        .filter(ac => settings.relativeAltitudeEnabled || settings.maxAltitudeFt === null || ac.altitudeFeet === null || ac.altitudeFeet <= settings.maxAltitudeFt)
-        .filter(ac => !useRelativeAltitude || ac.altitudeFeet === null || (ac.altitudeFeet >= relativeMinAltitudeFt && ac.altitudeFeet <= relativeMaxAltitudeFt))
+        .map(ac => {
+            const temporaryOverride = getTemporaryTrafficDisplayOverride(ac);
+            if (temporaryOverride) {
+                ac.forceDisplay = true;
+                ac.forceGroundDisplay = Boolean(
+                    temporaryOverride.forceGroundDisplay
+                );
+            }
+            return ac;
+        })
+        .filter(ac => !isOwnTrafficAircraft(ac))
+        .filter(ac => (
+            ac.forceGroundDisplay
+            || settings.showGroundTraffic
+            || !ac.isGrounded
+        ))
+        .filter(ac => (
+            ac.forceDisplay
+            || !Number.isFinite(ac.seenPos)
+            || ac.seenPos <= TRAFFIC_MAX_SEEN_SECONDS
+        ))
+        .filter(ac => (
+            ac.forceDisplay
+            || settings.altitudeFilterMode !== 'absolute'
+            || ac.altitudeFeet === null
+            || ac.altitudeFeet >= settings.minAltitudeFt
+        ))
+        .filter(ac => (
+            ac.forceDisplay
+            || settings.altitudeFilterMode !== 'absolute'
+            || settings.maxAltitudeFt === null
+            || ac.altitudeFeet === null
+            || ac.altitudeFeet <= settings.maxAltitudeFt
+        ))
+        .filter(ac => (
+            ac.forceDisplay
+            || !useAroundAltitude
+            || ac.altitudeFeet === null
+            || (
+                ac.altitudeFeet >= relativeMinAltitudeFt
+                && ac.altitudeFeet <= relativeMaxAltitudeFt
+            )
+        ))
+        .filter(ac => (
+            ac.forceDisplay
+            || !useGroundToAboveAltitude
+            || ac.altitudeFeet === null
+            || ac.altitudeFeet <= groundToAboveMaxAltitudeFt
+        ))
+        .filter(ac => (
+            !settings.onlyTrackedIdentifiers
+            || ac.forceDisplay
+            || trackedIdentifierSet.has(
+                String(ac.hex || '').toUpperCase()
+            )
+            || isTrafficAircraftTracked(ac)
+        ))
         .forEach(ac => {
             const reference = getNearestTrafficReference(ac, points);
-            if (points.length && (!reference || reference.distance > settings.radiusNm + 0.5)) return;
-            ac._trafficReference = reference;
+
+            if (
+                !ac.forceDisplay
+                && !showAllTraffic
+                && points.length
+                && (
+                    !reference
+                    || reference.distance > settings.radiusNm + 0.5
+                )
+            ) {
+                return;
+            }
+
+            ac._trafficReference = showAllTraffic ? null : reference;
             const key = buildTrafficAircraftKey(ac);
             if (seenAircraft.has(key)) return;
             seenAircraft.add(key);
             uniqueAircraft.push(ac);
         });
 
-    const aircraft = uniqueAircraft.slice(0, settings.maxAircraft);
+    const renderNow = Date.now();
+    const activeAircraftKeys = new Set();
 
-    aircraft.forEach(ac => {
-        const marker = L.marker([ac.lat, ac.lon], {
-            icon: buildTrafficMarkerIcon(ac),
-            pane: 'trafficPane',
-            zIndexOffset: 7000,
-            keyboard: false
+    uniqueAircraft.forEach(ac => {
+        const aircraftKey = buildTrafficAircraftKey(ac);
+        activeAircraftKeys.add(aircraftKey);
+
+        let entry = trafficMarkerRegistry.get(aircraftKey);
+
+        if (entry?.aircraft) {
+            applyTrafficMotionFallbackFromHistory(
+                entry.aircraft,
+                ac
+            );
+        }
+
+        const popupHtml = buildTrafficAircraftPopupHtml(ac, {
+            useAroundAltitude,
+            relativeMinAltitudeFt,
+            relativeMaxAltitudeFt,
+            useGroundToAboveAltitude,
+            groundToAboveMaxAltitudeFt
         });
+        const nextIcon = buildTrafficMarkerIcon(ac);
+        const nextIconSignature = String(
+            nextIcon?.options?.html || ''
+        );
 
-        const title = escapeHtml(ac.callsign);
-        const subtitle = [ac.type, ac.registration, ac.hex].filter(Boolean).map(escapeHtml).join(' · ');
-        const reference = ac._trafficReference;
-        const distance = reference ? reference.distance : null;
-        const referenceLabel = reference?.point?.label ? escapeHtml(reference.point.label) : '';
-        const popup = `
-            <div class="traffic-popup">
-                <div class="traffic-popup-title">${title}</div>
-                ${subtitle ? `<div class="traffic-popup-subtitle">${subtitle}</div>` : ''}
-                <div>Altitude : <b>${escapeHtml(ac.altitude)}</b></div>
-                <div>Vitesse sol : <b>${escapeHtml(ac.gs)}</b></div>
-                <div>Route : <b>${Number.isFinite(ac.track) ? Math.round(ac.track) + '°' : '--'}</b></div>
-                ${Number.isFinite(distance) ? `<div>Distance ${referenceLabel ? `à ${referenceLabel}` : ''} : <b>${Math.round(distance)} Nm</b></div>` : ''}
-                <div>Âge position : <b>${escapeHtml(formatTrafficAge(ac.seenPos))}</b></div>
-                ${useRelativeAltitude ? `<div>Filtre altitude GPS : <b>${Math.round(relativeMinAltitudeFt)} / ${Math.round(relativeMaxAltitudeFt)} ft</b></div>` : ''}
-                <div class="traffic-popup-warning">ADS-B indicatif — non certifié</div>
-            </div>`;
-        marker.bindPopup(popup);
-        marker.bindTooltip(title, { direction: 'top', offset: [0, -10], className: 'traffic-tooltip' });
+        if (entry?.marker) {
+            prepareTrafficMarkerReconciliation(
+                entry,
+                ac,
+                renderNow
+            );
+
+            entry.marker._trafficAircraftKey = aircraftKey;
+            entry.marker._npfTrafficAircraft = ac;
+
+            if (entry.iconSignature !== nextIconSignature) {
+                entry.marker.setIcon(nextIcon);
+                entry.iconSignature = nextIconSignature;
+                applyTrafficMarkerTrack(
+                    entry.marker,
+                    entry.renderedTrack
+                );
+            }
+
+            updateTrafficMarkerPopup(
+                entry.marker,
+                popupHtml
+            );
+            return;
+        }
+
+        const predicted = extrapolateTrafficAircraft(
+            ac,
+            renderNow
+        ) || { lat: ac.lat, lon: ac.lon, track: ac.track };
+        const marker = L.marker(
+            [predicted.lat, predicted.lon],
+            {
+                icon: nextIcon,
+                pane: 'trafficPane',
+                zIndexOffset: 7000,
+                keyboard: false
+            }
+        );
+
+        marker._trafficAircraftKey = aircraftKey;
+        marker._npfTrafficAircraft = ac;
+        updateTrafficMarkerPopup(marker, popupHtml);
         marker.addTo(trafficLayer);
+
+        entry = {
+            marker,
+            aircraft: ac,
+            renderedTrack: predicted.track,
+            correction: null,
+            iconSignature: nextIconSignature
+        };
+        trafficMarkerRegistry.set(aircraftKey, entry);
+        applyTrafficMarkerTrack(marker, predicted.track);
     });
 
-    lastTrafficDisplayedCount = aircraft.length;
-    refreshTrafficButtonState(aircraft.length);
+    Array.from(trafficMarkerRegistry.entries())
+        .forEach(([key, entry]) => {
+            if (!activeAircraftKeys.has(key)) {
+                removeTrafficMarkerEntry(key, entry);
+            }
+        });
+
+    if (openTrafficPopupKey) {
+        const popupEntry = trafficMarkerRegistry.get(
+            openTrafficPopupKey
+        );
+        if (
+            popupEntry?.marker
+            && !popupEntry.marker.isPopupOpen?.()
+        ) {
+            requestAnimationFrame(() => {
+                try {
+                    if (
+                        showTrafficLayer
+                        && map
+                        && trafficLayer
+                        && map.hasLayer(trafficLayer)
+                    ) {
+                        popupEntry.marker.openPopup();
+                    }
+                } catch (_) {}
+            });
+        }
+    }
+
+    lastTrafficDisplayedCount = uniqueAircraft.length;
+    refreshTrackedTrafficListUi();
+    refreshTrafficButtonState(uniqueAircraft.length);
     updateTrafficStatus({
         visible: showTrafficLayer,
         state: 'ok',
-        count: aircraft.length,
+        count: uniqueAircraft.length,
         pointLabel: buildTrafficReferenceLabel(points),
-        now: meta.now || Date.now()
+        message: advisoryCount
+            ? `${advisoryCount} zone(s) drone`
+            : '',
+        now: meta.now || renderNow
+    });
+
+    startTrafficSmoothAnimation();
+}
+
+function redrawTrafficLayerFromSnapshot() {
+    if (
+        !showTrafficLayer
+        || !trafficLayer
+        || !Array.isArray(lastTrafficAircraftSnapshot)
+        || !lastTrafficAircraftSnapshot.length
+    ) {
+        return;
+    }
+
+    const currentPoints = getTrafficQueryPoints();
+    renderTrafficAircraft(lastTrafficAircraftSnapshot, {
+        ...(lastTrafficRenderMeta || {}),
+        points: currentPoints.length
+            ? currentPoints
+            : (lastTrafficRenderMeta?.points || []),
+        now: Date.now(),
+        skipSnapshot: true
     });
 }
 
@@ -3991,23 +13982,43 @@ function refreshTrafficButtonState(count = null) {
         }
     }
 
+    const hasSuccessfulTrafficConnection = (
+        Number.isFinite(Number(lastTrafficRefreshAt))
+        && Number(lastTrafficRefreshAt) > 0
+        && !lastTrafficError
+    );
+
     button.classList.toggle('active', showTrafficLayer);
     button.classList.toggle('loading', isTrafficLoading);
-    button.classList.toggle('traffic-state-loading', !!showTrafficLayer && isTrafficLoading);
-    button.classList.toggle('traffic-state-error', !!showTrafficLayer && !isTrafficLoading && !!lastTrafficError);
-    button.classList.toggle('traffic-state-ok', !!showTrafficLayer && !isTrafficLoading && !lastTrafficError);
+    button.classList.toggle(
+        'traffic-state-loading',
+        !!showTrafficLayer && isTrafficLoading && !hasSuccessfulTrafficConnection
+    );
+    button.classList.toggle(
+        'traffic-state-error',
+        !!showTrafficLayer && !isTrafficLoading && !!lastTrafficError
+    );
+    button.classList.toggle(
+        'traffic-state-ok',
+        !!showTrafficLayer
+            && !lastTrafficError
+            && (!isTrafficLoading || hasSuccessfulTrafficConnection)
+    );
     button.classList.toggle('traffic-state-idle', !showTrafficLayer);
     button.disabled = false;
     button.title = isTrafficLoading
-        ? `Chargement du trafic ADS-B… — ${getTrafficSettingsSummary()}`
-        : `Afficher/Masquer le trafic ADS-B indicatif — appui long: filtres — ${getTrafficSettingsSummary()}`;
+        ? `Chargement SafeSky… — ${getTrafficSettingsSummary()}`
+        : `SafeSky — afficher/masquer le trafic indicatif — appui long : filtres — ${getTrafficSettingsSummary()}`;
 
     if (countEl) {
         if (showTrafficLayer) {
-            if (lastTrafficError) {
+            /*
+             * v13.99 — le nombre reste stable pendant l'interrogation suivante.
+             * Il passe directement de l'ancienne valeur à la nouvelle valeur
+             * lorsque les données ont été reçues, sans étape « … ».
+             */
+            if (lastTrafficError && !isTrafficLoading) {
                 countEl.textContent = '!';
-            } else if (isTrafficLoading) {
-                countEl.textContent = '…';
             } else {
                 countEl.textContent = String(lastTrafficDisplayedCount);
             }
@@ -4022,16 +14033,20 @@ function refreshTrafficButtonState(count = null) {
 async function refreshTrafficLayer(options = {}) {
     const { force = false } = options;
     if (!showTrafficLayer || !trafficLayer) return;
+    if (isTrafficLoading && !force) return;
 
     const now = Date.now();
     if (!force && lastTrafficRefreshAt && now - lastTrafficRefreshAt < 4500) return;
 
     const points = getTrafficQueryPoints();
-    if (!points.length) {
+    const trackedIdentifiers =
+        getTrackedTrafficIdentifiers();
+
+    if (!points.length && !trackedIdentifiers.length) {
         lastTrafficError = 'Aucun point de référence';
         lastTrafficDisplayedCount = 0;
         refreshTrafficButtonState(0);
-        updateTrafficStatus({ state: 'error', message: 'Trafic ADS-B : aucun point de référence', visible: true });
+        updateTrafficStatus({ state: 'error', message: 'Trafic : aucun point de référence', visible: true });
         return;
     }
 
@@ -4040,9 +14055,10 @@ async function refreshTrafficLayer(options = {}) {
     updateTrafficStatus({ state: 'loading', visible: true });
 
     try {
-        const providers = Array.isArray(TRAFFIC_API_PROVIDERS) && TRAFFIC_API_PROVIDERS.length
+        const providers = Array.isArray(TRAFFIC_API_PROVIDERS)
+            && TRAFFIC_API_PROVIDERS.length
             ? TRAFFIC_API_PROVIDERS
-            : [{ label: TRAFFIC_PROVIDER_LABEL || 'ADS-B', baseUrl: 'https://opendata.adsb.fi/api/v2' }];
+            : [SAFESKY_PROVIDER];
         const errors = [];
         const combinedAircraft = [];
         const usedProviders = [];
@@ -4060,7 +14076,67 @@ async function refreshTrafficLayer(options = {}) {
             }
         }
 
-        if (!combinedAircraft.length && errors.length === points.length) {
+        /*
+         * Lorsque le filtre identifiers est actif, la réponse viewport ne
+         * contient plus les zones ADVISORY. Une seconde lecture non filtrée est
+         * alors limitée aux zones déclarées.
+         */
+        const settings = sanitizeTrafficSettings(trafficSettings);
+        if (
+            settings.onlyTrackedIdentifiers
+            && settings.showDroneAdvisories
+        ) {
+            for (const point of points) {
+                try {
+                    const url = new URL(
+                        buildTrafficApiUrl(
+                            point,
+                            SAFESKY_PROVIDER
+                        )
+                    );
+                    url.searchParams.delete('identifiers');
+                    const advisoryData = await fetchSafeSkyJson(url);
+                    combinedAircraft.push(
+                        ...extractTrafficAircraftList(
+                            advisoryData
+                        ).filter(isSafeSkyAdvisory)
+                    );
+                } catch (advisoryError) {
+                    console.warn(
+                        'Zones drone SafeSky indisponibles:',
+                        advisoryError
+                    );
+                }
+            }
+        }
+
+        if (trackedIdentifiers.length) {
+            try {
+                combinedAircraft.push(
+                    ...await fetchTrackedTrafficBeacons()
+                );
+                if (!usedProviders.includes('SafeSky direct')) {
+                    usedProviders.push('SafeSky direct');
+                }
+            } catch (trackedError) {
+                errors.push(
+                    `liste suivie: ${
+                        trackedError?.message
+                        || trackedError
+                    }`
+                );
+            }
+        }
+
+        combinedAircraft.push(
+            ...getTemporaryGlobalTrafficRaw()
+        );
+
+        if (
+            !combinedAircraft.length
+            && errors.length
+            && errors.length >= points.length
+        ) {
             throw new Error(errors.join(' / ') || 'aucune source disponible');
         }
 
@@ -4074,10 +14150,10 @@ async function refreshTrafficLayer(options = {}) {
     } catch (error) {
         lastTrafficError = error && error.message ? error.message : String(error);
         lastTrafficDisplayedCount = 0;
-        console.warn('Trafic ADS-B temporairement indisponible:', error);
-        if (trafficLayer) trafficLayer.clearLayers();
+        console.warn('Trafic temporairement indisponible:', error);
+        clearTrafficDisplay();
         refreshTrafficButtonState(0);
-        updateTrafficStatus({ state: 'error', visible: true, message: 'Trafic ADS-B temporairement indisponible — nouvelle tentative automatique' });
+        updateTrafficStatus({ state: 'error', visible: true, message: 'Trafic temporairement indisponible — nouvelle tentative automatique' });
     } finally {
         isTrafficLoading = false;
         refreshTrafficButtonState();
@@ -4086,6 +14162,14 @@ async function refreshTrafficLayer(options = {}) {
 
 function startTrafficAutoRefresh() {
     stopTrafficAutoRefresh();
+
+    if (
+        typeof document !== 'undefined'
+        && document.visibilityState === 'hidden'
+    ) {
+        return;
+    }
+
     trafficRefreshTimer = setInterval(() => {
         refreshTrafficLayer({ force: false, reason: 'timer' });
     }, TRAFFIC_REFRESH_INTERVAL_MS);
@@ -4103,7 +14187,7 @@ function toggleTrafficLayer(forceState = null) {
         showTrafficLayer = false;
         try { localStorage.setItem(TRAFFIC_LAYER_KEY, 'false'); } catch (_) {}
         stopTrafficAutoRefresh();
-        if (trafficLayer) trafficLayer.clearLayers();
+        clearTrafficDisplay();
         if (trafficLayer && map && map.hasLayer(trafficLayer)) map.removeLayer(trafficLayer);
         updateTrafficStatus({ visible: false });
         refreshTrafficButtonState(0);
@@ -4120,16 +14204,205 @@ function toggleTrafficLayer(forceState = null) {
         refreshTrafficLayer({ force: true, reason: 'toggle' });
     } else {
         stopTrafficAutoRefresh();
+        clearTrafficDisplay();
         lastTrafficDisplayedCount = 0;
-        if (trafficLayer) trafficLayer.clearLayers();
         if (trafficLayer && map && map.hasLayer(trafficLayer)) map.removeLayer(trafficLayer);
         refreshTrafficButtonState(0);
         updateTrafficStatus({ visible: false });
     }
+
+    refreshTrackedTrafficListUi();
 }
+
+async function testSafeSkyApi() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(
+        () => controller.abort(),
+        TRAFFIC_FETCH_TIMEOUT_MS
+    );
+
+    const testUrl = new URL(
+        SAFESKY_API_BASE_URL,
+        window.location.href
+    );
+    testUrl.searchParams.set(
+        'viewport',
+        '43.20,5.20,43.40,5.55'
+    );
+    testUrl.searchParams.set('show_grounded', 'true');
+
+    try {
+        const response = await fetch(testUrl.toString(), {
+            cache: 'no-store',
+            mode: 'cors',
+            credentials: 'omit',
+            referrerPolicy: 'no-referrer',
+            signal: controller.signal,
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json',
+                'x-api-key': SAFESKY_API_KEY
+            }
+        });
+
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (_) {
+            data = null;
+        }
+
+        if (!response.ok) {
+            throw new Error(
+                data?.error
+                || data?.message
+                || `HTTP ${response.status}`
+            );
+        }
+
+        if (!Array.isArray(data)) {
+            throw new Error(
+                'Réponse SafeSky inattendue'
+            );
+        }
+
+        return {
+            ok: true,
+            provider: 'SafeSky',
+            mode: 'direct',
+            count: data.length
+        };
+    } catch (error) {
+        if (
+            error instanceof TypeError
+            && /fetch/i.test(String(error.message || ''))
+        ) {
+            throw new Error(
+                'Appel direct SafeSky bloqué par le réseau ou le CORS'
+            );
+        }
+        throw error;
+    } finally {
+        clearTimeout(timeoutId);
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+        stopTrafficAutoRefresh();
+        stopTrafficSmoothAnimation();
+        stopSafeSkyOwnPublication();
+        return;
+    }
+
+    syncSafeSkyOwnPublication();
+
+    if (showTrafficLayer) {
+        startTrafficAutoRefresh();
+        startTrafficSmoothAnimation();
+        refreshTrafficLayer({
+            force: true,
+            reason: 'visibility-resume'
+        });
+    }
+}, { passive: true });
 
 window.toggleTrafficLayer = toggleTrafficLayer;
 window.refreshTrafficLayer = refreshTrafficLayer;
+window.testSafeSkyApi = testSafeSkyApi;
+window.searchSafeSkyBeaconExact = searchSafeSkyBeaconExact;
+window.fetchSafeSkyBeaconById = fetchSafeSkyBeaconById;
+window.getTrackedTrafficIdentifiers = getTrackedTrafficIdentifiers;
+window.testNamedPlacesSearch = async (
+    query = 'Blagon 33'
+) => {
+    const {
+        departmentFilter,
+        searchTerm
+    } = parseSearchDepartmentFilter(query);
+    const searchWords =
+        simplifyString(searchTerm)
+            .split(' ')
+            .filter(Boolean);
+
+    return {
+        results:
+            await searchNamedPlacesOffline(
+                searchTerm,
+                departmentFilter,
+                searchWords
+            ),
+        offline: true
+    };
+};
+window.getNamedPlacesSearchStatus = () => ({
+    databaseUrl:
+        NAMED_PLACES_OFFLINE_ARCHIVE_URL,
+    databaseReady:
+        Boolean(namedPlacesOfflineArchive),
+    departments:
+        Array.isArray(
+            namedPlacesOfflineIndex?.departments
+        )
+            ? namedPlacesOfflineIndex.departments
+            : [],
+    departmentCount:
+        Number(
+            namedPlacesOfflineIndex?.department_count
+            || 0
+        ),
+    totalCount:
+        Number(
+            namedPlacesOfflineIndex?.total_count
+            || 0
+        ),
+    loadedShardCount:
+        namedPlacesOfflineShardCache.size,
+    phoneticShardPrefixLength:
+        NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH,
+    phoneticShardGroupCount:
+        namedPlacesOfflineShardIdsByPrefix.size,
+    loadedRecordCount:
+        namedPlacesOfflineLoadedCount,
+    loadError:
+        namedPlacesOfflineLoadError,
+    localPhoneticScoringRetained: true,
+    onlineFallbackEnabled: false,
+    firstSearchWorksOffline: true,
+    nationwideOfflineEnabled: true
+});
+
+window.getSafeSkyIntegrationStatus = () => ({
+    codeReady: true,
+    mode: 'direct',
+    apiUrl: SAFESKY_API_BASE_URL,
+    apiKeyEmbedded: Boolean(SAFESKY_API_KEY),
+    trafficEnabled: !TRAFFIC_DISABLED_FOR_NOW,
+    safeSkyProviderActive: TRAFFIC_API_PROVIDERS.some(
+        provider => provider?.dataFormat === 'safesky'
+    ),
+    activeProviders: TRAFFIC_API_PROVIDERS
+        .map(provider => provider?.label)
+        .filter(Boolean),
+    refreshIntervalMs: TRAFFIC_REFRESH_INTERVAL_MS,
+    smoothInterpolationEnabled: true,
+    curvedTurnRateVectorEnabled: true,
+    trackedIdentifiers:
+        getTrackedTrafficIdentifiers().length,
+    droneAdvisoriesEnabled:
+        sanitizeTrafficSettings(
+            trafficSettings
+        ).showDroneAdvisories,
+    ownPositionPublicationAvailable: false,
+    ownPositionPublicationEnabled: false,
+    partialCallsignSearchEnabled: true,
+    partialCallsignSearchScope: 'zones NPF actives',
+    backgroundPollingDisabled: true
+});
+
+setTimeout(() => {
+    syncSafeSkyOwnPublication();
+}, 3500);
 
 function updateMapBingoDisplay() {
     const bingoDisplay = document.getElementById('bingo-map-display');
@@ -4167,7 +14440,7 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
     updateCommuneDisplay(commune);
 
     const { latitude_mairie: lat, longitude_mairie: lon, nom_standard: name } = commune;
-    // v2026.56 — après validation d'un feu, la barre de recherche est vidée.
+    // v13.54 — après validation d'un feu, la barre de recherche est vidée.
     // Le feu reste sélectionné via currentCommune + bandeau carte ; seul le texte de recherche est nettoyé.
     const fireSearchInput = document.getElementById('search-input');
     const fireResultsList = document.getElementById('results-list');
@@ -4210,9 +14483,16 @@ function displayCommuneDetails(commune, shouldFitBounds = true) {
 
     const numAirports = parseInt(document.getElementById('airport-count').value, 10);
     const closestAirports = getClosestAirports(lat, lon, numAirports);
+    const selectedPelicAirport = getSelectedPelicanAirport();
+    if (selectedPelicAirport && !disabledAirports.has(selectedPelicAirport.oaci) && !closestAirports.some(ap => ap.oaci === selectedPelicAirport.oaci)) {
+        closestAirports.push({
+            ...selectedPelicAirport,
+            distance: calculateDistanceInNm(lat, lon, selectedPelicAirport.lat, selectedPelicAirport.lon)
+        });
+    }
 
     const closestOACIs = new Set(closestAirports.map(ap => ap.oaci));
-    if (!selectedPelicanOACI || !closestOACIs.has(selectedPelicanOACI)) {
+    if (!selectedPelicanOACI || !closestOACIs.has(selectedPelicanOACI) || !isSelectablePelicanAirport(selectedPelicanOACI)) {
         selectedPelicanOACI = closestAirports.length > 0 ? closestAirports[0].oaci : null;
     }
 
@@ -4360,13 +14640,158 @@ function drawRoute(startLatLng, endLatLng, options = {}) {
 }
 
 
-function getClosestAirports(lat, lon, count) { const customPelican = otherAirports.filter(ap => customPelicanAirports.has(ap.oaci)); return [...pelicanAirports, ...customPelican].filter(ap => !disabledAirports.has(ap.oaci)).map(ap => ({ ...ap, distance: calculateDistanceInNm(lat, lon, ap.lat, ap.lon) })).sort((a, b) => a.distance - b.distance).slice(0, count); }
+function getPelicCandidateAirports() {
+    /*
+     * v13.59 — les terrains ajoutés manuellement comme PÉLIC sont traités
+     * comme de vrais pélicandromes pour les routes, les bingos et les calculs.
+     */
+    const merged = [...pelicanAirports];
+    otherAirports.forEach(ap => {
+        if (customPelicanAirports.has(ap.oaci) && !merged.some(existing => existing.oaci === ap.oaci)) {
+            merged.push(ap);
+        }
+    });
+    return merged;
+}
+
+function isSelectablePelicanAirport(oaci) {
+    const normalized = normalizeOaciCodeInput(oaci);
+    if (!normalized) return false;
+    return pelicanAirports.some(ap => ap.oaci === normalized) || customPelicanAirports.has(normalized);
+}
+
+function getSelectedPelicanAirport() {
+    if (!selectedPelicanOACI || !isSelectablePelicanAirport(selectedPelicanOACI)) return null;
+    return getAirportByOaci(selectedPelicanOACI);
+}
+
+function getClosestAirports(lat, lon, count) {
+    return getPelicCandidateAirports()
+        .filter(ap => !disabledAirports.has(ap.oaci))
+        .map(ap => ({ ...ap, distance: calculateDistanceInNm(lat, lon, ap.lat, ap.lon) }))
+        .sort((a, b) => a.distance - b.distance)
+        .slice(0, count);
+}
+
 function getAirportByOaci(oaci) {
-    return [...pelicanAirports, ...otherAirports].find(ap => ap.oaci === oaci) || null;
+    const normalized = normalizeOaciCodeInput(oaci);
+    return [...pelicanAirports, ...otherAirports].find(ap => ap.oaci === normalized) || null;
 }
 
 function normalizeOaciCodeInput(value) {
     return String(value || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+}
+
+/*
+ * v14.55 — destination aéroport temporaire et fermeture tactile fiable.
+ * Cette destination ne modifie ni le feu, ni la base, ni le pélicandrome, ni les
+ * calculs mission. Elle remplace uniquement la route GPS et le bandeau de carte.
+ */
+function getAllKnownAirportsForSearch() {
+    const unique = new Map();
+    [...pelicanAirports, ...otherAirports].forEach((airport) => {
+        const oaci = normalizeOaciCodeInput(airport?.oaci);
+        const lat = Number(airport?.lat);
+        const lon = Number(airport?.lon);
+        if (!oaci || oaci.length !== 4 || !Number.isFinite(lat) || !Number.isFinite(lon)) return;
+        if (!unique.has(oaci)) {
+            unique.set(oaci, {
+                oaci,
+                name: String(airport?.name || oaci).trim(),
+                lat,
+                lon
+            });
+        }
+    });
+    return [...unique.values()];
+}
+
+function searchAirportsByOaci(rawSearch) {
+    const raw = String(rawSearch || '').trim().toUpperCase();
+    if (!/^[A-Z0-9]{2,4}$/.test(raw)) return [];
+
+    return getAllKnownAirportsForSearch()
+        .filter(airport => airport.oaci.startsWith(raw))
+        .sort((left, right) => {
+            const exactDifference = Number(right.oaci === raw) - Number(left.oaci === raw);
+            if (exactDifference) return exactDifference;
+            return left.oaci.localeCompare(right.oaci, 'fr');
+        })
+        .slice(0, 8);
+}
+
+function clearAirportDestination({ restoreFire = true, redraw = true } = {}) {
+    if (!selectedAirportDestination) return false;
+    selectedAirportDestination = null;
+
+    if (redraw) {
+        if (userToTargetLayer) userToTargetLayer.clearLayers();
+        updateCommuneDisplay(restoreFire ? currentCommune : null);
+        drawUserToTargetRoute();
+
+        const communeDisplay = document.getElementById('commune-info-display');
+        const searchOverlay = document.getElementById('ui-overlay');
+        if (communeDisplay && (!searchOverlay || searchOverlay.style.display === 'none')) {
+            communeDisplay.style.display = currentCommune ? 'flex' : 'none';
+        }
+    }
+    return true;
+}
+
+function selectAirportDestination(airport) {
+    const normalized = getAirportByOaci(airport?.oaci);
+    if (!normalized) return false;
+
+    selectedAirportDestination = {
+        oaci: normalized.oaci,
+        name: normalized.name,
+        lat: Number(normalized.lat),
+        lon: Number(normalized.lon)
+    };
+
+    const searchInput = document.getElementById('search-input');
+    const resultsList = document.getElementById('results-list');
+    const clearSearchButton = document.getElementById('clear-search');
+    if (searchInput) searchInput.value = '';
+    if (resultsList) resultsList.style.display = 'none';
+    if (clearSearchButton) clearSearchButton.style.display = 'none';
+
+    if (!currentCommune) {
+        const bingoDisplay = document.getElementById('bingo-map-display');
+        if (bingoDisplay) bingoDisplay.style.display = 'none';
+    }
+
+    updateCommuneDisplay(currentCommune);
+    drawUserToTargetRoute();
+
+    if (!userMarker && typeof requestOneShotGps === 'function') {
+        requestOneShotGps({
+            silent: true,
+            highAccuracy: true,
+            timeout: 15000,
+            maximumAge: 600000
+        });
+    }
+
+    setTimeout(() => {
+        if (!map || !selectedAirportDestination) return;
+        const target = [selectedAirportDestination.lat, selectedAirportDestination.lon];
+        const gps = userMarker && typeof userMarker.getLatLng === 'function'
+            ? userMarker.getLatLng()
+            : null;
+        if (gps && Number.isFinite(gps.lat) && Number.isFinite(gps.lng)) {
+            map.fitBounds(L.latLngBounds([[gps.lat, gps.lng], target]).pad(0.25), {
+                animate: false
+            });
+        } else {
+            map.setView(target, Math.max(8, Number(map.getZoom()) || 8), {
+                animate: false
+            });
+        }
+    }, 250);
+
+    document.dispatchEvent(new Event('airportDestinationSelected'));
+    return true;
 }
 
 
@@ -4514,7 +14939,11 @@ function updateBaseLabels() {
         deroutFuelMiniPelicLabel.textContent = `Fuel mini 1 Lrg / Pélic (${pelicCode}) :`;
     }
 }
-function refreshUI() { drawPermanentAirportMarkers(); if (currentCommune) displayCommuneDetails(currentCommune, false); }
+function refreshUI() {
+    drawPermanentAirportMarkers();
+    drawNpfRunwayMapLayer();
+    if (currentCommune) displayCommuneDetails(currentCommune, false);
+}
 
 function initAirportPdfDB() {
     return new Promise((resolve, reject) => {
@@ -4552,12 +14981,39 @@ function initAirportPdfDB() {
 
 function normalizeAirportPdfOaciFromFilename(filename) {
     const baseName = String(filename || '').split(/[\\/]/).pop().trim();
+    const nameWithoutExt = baseName.replace(/\.pdf$/i, '').trim();
+    const simplifiedName = nameWithoutExt
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+
+    /*
+     * v13.66 — PDF commun FDF réduite :
+     * accepte "Doc Fdf Réduite.pdf" ou "Doc Fdf Réduité.pdf"
+     * et le stocke avec une clé unique, commune à tous les pélicandromes.
+     * v13.67 — accepte aussi "Carte Fréquences OPS.pdf" comme PDF commun.
+     */
+    if (simplifiedName === 'docfdfreduite') {
+        return FDF_REDUCED_PDF_KEY;
+    }
+    if (simplifiedName === 'cartefrequencesops') {
+        return OPS_FREQUENCIES_PDF_KEY;
+    }
+
     const match = baseName.match(/^([A-Z0-9]{4})\.pdf$/i);
     return match ? match[1].toUpperCase() : null;
 }
 
+function getAirportPdfDisplayLabel(recordOrKey) {
+    const key = typeof recordOrKey === 'string' ? recordOrKey : String((recordOrKey && recordOrKey.oaci) || '');
+    if (key === FDF_REDUCED_PDF_KEY) return FDF_REDUCED_PDF_LABEL;
+    if (key === OPS_FREQUENCIES_PDF_KEY) return OPS_FREQUENCIES_PDF_LABEL;
+    return key;
+}
+
 async function getAirportPdfRecord(oaci) {
-    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
     if (!safeOaci) return null;
     try {
         const pdfDb = await initAirportPdfDB();
@@ -4577,7 +15033,7 @@ async function getAirportPdfRecord(oaci) {
 async function importAirportPdfFiles(files = []) {
     const pdfFiles = Array.from(files || []).filter(file => file && /\.pdf$/i.test(file.name));
     if (!pdfFiles.length) {
-        alert('Sélectionne un ou plusieurs fichiers PDF nommés avec le code OACI, par exemple LFTW.pdf.');
+        alert('Sélectionne un ou plusieurs fichiers PDF : LFTW.pdf pour un aérodrome, Doc Fdf Réduité.pdf pour le document FDF réduit commun, ou Carte Fréquences OPS.pdf pour la carte fréquences OPS.');
         return;
     }
 
@@ -4591,7 +15047,7 @@ async function importAirportPdfFiles(files = []) {
         }
         records.push({
             oaci,
-            filename: `${oaci}.pdf`,
+            filename: oaci === FDF_REDUCED_PDF_KEY ? FDF_REDUCED_PDF_FILENAME : (oaci === OPS_FREQUENCIES_PDF_KEY ? OPS_FREQUENCIES_PDF_FILENAME : `${oaci}.pdf`),
             blob: file,
             size: file.size || 0,
             updatedAt: Date.now()
@@ -4599,7 +15055,7 @@ async function importAirportPdfFiles(files = []) {
     }
 
     if (!records.length) {
-        alert(`Aucun PDF importé. Les fichiers doivent être nommés LFTW.pdf, LFKJ.pdf, etc.${invalidNames.length ? `\nIgnorés : ${invalidNames.join(', ')}` : ''}`);
+        alert(`Aucun PDF importé. Les fichiers doivent être nommés LFTW.pdf, LFKJ.pdf, etc., Doc Fdf Réduité.pdf ou Carte Fréquences OPS.pdf.${invalidNames.length ? `\nIgnorés : ${invalidNames.join(', ')}` : ''}`);
         return;
     }
 
@@ -4614,7 +15070,7 @@ async function importAirportPdfFiles(files = []) {
             tx.onabort = () => reject(tx.error || new Error('Import PDF interrompu'));
         });
         displayInstalledAirportPdfs();
-        alert(`${records.length} PDF aérodrome(s) stocké(s) hors ligne.${invalidNames.length ? `\nIgnorés : ${invalidNames.join(', ')}` : ''}`);
+        alert(`${records.length} PDF(s) FDF/aérodrome/OPS stocké(s) hors ligne.${invalidNames.length ? `\nIgnorés : ${invalidNames.join(', ')}` : ''}`);
     } catch (error) {
         console.error('Import PDF aérodromes impossible:', error);
         alert(`Import PDF impossible : ${error.message || error}`);
@@ -4645,7 +15101,7 @@ async function displayInstalledAirportPdfs() {
     list.innerHTML = '';
 
     if (!records.length) {
-        list.innerHTML = '<li class="no-pdfs-placeholder">Aucun PDF aérodrome stocké.</li>';
+        list.innerHTML = '<li class="no-pdfs-placeholder">Aucun PDF FDF/aérodrome/OPS stocké.</li>';
         return;
     }
 
@@ -4653,10 +15109,13 @@ async function displayInstalledAirportPdfs() {
         const li = document.createElement('li');
         const sizeKb = record.size ? `${Math.max(1, Math.round(record.size / 1024))} ko` : 'taille inconnue';
         const date = record.updatedAt ? new Date(record.updatedAt).toLocaleDateString('fr-FR') : '--/--/----';
+        const openAction = record.oaci === FDF_REDUCED_PDF_KEY
+            ? 'window.openFdfReducedPdf()'
+            : (record.oaci === OPS_FREQUENCIES_PDF_KEY ? 'window.openOpsFrequenciesPdf()' : `window.openAirportPdf('${record.oaci}')`);
         li.innerHTML = `
-            <span><strong>${record.oaci}</strong> — ${record.filename || `${record.oaci}.pdf`} <small>(${sizeKb}, ${date})</small></span>
+            <span><strong>${getAirportPdfDisplayLabel(record)}</strong> — ${record.filename || `${record.oaci}.pdf`} <small>(${sizeKb}, ${date})</small></span>
             <div class="airport-pdf-actions">
-                <button type="button" class="open-pdf-btn" onclick="window.openAirportPdf('${record.oaci}')">Ouvrir</button>
+                <button type="button" class="open-pdf-btn" onclick="${openAction}">Ouvrir</button>
                 <button type="button" class="delete-pdf-btn" onclick="window.deleteAirportPdf('${record.oaci}')">Supprimer</button>
             </div>
         `;
@@ -4665,9 +15124,9 @@ async function displayInstalledAirportPdfs() {
 }
 
 async function deleteAirportPdf(oaci) {
-    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
     if (!safeOaci) return;
-    if (!confirm(`Supprimer le PDF offline ${safeOaci} ?`)) return;
+    if (!confirm(`Supprimer le PDF offline ${getAirportPdfDisplayLabel(safeOaci)} ?`)) return;
     try {
         const pdfDb = await initAirportPdfDB();
         await new Promise((resolve, reject) => {
@@ -4692,20 +15151,23 @@ async function airportServerPdfExists(url) {
     }
 }
 
-async function openAirportPdf(oaci) {
-    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
-    if (!safeOaci) return;
+async function openAirportPdfByKey(pdfKey, options = {}) {
+    const safeKey = String(pdfKey || '').trim().toUpperCase().replace(/[^A-Z0-9_]/g, '');
+    if (!safeKey) return;
 
     /*
-     * v12.58 — sécurité PDF pélicandrome/aérodrome :
+     * v12.58/v13.66 — sécurité PDF pélicandrome/aérodrome/FDF réduite :
      * si aucun PDF offline ni serveur n'est trouvé, on n'envoie plus l'iPad
      * vers une page PDF inexistante. La fenêtre pré-ouverte est fermée proprement.
      */
     const openedWindow = window.open('', '_blank');
-    const serverPdfUrl = `./pdf/${safeOaci}.pdf`;
+    const label = options.label || getAirportPdfDisplayLabel(safeKey);
+    const serverPdfUrls = Array.isArray(options.serverPdfUrls) && options.serverPdfUrls.length
+        ? options.serverPdfUrls
+        : [`./pdf/${safeKey}.pdf`];
 
     try {
-        const record = await getAirportPdfRecord(safeOaci);
+        const record = await getAirportPdfRecord(safeKey);
         if (record && record.blob) {
             const pdfUrl = URL.createObjectURL(record.blob);
             if (openedWindow) {
@@ -4720,24 +15182,51 @@ async function openAirportPdf(oaci) {
         console.warn('Ouverture PDF offline impossible:', error);
     }
 
-    const hasServerPdf = await airportServerPdfExists(serverPdfUrl);
-    if (hasServerPdf) {
-        if (openedWindow) {
-            openedWindow.location.href = serverPdfUrl;
-        } else {
-            window.location.href = serverPdfUrl;
+    for (const serverPdfUrl of serverPdfUrls) {
+        const hasServerPdf = await airportServerPdfExists(serverPdfUrl);
+        if (hasServerPdf) {
+            if (openedWindow) {
+                openedWindow.location.href = serverPdfUrl;
+            } else {
+                window.location.href = serverPdfUrl;
+            }
+            return;
         }
-        return;
     }
 
     try {
         if (openedWindow && !openedWindow.closed) openedWindow.close();
     } catch (_) {}
 
-    alert(`Aucun PDF associé à ${safeOaci}.`);
+    alert(`Aucun PDF associé à ${label}.`);
+}
+
+async function openAirportPdf(oaci) {
+    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!safeOaci) return;
+    return openAirportPdfByKey(safeOaci, {
+        label: safeOaci,
+        serverPdfUrls: [`./pdf/${safeOaci}.pdf`]
+    });
+}
+
+async function openFdfReducedPdf() {
+    return openAirportPdfByKey(FDF_REDUCED_PDF_KEY, {
+        label: FDF_REDUCED_PDF_LABEL,
+        serverPdfUrls: FDF_REDUCED_PDF_SERVER_CANDIDATES
+    });
+}
+
+async function openOpsFrequenciesPdf() {
+    return openAirportPdfByKey(OPS_FREQUENCIES_PDF_KEY, {
+        label: OPS_FREQUENCIES_PDF_LABEL,
+        serverPdfUrls: OPS_FREQUENCIES_PDF_SERVER_CANDIDATES
+    });
 }
 
 window.openAirportPdf = openAirportPdf;
+window.openFdfReducedPdf = openFdfReducedPdf;
+window.openOpsFrequenciesPdf = openOpsFrequenciesPdf;
 window.deleteAirportPdf = deleteAirportPdf;
 
 
@@ -4756,8 +15245,151 @@ function buildPermanentAirportDotIcon() {
     });
 }
 
+
+function buildPelicPdfButtonsHtml(oaci) {
+    const safeOaci = String(oaci || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '');
+    return `<div class="popup-buttons popup-pdf-buttons"><button class="pdf-btn" onclick="window.openAirportPdf('${safeOaci}')">PDF Pélic</button><button class="pdf-btn fdf-reduced-pdf-btn" onclick="window.openFdfReducedPdf()">Doc PDF Réduite</button></div>`;
+}
+
+function buildAirportGoToButtonHtml(oaci) {
+    const safeOaci = String(oaci || '')
+        .trim()
+        .toUpperCase()
+        .replace(/[^A-Z0-9]/g, '');
+    if (!safeOaci) return '';
+
+    return `<div class="popup-buttons popup-goto-buttons"><button type="button" class="goto-btn" onclick="window.goToAirportDestinationByOaci('${safeOaci}')">Go To</button></div>`;
+}
+
+function goToAirportDestinationByOaci(oaci) {
+    const airport = getAirportByOaci(oaci);
+    if (!airport) return false;
+
+    try {
+        if (map && typeof map.closePopup === 'function') map.closePopup();
+    } catch (_) {}
+
+    return selectAirportDestination(airport);
+}
+
+window.goToAirportDestinationByOaci = goToAirportDestinationByOaci;
+
+
+
+function drawNpfRunwayMapLayer() {
+    if (!npfRunwayMapLayer || !map) return;
+    npfRunwayMapLayer.clearLayers();
+
+    /*
+     * v14.78 — toutes les pistes concernées restent visibles à partir du niveau
+     * 1 NM de la carte NPF, correspondant au zoom Leaflet 12 déjà utilisé
+     * pour les routes nationales et départementales.
+     */
+    const zoom = Number(map.getZoom());
+    if (!Number.isFinite(zoom) || zoom < NPF_RUNWAY_MIN_ZOOM) return;
+
+    const drawRunwayCollection = (runwaysByOaci) => {
+        runwaysByOaci.forEach(runways => {
+            runways.forEach(runway => {
+                const endpoints = [
+                    [runway.leLat, runway.leLon],
+                    [runway.heLat, runway.heLon]
+                ];
+
+                /* Fin entourage blanc pour garder le trait lisible sur toute carte. */
+                L.polyline(endpoints, {
+                    color: '#ffffff',
+                    weight: 5,
+                    opacity: 0.96,
+                    lineCap: 'butt',
+                    lineJoin: 'miter',
+                    interactive: false,
+                    pane: 'npfRunwaysPane',
+                    renderer: npfRunwayRenderer || undefined
+                }).addTo(npfRunwayMapLayer);
+
+                L.polyline(endpoints, {
+                    color: '#111111',
+                    weight: 2.4,
+                    opacity: 1,
+                    lineCap: 'butt',
+                    lineJoin: 'miter',
+                    interactive: false,
+                    pane: 'npfRunwaysPane',
+                    renderer: npfRunwayRenderer || undefined
+                }).addTo(npfRunwayMapLayer);
+            });
+        });
+    };
+
+    /* 340 pistes complémentaires de la v14.76. */
+    drawRunwayCollection(additionalAerodromeRunwaysByOaci);
+
+    /* Pistes des 27 pélicandromes permanents ajoutées en v14.77. */
+    drawRunwayCollection(declaredPelicanRunwaysByOaci);
+
+    /*
+     * v14.80 — les pistes des 96 terrains encore présents dans `otherAirports`
+     * sont toujours intégrées au fond cartographique à partir du zoom 1 NM.
+     * La v14.78 les
+     * filtrait à tort avec `customPelicanAirports`, ce qui rendait invisibles
+     * LFBO, LFBT, LFBF, LFMQ, LFMN et les autres terrains tant qu’ils
+     * n’étaient pas activés manuellement comme PÉLIC dans le stockage local.
+     *
+     * Le statut PÉLIC continue uniquement à modifier le rond / symbole et les
+     * fonctions opérationnelles ; il ne conditionne plus la présence de la
+     * géométrie de piste sur la carte.
+     */
+    drawRunwayCollection(otherAirportRunwaysByOaci);
+}
+
+
+function addAirportTouchHitbox(airport, popupHtml) {
+    /* v13.81 — icône visuelle ramenée à 16 px ; zone tactile invisible de 40 px inchangée. */
+    if (!airport || !Number.isFinite(Number(airport.lat)) || !Number.isFinite(Number(airport.lon)) || !popupHtml) return null;
+    const hitbox = L.circleMarker([airport.lat, airport.lon], {
+        radius: 20,
+        color: 'transparent',
+        weight: 1,
+        opacity: 0,
+        fillColor: 'transparent',
+        fillOpacity: 0,
+        interactive: true,
+        keyboard: false
+    }).bindPopup(popupHtml);
+    hitbox.addTo(permanentAirportLayer);
+    try { if (hitbox.bringToFront) hitbox.bringToFront(); } catch (_) {}
+    return hitbox;
+}
+
 function drawPermanentAirportMarkers() {
     permanentAirportLayer.clearLayers();
+
+    /*
+     * v14.76 — retour au rendu de la v14.74 pour les aérodromes :
+     * un point rond noir cliquable reste affiché au-dessus de la couche de
+     * pistes intégrée à la carte NPF. Les pistes ne remplacent plus les ronds.
+     */
+    additionalAerodromes.forEach(airport => {
+        L.circleMarker([airport.lat, airport.lon], {
+            radius: 2.7,
+            stroke: false,
+            fillColor: '#111111',
+            fillOpacity: 1,
+            interactive: false
+        }).addTo(permanentAirportLayer);
+
+        const popupHtml = `<div class="airport-popup additional-aerodrome-popup"><b>${escapeHtml(airport.oaci)}</b><br>${escapeHtml(airport.name)}</div>`;
+        L.circleMarker([airport.lat, airport.lon], {
+            radius: 10,
+            stroke: false,
+            fillColor: 'transparent',
+            fillOpacity: 0,
+            opacity: 0
+        })
+            .bindPopup(popupHtml, { maxWidth: 260 })
+            .addTo(permanentAirportLayer);
+    });
 
     otherAirports.forEach(airport => {
         const isCustomPelic = customPelicanAirports.has(airport.oaci);
@@ -4776,9 +15408,11 @@ function drawPermanentAirportMarkers() {
             const waterButtonClass = isWater ? "water-btn water-btn-retardant" : "water-btn";
             const disableButtonText = isDisabled ? "Activer" : "Désactiver";
             const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
-            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] }), zIndexOffset: 2500, keyboard: false });
-            marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div></div>`);
+            const popupHtml = `<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div>${buildPelicPdfButtonsHtml(airport.oaci)}${buildAirportGoToButtonHtml(airport.oaci)}</div>`;
+            const marker = L.marker([airport.lat, airport.lon], { icon: L.divIcon({ className: iconClass, html: iconHTML, iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -10] }), zIndexOffset: 2500, keyboard: false });
+            marker.bindPopup(popupHtml);
             marker.addTo(permanentAirportLayer);
+            addAirportTouchHitbox(airport, popupHtml);
             return;
         }
 
@@ -4791,9 +15425,13 @@ function drawPermanentAirportMarkers() {
          * - un cercle blanc ;
          * - un point noir central ;
          * - un cercle transparent séparé pour conserver une grande zone tactile.
+         *
+         * v14.73 — symbole légèrement agrandi pour mieux distinguer les
+         * aérodromes pouvant être sélectionnés comme pélicandrome. La zone
+         * tactile transparente reste volontairement inchangée.
          */
         L.circleMarker([airport.lat, airport.lon], {
-            radius: 5,
+            radius: 6,
             color: '#111111',
             weight: 1,
             fillColor: '#ffffff',
@@ -4802,7 +15440,7 @@ function drawPermanentAirportMarkers() {
         }).addTo(permanentAirportLayer);
 
         L.circleMarker([airport.lat, airport.lon], {
-            radius: 3,
+            radius: 3.5,
             color: '#ffffff',
             weight: 1,
             fillColor: '#111111',
@@ -4817,7 +15455,7 @@ function drawPermanentAirportMarkers() {
             color: 'transparent',
             weight: 1,
             opacity: 0
-        }).bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div></div>`);
+        }).bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="${customPelicClass}" onclick="window.toggleCustomPelican('${airport.oaci}')">${customPelicText}</button></div>${buildAirportGoToButtonHtml(airport.oaci)}</div>`);
         marker.addTo(permanentAirportLayer);
     });
 
@@ -4826,7 +15464,7 @@ function drawPermanentAirportMarkers() {
         const isWater = waterAirports.has(airport.oaci);
         let iconClass = "custom-marker-icon airport-marker-base ", iconHTML = "✈️";
         isDisabled ? (iconClass += "airport-marker-disabled", iconHTML = "<b>+</b>") : isWater ? (iconClass += "airport-marker-water", iconHTML = "💧") : iconClass += "airport-marker-active";
-        const icon = L.divIcon({ className: iconClass, html: iconHTML, iconSize: [14, 14], iconAnchor: [7, 7], popupAnchor: [0, -9] });
+        const icon = L.divIcon({ className: iconClass, html: iconHTML, iconSize: [16, 16], iconAnchor: [8, 8], popupAnchor: [0, -10] });
         const marker = L.marker([airport.lat, airport.lon], { icon: icon, zIndexOffset: 2500, keyboard: false });
         const disableButtonText = isDisabled ? "Activer" : "Désactiver";
         const disableButtonClass = isDisabled ? "enable-btn" : "disable-btn";
@@ -4835,8 +15473,10 @@ function drawPermanentAirportMarkers() {
         const isBase = selectedBaseOACI === airport.oaci;
         const baseButtonText = isBase ? 'BASE ✓' : 'BASE';
         const baseButtonClass = isBase ? 'base-btn base-btn-active' : 'base-btn';
-        marker.bindPopup(`<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button><button class="pdf-btn" onclick="window.openAirportPdf('${airport.oaci}')">PDF</button></div></div>`);
+        const popupHtml = `<div class="airport-popup"><b>${airport.oaci}</b><br>${airport.name}<div class="popup-buttons"><button class="${waterButtonClass}" onclick="window.toggleWater('${airport.oaci}')">${waterButtonText}</button><button class="${disableButtonClass}" onclick="window.toggleAirport('${airport.oaci}')">${disableButtonText}</button><button class="${baseButtonClass}" onclick="window.setBaseAirport('${airport.oaci}')">${baseButtonText}</button></div>${buildPelicPdfButtonsHtml(airport.oaci)}${buildAirportGoToButtonHtml(airport.oaci)}</div>`;
+        marker.bindPopup(popupHtml);
         marker.addTo(permanentAirportLayer);
+        addAirportTouchHitbox(airport, popupHtml);
     });
 }
 
@@ -4951,7 +15591,7 @@ async function loadDepartmentsLayerData() {
     if (hasLoadedDepartments) return;
 
     const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
-    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v2026-56';
+    const DEPARTMENTS_CACHE_NAME = 'npf-q400-departments-v13-54';
     let response = null;
 
     /*
@@ -5101,6 +15741,10 @@ function getCommunesBoundaryStyle() {
 function buildCommuneNameIcon(communeName) {
     const zoom = map && Number.isFinite(map.getZoom()) ? map.getZoom() : 12;
 
+    /*
+     * Tailles strictement inchangées :
+     * 10 px, 11 px à partir du zoom 13, 12 px à partir du zoom 15.
+     */
     let fontSize = 10;
     let maxWidth = 120;
 
@@ -5123,18 +15767,23 @@ function buildCommuneNameIcon(communeName) {
             text-overflow:ellipsis;
             padding:1px 4px;
             border-radius:6px;
-            background:rgba(255,255,255,.78);
-            color:#000;
+            background:rgba(255,255,255,.90);
+            color:#050505;
+            font-family:-apple-system,BlinkMacSystemFont,'SF Pro Text','Segoe UI',Arial,sans-serif;
             font-size:${fontSize}px;
-            font-weight:800;
+            font-weight:700;
+            font-synthesis:none;
+            font-kerning:normal;
+            letter-spacing:0;
             line-height:1.05;
             text-align:center;
-            text-shadow:
-                -1px -1px 0 #fff,
-                1px -1px 0 #fff,
-                -1px 1px 0 #fff,
-                1px 1px 0 #fff;
-            box-shadow:0 1px 3px rgba(0,0,0,.25);
+            text-rendering:optimizeLegibility;
+            -webkit-font-smoothing:auto;
+            -webkit-text-stroke:0 transparent;
+            text-shadow:none;
+            box-shadow:
+                inset 0 0 0 1px rgba(255,255,255,.95),
+                0 1px 2px rgba(0,0,0,.22);
             white-space:nowrap;
         ">${escapeHtml(communeName)}</span>`,
         iconSize: [1, 1],
@@ -5209,6 +15858,137 @@ function renderVisibleCommuneLayers() {
 }
 
 
+
+function normalizeCommuneLabelKey(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, '');
+}
+
+function hydrateCommunesPopulationMap(entries) {
+    const nextMap = new Map();
+
+    for (const entry of Array.isArray(entries) ? entries : []) {
+        const code = String(Array.isArray(entry) ? entry[0] : entry?.code || '').trim();
+        const population = Number(Array.isArray(entry) ? entry[1] : entry?.population);
+
+        if (!code || !Number.isFinite(population) || population < 0) continue;
+        nextMap.set(code, population);
+    }
+
+    if (nextMap.size) communesPopulationByInsee = nextMap;
+    return communesPopulationByInsee;
+}
+
+function readCachedCommunesPopulation() {
+    try {
+        const raw = localStorage.getItem(COMMUNES_POPULATION_CACHE_KEY);
+        if (!raw) return false;
+
+        const cached = JSON.parse(raw);
+        const savedAt = Number(cached?.savedAt || 0);
+        const entries = Array.isArray(cached?.entries) ? cached.entries : [];
+
+        hydrateCommunesPopulationMap(entries);
+        return communesPopulationByInsee.size > 0
+            && savedAt > 0
+            && (Date.now() - savedAt) <= COMMUNES_POPULATION_CACHE_MAX_AGE_MS;
+    } catch (_) {
+        return false;
+    }
+}
+
+function applyPopulationToCommuneLabels() {
+    for (const item of communesLabelData) {
+        if (!item) continue;
+        const population = item.inseeCode
+            ? Number(communesPopulationByInsee.get(item.inseeCode))
+            : NaN;
+
+        if (Number.isFinite(population) && population >= 0) {
+            item.population = population;
+        }
+    }
+}
+
+async function loadCommunesPopulationIndex() {
+    if (communesPopulationLoadPromise) return communesPopulationLoadPromise;
+
+    const cacheIsFresh = readCachedCommunesPopulation();
+
+    communesPopulationLoadPromise = (async () => {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6500);
+
+        try {
+            const response = await fetch(COMMUNES_POPULATION_API_URL, {
+                cache: cacheIsFresh ? 'force-cache' : 'default',
+                signal: controller.signal
+            });
+
+            if (!response.ok) throw new Error(`HTTP ${response.status}`);
+
+            const data = await response.json();
+            const entries = [];
+
+            for (const commune of Array.isArray(data) ? data : []) {
+                const code = String(commune?.code || '').trim();
+                const population = Number(commune?.population);
+                if (!code || !Number.isFinite(population) || population < 0) continue;
+                entries.push([code, population]);
+            }
+
+            hydrateCommunesPopulationMap(entries);
+
+            try {
+                localStorage.setItem(COMMUNES_POPULATION_CACHE_KEY, JSON.stringify({
+                    savedAt: Date.now(),
+                    entries
+                }));
+            } catch (_) {}
+        } catch (error) {
+            console.warn('[Communes] Population indisponible, classement de secours conservé :', error);
+        } finally {
+            clearTimeout(timeoutId);
+        }
+
+        applyPopulationToCommuneLabels();
+
+        if (areCommunesVisible && hasLoadedCommunes) {
+            renderVisibleCommuneLabels();
+        }
+
+        return communesPopulationByInsee;
+    })();
+
+    return communesPopulationLoadPromise;
+}
+
+function isCurrentCommuneLabel(item) {
+    if (!item || !currentCommune) return false;
+
+    const itemCode = String(item.inseeCode || '');
+    const currentCode = String(getCommuneInseeCodeFromProperties(currentCommune) || '');
+    if (itemCode && currentCode && itemCode === currentCode) return true;
+
+    const currentName = currentCommune.nom_standard
+        || currentCommune.nom
+        || currentCommune.name
+        || currentCommune.libelle
+        || '';
+
+    return normalizeCommuneLabelKey(item.name) === normalizeCommuneLabelKey(currentName);
+}
+
+function getCommuneLabelDistanceToCenter(item, center) {
+    if (!item?.latLng || !center) return Number.POSITIVE_INFINITY;
+    const latDiff = Number(item.latLng.lat) - Number(center.lat);
+    const lngDiff = Number(item.latLng.lng) - Number(center.lng);
+    return (latDiff * latDiff) + (lngDiff * lngDiff);
+}
+
 function renderVisibleCommuneLabels() {
     if (!map || !communesLabelsLayer || !areCommunesVisible || !hasLoadedCommunes) return;
 
@@ -5218,20 +15998,36 @@ function renderVisibleCommuneLabels() {
     if (zoom < COMMUNES_DISPLAY_MIN_ZOOM) return;
 
     const bounds = map.getBounds().pad(0.05);
+    const center = map.getCenter();
     const maxLabels = zoom >= 14 ? 450 : 220;
-    let count = 0;
 
-    for (const item of communesLabelData) {
-        if (count >= maxLabels) break;
-        if (!bounds.contains(item.latLng)) continue;
+    /*
+     * Priorité :
+     * 1. commune sélectionnée ;
+     * 2. population décroissante ;
+     * 3. proximité du centre à population égale ou inconnue.
+     */
+    const visibleItems = communesLabelData
+        .filter(item => item?.latLng && bounds.contains(item.latLng))
+        .sort((a, b) => {
+            const selectedDifference = Number(isCurrentCommuneLabel(b)) - Number(isCurrentCommuneLabel(a));
+            if (selectedDifference) return selectedDifference;
 
+            const populationA = Number.isFinite(Number(a.population)) ? Number(a.population) : 0;
+            const populationB = Number.isFinite(Number(b.population)) ? Number(b.population) : 0;
+            if (populationA !== populationB) return populationB - populationA;
+
+            return getCommuneLabelDistanceToCenter(a, center)
+                - getCommuneLabelDistanceToCenter(b, center);
+        })
+        .slice(0, maxLabels);
+
+    for (const item of visibleItems) {
         communesLabelsLayer.addLayer(L.marker(item.latLng, {
             icon: buildCommuneNameIcon(item.name),
             interactive: false,
             keyboard: false
         }));
-
-        count += 1;
     }
 }
 
@@ -5545,6 +16341,9 @@ function getCommunesGeojsonUrl() {
 async function loadCommunesLayerData() {
     if (hasLoadedCommunes) return;
 
+    // Chargement en parallèle : la population ne bloque pas la carte.
+    loadCommunesPopulationIndex().catch(() => null);
+
     const communesSource = getCommunesGeojsonUrl();
     const COMMUNES_GEOJSON_URL = communesSource.url;
 
@@ -5587,9 +16386,27 @@ async function loadCommunesLayerData() {
         });
 
         const center = layerBounds.getCenter();
+        const inseeCode = getCommuneInseeCodeFromProperties(properties);
+        const directPopulationCandidates = [
+            properties.population,
+            properties.population_municipale,
+            properties.populationMunicipale,
+            properties.pop
+        ];
+        const directPopulation = directPopulationCandidates
+            .map(value => Number(value))
+            .find(value => Number.isFinite(value) && value >= 0);
+        const indexedPopulation = inseeCode
+            ? Number(communesPopulationByInsee.get(String(inseeCode)))
+            : NaN;
+
         communesLabelData.push({
             name: communeName,
-            latLng: center
+            inseeCode: String(inseeCode || ''),
+            latLng: center,
+            population: Number.isFinite(indexedPopulation)
+                ? indexedPopulation
+                : (Number.isFinite(directPopulation) ? directPopulation : 0)
         });
     });
 
@@ -5629,6 +16446,54 @@ async function toggleCommunesLayer(shouldShow) {
     if (communesLayerButton) communesLayerButton.classList.toggle('active', areCommunesVisible);
 }
 
+/*
+ * v14.80 — nettoyage des états aéroportuaires devenus obsolètes.
+ *
+ * Toute entrée qui n'existe plus dans les listes actives est retirée des états
+ * persistants d'une installation antérieure de la PWA. Brive reste ainsi
+ * disponible uniquement sous son code actif LFSL.
+ */
+const sanitizeStoredAirportState = () => {
+    const validAirportCodes = new Set(
+        [...pelicanAirports, ...otherAirports]
+            .map(airport => normalizeOaciCodeInput(airport?.oaci))
+            .filter(Boolean)
+    );
+
+    const sanitizeSet = (source) => new Set(
+        [...source]
+            .map(normalizeOaciCodeInput)
+            .filter(oaci => oaci && validAirportCodes.has(oaci))
+    );
+
+    const previousDisabledSize = disabledAirports.size;
+    const previousWaterSize = waterAirports.size;
+    const previousCustomSize = customPelicanAirports.size;
+
+    disabledAirports = sanitizeSet(disabledAirports);
+    waterAirports = sanitizeSet(waterAirports);
+    customPelicanAirports = sanitizeSet(customPelicanAirports);
+
+    let changed = (
+        disabledAirports.size !== previousDisabledSize
+        || waterAirports.size !== previousWaterSize
+        || customPelicanAirports.size !== previousCustomSize
+    );
+
+    const savedBase = normalizeOaciCodeInput(localStorage.getItem('selected_base_oaci'));
+    if (savedBase && !validAirportCodes.has(savedBase)) {
+        localStorage.removeItem('selected_base_oaci');
+        if (selectedBaseOACI === savedBase) selectedBaseOACI = null;
+        changed = true;
+    }
+
+    if (changed) {
+        localStorage.setItem('disabled_airports', JSON.stringify([...disabledAirports]));
+        localStorage.setItem('water_airports', JSON.stringify([...waterAirports]));
+        localStorage.setItem('custom_pelican_airports', JSON.stringify([...customPelicanAirports]));
+    }
+};
+
 const loadState = () => {
     const savedDisabled = localStorage.getItem('disabled_airports');
     if (savedDisabled) disabledAirports = new Set(JSON.parse(savedDisabled));
@@ -5636,6 +16501,9 @@ const loadState = () => {
     if (savedWater) waterAirports = new Set(JSON.parse(savedWater));
     const savedCustomPelic = localStorage.getItem('custom_pelican_airports');
     if (savedCustomPelic) customPelicanAirports = new Set(JSON.parse(savedCustomPelic));
+
+    sanitizeStoredAirportState();
+
     const savedBase = localStorage.getItem('selected_base_oaci');
     if (savedBase && getAirportByOaci(savedBase)) {
         selectedBaseOACI = savedBase;
@@ -5650,16 +16518,22 @@ const saveState = () => {
 window.toggleAirport = oaci => { disabledAirports.has(oaci) ? disabledAirports.delete(oaci) : (disabledAirports.add(oaci), waterAirports.delete(oaci)), saveState(), refreshUI() };
 window.toggleWater = oaci => { waterAirports.has(oaci) ? waterAirports.delete(oaci) : (waterAirports.add(oaci), disabledAirports.delete(oaci)), saveState(), refreshUI() };
 window.toggleCustomPelican = oaci => {
-    if (customPelicanAirports.has(oaci)) {
-        customPelicanAirports.delete(oaci);
-        waterAirports.delete(oaci);
-        disabledAirports.delete(oaci);
+    const normalizedOaci = normalizeOaciCodeInput(oaci);
+    if (!normalizedOaci || !getAirportByOaci(normalizedOaci)) return;
+
+    if (customPelicanAirports.has(normalizedOaci)) {
+        customPelicanAirports.delete(normalizedOaci);
+        waterAirports.delete(normalizedOaci);
+        disabledAirports.delete(normalizedOaci);
+        if (selectedPelicanOACI === normalizedOaci) selectedPelicanOACI = null;
     } else {
-        customPelicanAirports.add(oaci);
-        disabledAirports.delete(oaci);
+        customPelicanAirports.add(normalizedOaci);
+        disabledAirports.delete(normalizedOaci);
+        selectedPelicanOACI = normalizedOaci;
     }
     saveState();
     refreshUI();
+    if (map) map.closePopup();
 };
 window.setBaseAirport = oaci => {
     const normalizedOaci = normalizeOaciCodeInput(oaci);
@@ -5976,12 +16850,173 @@ function getKnownGpsLatLngForCentering() {
 function refreshCenterGpsFollowButtonState() {
     const button = document.getElementById('center-gps-button');
     if (!button) return;
+
     button.classList.toggle('center-follow-active', centerGpsFollowActive);
     button.classList.toggle('active', centerGpsFollowActive);
     button.setAttribute('aria-pressed', centerGpsFollowActive ? 'true' : 'false');
+
     button.title = centerGpsFollowActive
-        ? 'Suivi position actif — cliquer pour désactiver'
-        : 'Centrer puis suivre ma position GPS';
+        ? 'Clic : centrer sur ma position · Appui long : désactiver le suivi'
+        : 'Clic : centrer sur ma position · Appui long : activer le suivi';
+
+    button.setAttribute(
+        'aria-label',
+        centerGpsFollowActive
+            ? 'Centrer sur ma position ; appui long pour désactiver le suivi'
+            : 'Centrer sur ma position ; appui long pour activer le suivi'
+    );
+}
+
+function clearCenterGpsButtonLongPressTimer() {
+    if (centerGpsButtonLongPressTimer) {
+        clearTimeout(centerGpsButtonLongPressTimer);
+        centerGpsButtonLongPressTimer = null;
+    }
+}
+
+function resetCenterGpsButtonPressState(button = null) {
+    clearCenterGpsButtonLongPressTimer();
+    centerGpsButtonActivePointerId = null;
+    centerGpsButtonPressStartX = 0;
+    centerGpsButtonPressStartY = 0;
+    if (button) {
+        button.classList.remove('center-gps-pressing');
+    }
+}
+
+function handleCenterGpsButtonLongPress(button) {
+    centerGpsButtonLongPressTimer = null;
+    centerGpsButtonLongPressTriggered = true;
+    centerGpsButtonSuppressClickUntil = Date.now() + 900;
+
+    button.classList.remove('center-gps-pressing');
+    button.classList.add('center-gps-long-press-confirmed');
+
+    /*
+     * L'appui long conserve la possibilité de désactiver le suivi avec le même
+     * bouton. Lorsqu'il est inactif, il l'active comme demandé.
+     */
+    if (centerGpsFollowActive) {
+        disableCenterGpsFollow();
+    } else {
+        enableCenterGpsFollow();
+    }
+
+    try {
+        if (navigator.vibrate) navigator.vibrate(35);
+    } catch (_) {}
+
+    setTimeout(() => {
+        button.classList.remove('center-gps-long-press-confirmed');
+    }, 360);
+}
+
+function installCenterGpsButtonPressHandlers(button) {
+    if (!button || button.dataset.centerGpsPressHandlersInstalled === 'true') {
+        return;
+    }
+    button.dataset.centerGpsPressHandlersInstalled = 'true';
+
+    const cancelPress = () => {
+        resetCenterGpsButtonPressState(button);
+    };
+
+    button.addEventListener('pointerdown', (event) => {
+        if (String(event.pointerType || '').toLowerCase() === 'pen') return;
+        if (event.pointerType === 'mouse' && event.button !== 0) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        centerGpsButtonLongPressTriggered = false;
+        centerGpsButtonActivePointerId = event.pointerId;
+        centerGpsButtonPressStartX = Number(event.clientX) || 0;
+        centerGpsButtonPressStartY = Number(event.clientY) || 0;
+
+        button.classList.add('center-gps-pressing');
+        clearCenterGpsButtonLongPressTimer();
+
+        try {
+            button.setPointerCapture?.(event.pointerId);
+        } catch (_) {}
+
+        centerGpsButtonLongPressTimer = setTimeout(() => {
+            if (centerGpsButtonActivePointerId !== event.pointerId) return;
+            handleCenterGpsButtonLongPress(button);
+        }, CENTER_GPS_BUTTON_LONG_PRESS_MS);
+    }, { passive: false });
+
+    button.addEventListener('pointermove', (event) => {
+        if (centerGpsButtonActivePointerId !== event.pointerId) return;
+
+        const deltaX = (Number(event.clientX) || 0) - centerGpsButtonPressStartX;
+        const deltaY = (Number(event.clientY) || 0) - centerGpsButtonPressStartY;
+        const distance = Math.hypot(deltaX, deltaY);
+
+        if (distance > CENTER_GPS_BUTTON_MOVE_TOLERANCE_PX) {
+            cancelPress();
+        }
+    }, { passive: true });
+
+    button.addEventListener('pointerup', (event) => {
+        if (centerGpsButtonActivePointerId !== event.pointerId) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const wasLongPress = centerGpsButtonLongPressTriggered;
+        centerGpsButtonSuppressClickUntil = Date.now() + 700;
+        resetCenterGpsButtonPressState(button);
+
+        try {
+            button.releasePointerCapture?.(event.pointerId);
+        } catch (_) {}
+
+        if (!wasLongPress) {
+            centerMapOnCurrentPosition();
+        }
+
+        centerGpsButtonLongPressTriggered = false;
+    }, { passive: false });
+
+    button.addEventListener('pointercancel', cancelPress, { passive: true });
+    button.addEventListener('lostpointercapture', () => {
+        if (!centerGpsButtonLongPressTriggered) {
+            cancelPress();
+        }
+    }, { passive: true });
+
+    /*
+     * Supprimer le clic synthétique émis par Safari après pointerup ou après
+     * l'appui long, afin qu'il ne déclenche jamais une seconde action.
+     */
+    button.addEventListener('click', (event) => {
+        if (Date.now() <= centerGpsButtonSuppressClickUntil) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.stopImmediatePropagation();
+            return;
+        }
+
+        /*
+         * Repli souris/clavier si aucun événement Pointer n'a été reçu.
+         */
+        event.preventDefault();
+        event.stopPropagation();
+        centerMapOnCurrentPosition();
+    }, true);
+
+    button.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+    });
+
+    button.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            centerMapOnCurrentPosition();
+        }
+    });
 }
 
 function recenterMapOnKnownGpsPosition(reason = 'manual') {
@@ -6183,11 +17218,17 @@ function toggleCenterGpsFollow() {
 }
 
 function centerMapOnCurrentPosition() {
-    // Conservé pour compatibilité avec d'éventuels appels existants : action ponctuelle sans activer le suivi.
+    /*
+     * Action ponctuelle : recentrer immédiatement, sans modifier l'état du
+     * suivi. La dernière position connue est prioritaire pour éviter tout délai.
+     */
     if (!map) return;
 
+    if (recenterMapOnKnownGpsPosition('short-press-known')) {
+        return;
+    }
+
     if (!navigator.geolocation) {
-        if (recenterMapOnKnownGpsPosition('legacy')) return;
         alert("La géolocalisation n'est pas supportée par votre navigateur.");
         return;
     }
@@ -6195,14 +17236,18 @@ function centerMapOnCurrentPosition() {
     navigator.geolocation.getCurrentPosition(
         (pos) => {
             updateUserPosition(pos);
-            recenterMapOnKnownGpsPosition('legacy-current');
+            recenterMapOnKnownGpsPosition('short-press-current');
         },
         () => {
-            if (!recenterMapOnKnownGpsPosition('legacy-fallback')) {
+            if (!recenterMapOnKnownGpsPosition('short-press-fallback')) {
                 alert("Impossible d'obtenir la position GPS. Vérifiez les autorisations.");
             }
         },
-        { enableHighAccuracy: true, timeout: 30000, maximumAge: 600000 }
+        {
+            enableHighAccuracy: true,
+            timeout: 30000,
+            maximumAge: 600000
+        }
     );
 }
 
@@ -6225,14 +17270,36 @@ function toggleLiveGps() {
 
 function drawUserToTargetRoute() {
     userToTargetLayer.clearLayers();
-    if (currentCommune && userMarker && userMarker.getLatLng()) {
-        const { latitude_mairie: lat, longitude_mairie: lon } = currentCommune;
+
+    const target = selectedAirportDestination
+        ? {
+            lat: Number(selectedAirportDestination.lat),
+            lon: Number(selectedAirportDestination.lon)
+        }
+        : (currentCommune
+            ? {
+                lat: Number(currentCommune.latitude_mairie),
+                lon: Number(currentCommune.longitude_mairie)
+            }
+            : null);
+
+    if (target && userMarker && userMarker.getLatLng()
+        && Number.isFinite(target.lat) && Number.isFinite(target.lon)) {
         const userLatLng = userMarker.getLatLng();
 
-        const trueBearingToTarget = calculateBearing(userLatLng.lat, userLatLng.lng, lat, lon);
+        const trueBearingToTarget = calculateBearing(
+            userLatLng.lat,
+            userLatLng.lng,
+            target.lat,
+            target.lon
+        );
         const magneticBearing = (trueBearingToTarget - MAGNETIC_DECLINATION + 360) % 360;
 
-        drawRoute([userLatLng.lat, userLatLng.lng], [lat, lon], { isUser: true, magneticBearing: magneticBearing });
+        drawRoute(
+            [userLatLng.lat, userLatLng.lng],
+            [target.lat, target.lon],
+            { isUser: true, magneticBearing }
+        );
     }
     updateCommuneGpsRouteDisplay();
 }
@@ -6793,9 +17860,9 @@ function buildOwnGpsVectorLabel(minutes, latLng) {
         interactive: false,
         icon: L.divIcon({
             className: 'own-gps-vector-time-marker',
-            html: `<div style="font-size:12px;font-weight:900;color:#ffea00;text-shadow:-1px -1px 0 #111827,1px -1px 0 #111827,-1px 1px 0 #111827,1px 1px 0 #111827,0 1px 5px rgba(0,0,0,.75);white-space:nowrap;line-height:1;">${minutes}'</div>`,
-            iconSize: [28, 16],
-            iconAnchor: [-6, 8]
+            html: `<div style="font-size:17px;font-weight:1000;color:#ffea00;text-shadow:-2px -2px 0 #111827,2px -2px 0 #111827,-2px 2px 0 #111827,2px 2px 0 #111827,0 2px 7px rgba(0,0,0,.85);white-space:nowrap;line-height:1;">${minutes}'</div>`,
+            iconSize: [42, 22],
+            iconAnchor: [-8, 11]
         })
     });
 }
@@ -6843,9 +17910,9 @@ function updateOwnGpsVector(latitude, longitude, headingDeg, speedMps) {
         const point = calculateDestinationLatLng(latitude, longitude, headingDeg, markDistanceMeters);
 
         L.circleMarker(point, {
-            radius: 5,
+            radius: 8,
             color: '#111827',
-            weight: 3,
+            weight: 4,
             fillColor: '#ffea00',
             fillOpacity: 1,
             interactive: false
@@ -6866,7 +17933,9 @@ function updateUserPosition(pos) {
     const { latitude, longitude } = pos.coords;
     if (!Number.isFinite(Number(latitude)) || !Number.isFinite(Number(longitude))) return;
 
-    const ownAltitudeLabel = (!isSimulationPosition && shouldShowOwnGpsAltitude()) ? formatGpsAltitudeFtFromCoords(pos.coords) : '';
+    const ownAltitudeLabel = isSimulationPosition
+        ? `${Math.round(simulationAltitudeFt)} ft`
+        : (shouldShowOwnGpsAltitude() ? formatGpsAltitudeFtFromCoords(pos.coords) : '');
     const gpsTimestampMs = Number(pos.timestamp) || Date.now();
     const estimatedMotion = isSimulationPosition ? { heading: null, speed: null } : estimateMotionFromLastPosition(latitude, longitude, gpsTimestampMs);
     const rawHeading = Number(pos.coords.heading);
@@ -6875,15 +17944,34 @@ function updateUserPosition(pos) {
     const motionSpeed = Number.isFinite(rawSpeed) ? rawSpeed : estimatedMotion.speed;
 
     if (isSimulationPosition) {
-        clearOwnGpsVector();
+        const simulatedSpeedMps = Number.isFinite(motionSpeed) ? Math.max(0, motionSpeed) : 0;
+        const simulatedHeading = Number.isFinite(motionHeading)
+            ? ((motionHeading % 360) + 360) % 360
+            : simulationRouteDeg;
+
+        if (simulatedSpeedMps >= 1) {
+            updateOwnGpsVector(latitude, longitude, simulatedHeading, simulatedSpeedMps);
+        } else {
+            clearOwnGpsVector();
+        }
+
+        const simulatedAltitudeMeters = Number(pos.coords.altitude);
+        const simulatedAltitudeFeet = Number.isFinite(simulatedAltitudeMeters)
+            ? Math.round(simulatedAltitudeMeters * 3.28084)
+            : Math.round(simulationAltitudeFt);
+
         lastPosition = {
             lat: latitude,
             lng: longitude,
             latitude,
             longitude,
             timestamp: gpsTimestampMs,
-            speedMps: null,
-            speedKt: null,
+            heading: simulatedHeading,
+            speedMps: simulatedSpeedMps,
+            speedKt: simulatedSpeedMps * 1.9438444924406,
+            altitudeFt: simulatedAltitudeFeet,
+            altitudeFeet: simulatedAltitudeFeet,
+            altitudeTimeMs: gpsTimestampMs,
             simulation: true
         };
     } else {
@@ -6895,10 +17983,14 @@ function updateUserPosition(pos) {
             latitude,
             longitude,
             timestamp: gpsTimestampMs,
+            heading: Number.isFinite(motionHeading)
+                ? ((motionHeading % 360) + 360) % 360
+                : null,
             speedMps: storedSpeedMps,
             speedKt: storedSpeedMps !== null ? storedSpeedMps * 1.9438444924406 : null,
             altitudeFt: Number.isFinite(Number(pos.coords.altitude)) ? Math.round(Number(pos.coords.altitude) * 3.28084) : null,
-            altitudeTimeMs: Number.isFinite(Number(pos.coords.altitude)) ? gpsTimestampMs : null
+            altitudeTimeMs: Number.isFinite(Number(pos.coords.altitude)) ? gpsTimestampMs : null,
+            stored: pos?.npfIsStoredPosition === true
         };
         saveStoredGpsPosition(latitude, longitude, gpsTimestampMs);
         applyStartupGpsAutoCenter(latitude, longitude, {
@@ -6946,9 +18038,235 @@ function updateUserPosition(pos) {
 
     // On appelle toujours la fonction qui redessine la route
     drawUserToTargetRoute();
+
+    /*
+     * Le trafic live suit explicitement la position de simulation.
+     * Le garde-fou de refreshTrafficLayer limite les appels à environ 5 s.
+     */
+    if (isSimulationPosition && showTrafficLayer) {
+        refreshTrafficLayer({ force: false, reason: 'simulation-position' });
+    }
 }
 
 
+
+
+function normalizeSimulationRoute(value) {
+    const numericValue = Number(value);
+    if (!Number.isFinite(numericValue)) return 0;
+    return ((numericValue % 360) + 360) % 360;
+}
+
+function normalizeSimulationSpeed(value) {
+    const numericValue = Number(String(value ?? '').replace(',', '.'));
+    if (!Number.isFinite(numericValue)) return 0;
+    return Math.min(700, Math.max(0, numericValue));
+}
+
+function normalizeSimulationAltitude(value) {
+    const numericValue = Number(String(value ?? '').replace(',', '.'));
+    if (!Number.isFinite(numericValue)) return 0;
+    return Math.min(60000, Math.max(-1000, numericValue));
+}
+
+function isSimulationPenPointer(event) {
+    return String(event?.pointerType || '').toLowerCase() === 'pen';
+}
+
+function selectWholeSimulationInputValue(input) {
+    if (!input) return;
+
+    try { input.select(); } catch (_) {}
+    try { input.setSelectionRange(0, String(input.value || '').length); } catch (_) {}
+}
+
+function focusAndSelectSimulationInput(input) {
+    if (!input) return;
+
+    try {
+        input.focus({ preventScroll: true });
+    } catch (_) {
+        try { input.focus(); } catch (_) {}
+    }
+
+    /*
+     * L'appel immédiat reste dans le geste utilisateur : Safari iPad ouvre le
+     * clavier. Une seconde sélection stabilise le surlignage après le rendu.
+     */
+    selectWholeSimulationInputValue(input);
+    requestAnimationFrame(() => selectWholeSimulationInputValue(input));
+}
+
+function formatSimulationRoute(value) {
+    return String(Math.round(normalizeSimulationRoute(value)) % 360).padStart(3, '0');
+}
+
+function refreshSimulationMotionButtonState() {
+    const button = document.getElementById('simulation-motion-button');
+    const summary = document.getElementById('simulation-motion-button-summary');
+
+    if (button) {
+        button.hidden = !isSimulationMode;
+        button.classList.toggle('active', isSimulationMode);
+    }
+
+    if (summary) {
+        const displayedSpeed = Number.isInteger(simulationSpeedKt)
+            ? String(simulationSpeedKt)
+            : simulationSpeedKt.toFixed(1);
+        const displayedAltitude = Math.round(simulationAltitudeFt);
+        summary.innerHTML = `<span>${displayedSpeed} kt · ${formatSimulationRoute(simulationRouteDeg)}°</span><span>${displayedAltitude} ft</span>`;
+    }
+}
+
+function closeSimulationMotionModal() {
+    const modal = document.getElementById('simulation-motion-modal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function openSimulationMotionModal() {
+    if (!isSimulationMode) return;
+
+    const modal = document.getElementById('simulation-motion-modal');
+    const speedInput = document.getElementById('simulation-speed-input');
+    const routeInput = document.getElementById('simulation-route-input');
+    const altitudeInput = document.getElementById('simulation-altitude-input');
+    if (!modal) return;
+
+    if (speedInput) {
+        speedInput.value = Number.isInteger(simulationSpeedKt)
+            ? String(simulationSpeedKt)
+            : simulationSpeedKt.toFixed(1);
+    }
+    if (routeInput) {
+        routeInput.value = String(Math.round(simulationRouteDeg) % 360);
+    }
+    if (altitudeInput) {
+        altitudeInput.value = String(Math.round(simulationAltitudeFt));
+    }
+
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+
+    /*
+     * Focus synchrone dans le clic d'ouverture, indispensable sur Safari iPad.
+     */
+    focusAndSelectSimulationInput(speedInput);
+}
+
+function applySimulationMotionSettings(speedKt, routeDeg, altitudeFt) {
+    simulationSpeedKt = normalizeSimulationSpeed(speedKt);
+    simulationRouteDeg = normalizeSimulationRoute(routeDeg);
+    simulationAltitudeFt = normalizeSimulationAltitude(altitudeFt);
+
+    localStorage.setItem(SIMULATION_SPEED_STORAGE_KEY, String(simulationSpeedKt));
+    localStorage.setItem(SIMULATION_ROUTE_STORAGE_KEY, String(simulationRouteDeg));
+    localStorage.setItem(SIMULATION_ALTITUDE_STORAGE_KEY, String(simulationAltitudeFt));
+
+    simulationMotionLastTickMs = performance.now();
+    refreshSimulationMotionButtonState();
+
+    if (
+        isSimulationMode
+        && simulationAircraftPositionReady
+        && lastPosition?.simulation === true
+        && Number.isFinite(Number(lastPosition.latitude))
+        && Number.isFinite(Number(lastPosition.longitude))
+    ) {
+        applySimulatedUserPosition(
+            Number(lastPosition.latitude),
+            Number(lastPosition.longitude),
+            { fromMotionTimer: true }
+        );
+    }
+
+    /*
+     * Recoloration locale immédiate, puis actualisation live autour de la
+     * position simulée.
+     */
+    redrawTrafficLayerFromSnapshot();
+    if (showTrafficLayer) {
+        refreshTrafficLayer({ force: true, reason: 'simulation-settings' });
+    }
+}
+
+function applySimulationMotionSettingsFromModal() {
+    const speedInput = document.getElementById('simulation-speed-input');
+    const routeInput = document.getElementById('simulation-route-input');
+    const altitudeInput = document.getElementById('simulation-altitude-input');
+
+    applySimulationMotionSettings(
+        speedInput ? speedInput.value : simulationSpeedKt,
+        routeInput ? routeInput.value : simulationRouteDeg,
+        altitudeInput ? altitudeInput.value : simulationAltitudeFt
+    );
+
+    closeSimulationMotionModal();
+}
+
+function stopSimulationMotionTimer() {
+    if (simulationMotionTimer) {
+        clearInterval(simulationMotionTimer);
+        simulationMotionTimer = null;
+    }
+    simulationMotionLastTickMs = 0;
+}
+
+function runSimulationMotionStep() {
+    const nowMs = performance.now();
+
+    if (!isSimulationMode || !simulationAircraftPositionReady || document.hidden) {
+        simulationMotionLastTickMs = nowMs;
+        return;
+    }
+
+    if (!lastPosition || lastPosition.simulation !== true) {
+        simulationMotionLastTickMs = nowMs;
+        return;
+    }
+
+    const latitude = Number(lastPosition.latitude ?? lastPosition.lat);
+    const longitude = Number(lastPosition.longitude ?? lastPosition.lng);
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+        simulationMotionLastTickMs = nowMs;
+        return;
+    }
+
+    let elapsedSeconds = simulationMotionLastTickMs > 0
+        ? (nowMs - simulationMotionLastTickMs) / 1000
+        : 1;
+    simulationMotionLastTickMs = nowMs;
+
+    /*
+     * Éviter un bond important lorsque Safari reprend après suspension.
+     * La simulation reprend depuis la dernière position affichée.
+     */
+    elapsedSeconds = Math.min(2.5, Math.max(0, elapsedSeconds));
+
+    if (simulationSpeedKt <= 0 || elapsedSeconds <= 0) {
+        return;
+    }
+
+    const distanceMeters = simulationSpeedKt * 1852 * elapsedSeconds / 3600;
+    const destination = calculateDestinationLatLng(
+        latitude,
+        longitude,
+        simulationRouteDeg,
+        distanceMeters
+    );
+
+    applySimulatedUserPosition(destination[0], destination[1], {
+        fromMotionTimer: true
+    });
+}
+
+function startSimulationMotionTimer() {
+    stopSimulationMotionTimer();
+    simulationMotionLastTickMs = performance.now();
+    simulationMotionTimer = setInterval(runSimulationMotionStep, 1000);
+}
 
 function closeSimulationActionPopup() {
     try {
@@ -7041,23 +18359,36 @@ function refreshSimulationModeButtonState() {
     if (document.body) {
         document.body.classList.toggle('simulation-mode-active', isSimulationMode);
     }
-    if (!button) return;
-    button.classList.toggle('active', isSimulationMode);
-    button.textContent = isSimulationMode ? 'Quitter le mode simulation avion' : 'Mode simulation avion';
+
+    if (button) {
+        button.classList.toggle('active', isSimulationMode);
+        button.textContent = isSimulationMode ? 'Quitter le mode simulation avion' : 'Mode simulation avion';
+    }
+
+    refreshSimulationMotionButtonState();
+
+    if (!isSimulationMode) {
+        closeSimulationMotionModal();
+    }
 }
 
-function applySimulatedUserPosition(lat, lng) {
+function applySimulatedUserPosition(lat, lng, { fromMotionTimer = false } = {}) {
     const numericLat = Number(lat);
     const numericLng = Number(lng);
     if (!Number.isFinite(numericLat) || !Number.isFinite(numericLng)) return;
+
+    simulationAircraftPositionReady = true;
+    if (!fromMotionTimer) {
+        simulationMotionLastTickMs = performance.now();
+    }
 
     updateUserPosition({
         coords: {
             latitude: numericLat,
             longitude: numericLng,
-            altitude: null,
-            heading: null,
-            speed: null,
+            altitude: simulationAltitudeFt / 3.28084,
+            heading: simulationRouteDeg,
+            speed: simulationSpeedKt * 0.5144444444444445,
             accuracy: null
         },
         timestamp: Date.now(),
@@ -7079,6 +18410,8 @@ function enableSimulationMode() {
     }
 
     simulationMapClickHandler = null;
+    simulationAircraftPositionReady = false;
+    startSimulationMotionTimer();
     refreshSimulationModeButtonState();
 
     const offlineMapModal = document.getElementById('offline-map-modal');
@@ -7095,7 +18428,10 @@ function disableSimulationMode({ restoreGps = true } = {}) {
     }
     simulationMapClickHandler = null;
     simulationSuppressNextClickUntil = 0;
+    stopSimulationMotionTimer();
+    simulationAircraftPositionReady = false;
     closeSimulationActionPopup();
+    closeSimulationMotionModal();
     isSimulationMode = false;
     refreshSimulationModeButtonState();
 
@@ -7114,6 +18450,12 @@ function toggleSimulationMode() {
         enableSimulationMode();
     }
 }
+
+document.addEventListener('visibilitychange', () => {
+    if (isSimulationMode && !document.hidden) {
+        simulationMotionLastTickMs = performance.now();
+    }
+});
 
 function findClosestCommuneName(lat, lon) {
     const closestCommune = findClosestCommune(lat, lon, 27);
@@ -7147,12 +18489,582 @@ function drawLftwRoute() {
 
 function toggleGaarVisibility() { isGaarMode = !isGaarMode; updateGaarButtonState(); if (isGaarMode) { redrawGaarCircuits(); } else { gaarLayer.clearLayers(); if (isDrawingMode) { toggleGaarDrawingMode(); } } }
 function updateGaarButtonState() { const gaarButton = document.getElementById('gaar-mode-button'); const gaarControls = document.getElementById('gaar-controls'); gaarButton.classList.toggle('active', isGaarMode); gaarControls.style.display = isGaarMode ? 'flex' : 'none'; }
-function toggleGaarDrawingMode() { const editButton = document.getElementById('edit-circuits-button'); const mapContainer = document.getElementById('map'); const status = document.getElementById('gaar-status'); isDrawingMode = !isDrawingMode; editButton.classList.toggle('active', isDrawingMode); mapContainer.classList.toggle('crosshair-cursor', isDrawingMode); status.textContent = isDrawingMode ? 'Mode modification activé. Cliquez pour ajouter des points.' : ''; }
-async function handleGaarMapClick(e) { if (!isDrawingMode) return; let targetCircuit = gaarCircuits.find(c => c && c.isManual && c.points.length < 3); if (!targetCircuit) { const manualCircuitsCount = gaarCircuits.filter(c => c && c.isManual).length; targetCircuit = { points: [], color: manualCircuitColors[manualCircuitsCount % manualCircuitColors.length], isManual: true, }; gaarCircuits.push(targetCircuit); } const pointName = await reverseGeocode(e.latlng) || `Point Manuel`; targetCircuit.points.push({ lat: e.latlng.lat, lng: e.latlng.lng, name: pointName }); redrawGaarCircuits(); saveGaarCircuits(); }
+
+function setGaarEditingBannerVisible(active) {
+    try {
+        let banner = document.getElementById('gaar-editing-banner');
+        if (active) {
+            if (!banner) {
+                banner = document.createElement('div');
+                banner.id = 'gaar-editing-banner';
+                banner.className = 'gaar-editing-banner';
+                banner.innerHTML = 'Mode création/modification circuit GAAR activé<span class="gaar-editing-banner-subtitle">Touchez un point pour modifier ou supprimer — touchez la carte pour ajouter un point</span>';
+                document.body.appendChild(banner);
+            }
+        } else if (banner && banner.parentNode) {
+            banner.parentNode.removeChild(banner);
+        }
+        if (document.body) {
+            document.body.classList.toggle('gaar-editing-active-ui', !!active);
+        }
+    } catch (_) {}
+}
+
+function suppressNextGaarMapClick(durationMs = 650) {
+    try {
+        window.__gaarSuppressMapClickUntil = Date.now() + durationMs;
+    } catch (_) {}
+}
+
+function shouldIgnoreGaarMapClick(e) {
+    try {
+        if (Date.now() < (window.__gaarSuppressMapClickUntil || 0)) return true;
+        const original = e && e.originalEvent;
+        const target = original && original.target;
+        if (target && typeof target.closest === 'function') {
+            if (target.closest('.leaflet-interactive, .leaflet-marker-icon, .leaflet-tooltip, .leaflet-popup, .leaflet-control, .gaar-point-search-overlay, .gaar-editing-banner')) {
+                return true;
+            }
+        }
+    } catch (_) {}
+    return false;
+}
+
+function stopGaarUiEvent(event, options = {}) {
+    try { suppressNextGaarMapClick(options.durationMs || 800); } catch (_) {}
+    try { if (event && typeof event.stopPropagation === 'function') event.stopPropagation(); } catch (_) {}
+    if (options.preventDefault !== false) {
+        try { if (event && typeof event.preventDefault === 'function') event.preventDefault(); } catch (_) {}
+    }
+    try {
+        const original = event && event.originalEvent;
+        if (original && typeof original.stopPropagation === 'function') original.stopPropagation();
+        if (options.preventDefault !== false && original && typeof original.preventDefault === 'function') original.preventDefault();
+        if (typeof L !== 'undefined' && L.DomEvent && original) L.DomEvent.stop(original);
+    } catch (_) {}
+}
+
+function updateGaarDrawingButtonState() {
+    const editButton = document.getElementById('edit-circuits-button');
+    const mapContainer = document.getElementById('map');
+    const status = document.getElementById('gaar-status');
+
+    if (editButton) {
+        editButton.classList.toggle('active', isDrawingMode);
+        editButton.setAttribute('aria-pressed', isDrawingMode ? 'true' : 'false');
+        editButton.innerHTML = isDrawingMode
+            ? 'Créer/Modifier<br><span class="gaar-edit-state-label">ACTIF</span>'
+            : 'Créer/Modifier';
+    }
+
+    if (mapContainer) {
+        mapContainer.classList.toggle('crosshair-cursor', isDrawingMode);
+        mapContainer.classList.toggle('gaar-editing-active', isDrawingMode);
+    }
+
+    setGaarEditingBannerVisible(isDrawingMode);
+
+    if (status) {
+        status.textContent = isDrawingMode
+            ? 'Mode CRÉER/MODIFIER actif. Cliquez sur la carte pour ajouter un point ou sur un point pour renommer.'
+            : '';
+    }
+}
+
+function toggleGaarDrawingMode() {
+    isDrawingMode = !isDrawingMode;
+    updateGaarDrawingButtonState();
+    /* v13.64 : étiquettes visibles en mode modification + état du bouton beaucoup plus lisible. */
+    redrawGaarCircuits();
+}
+async function handleGaarMapClick(e) {
+    if (!isDrawingMode) return;
+    if (!e || !e.latlng) return;
+    if (shouldIgnoreGaarMapClick(e)) return;
+
+    let targetCircuit = gaarCircuits.find(c => c && c.isManual && c.points.length < 3);
+    if (!targetCircuit) {
+        const manualCircuitsCount = gaarCircuits.filter(c => c && c.isManual).length;
+        targetCircuit = {
+            points: [],
+            color: manualCircuitColors[manualCircuitsCount % manualCircuitColors.length],
+            isManual: true,
+        };
+        gaarCircuits.push(targetCircuit);
+    }
+
+    const pointName = await reverseGeocode(e.latlng) || `Point Manuel`;
+    targetCircuit.points.push({ lat: e.latlng.lat, lng: e.latlng.lng, name: pointName });
+    redrawGaarCircuits();
+    saveGaarCircuits();
+}
 async function reverseGeocode(latlng) { document.getElementById('gaar-status').textContent = 'Recherche du nom...'; try { if (!navigator.onLine) { throw new Error("Application hors ligne."); } const response = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${latlng.lat}&lon=${latlng.lng}&zoom=10`); if (!response.ok) throw new Error('La réponse du réseau n\'était pas OK.'); const data = await response.json(); const name = data.address.city || data.address.town || data.address.village || data.display_name.split(',')[0]; document.getElementById('gaar-status').textContent = `Point ajouté près de ${name}.`; return name; } catch (error) { const closestCommuneName = findClosestCommuneName(latlng.lat, latlng.lng); if (closestCommuneName) { document.getElementById('gaar-status').textContent = `Point ajouté près de ${closestCommuneName} (hors-ligne).`; return closestCommuneName; } else { document.getElementById('gaar-status').textContent = 'Nom non trouvé (hors-ligne).'; return null; } } }
-function redrawGaarCircuits() { gaarLayer.clearLayers(); gaarCircuits.forEach((circuit, circuitIndex) => { if (!circuit || circuit.points.length === 0) return; const latlngs = circuit.points.map(p => [p.lat, p.lng]); const styleOptions = { color: circuit.color, weight: 3, opacity: 0.6, fillColor: circuit.color, fillOpacity: 0.2 }; if (latlngs.length >= 3) { L.polygon(latlngs, styleOptions).addTo(gaarLayer); } else if (latlngs.length > 1) { L.polyline(latlngs, styleOptions).addTo(gaarLayer); } circuit.points.forEach((point, pointIndex) => { const marker = L.circleMarker([point.lat, point.lng], { radius: 8, fillColor: circuit.color, color: '#000', weight: 1, opacity: 1, fillOpacity: 0.8 }).addTo(gaarLayer); marker.bindTooltip(`${pointIndex + 1}. ${point.name}`, { permanent: true, direction: 'top', className: 'gaar-point-label' }); const popupContent = `<div class="gaar-popup-form"><input type="text" id="gaar-input-${circuitIndex}-${pointIndex}" value="${point.name}"><button onclick="updateGaarPoint(${circuitIndex}, ${pointIndex})">OK</button><button class="delete-point-btn" onclick="deleteGaarPoint(${circuitIndex}, ${pointIndex})">Supprimer</button></div>`; marker.bindPopup(popupContent); }); }); }
-window.updateGaarPoint = function(circuitIndex, pointIndex) { const input = document.getElementById(`gaar-input-${circuitIndex}-${pointIndex}`); const newName = input.value.trim(); if (newName) { gaarCircuits[circuitIndex].points[pointIndex].name = newName; redrawGaarCircuits(); saveGaarCircuits(); map.closePopup(); } };
-window.deleteGaarPoint = function(circuitIndex, pointIndex) { gaarCircuits[circuitIndex].points.splice(pointIndex, 1); if (gaarCircuits[circuitIndex].points.length === 0) { gaarCircuits.splice(circuitIndex, 1); } redrawGaarCircuits(); saveGaarCircuits(); };
+function getGaarPointDisplayName(point) {
+    const raw = String(point?.name || '').trim();
+    return raw || 'Point GAAR';
+}
+
+function formatGaarCommuneResultName(c) {
+    const name = c?.nom_standard || c?.name || '';
+    const dep = c?.dep_code || '';
+    return dep ? `${name} (${dep})` : name;
+}
+
+function searchCommunesForGaarPoint(rawSearch) {
+    let departmentFilter = null;
+    let searchTerm = String(rawSearch || '');
+    const depRegex = /\s(\d{1,3}|2A|2B)$/i;
+    const match = searchTerm.match(depRegex);
+    if (match) {
+        departmentFilter = match[1].length === 1 ? '0' + match[1] : match[1].toUpperCase();
+        searchTerm = searchTerm.substring(0, match.index).trim();
+    }
+
+    const simplifiedSearch = simplifyString(searchTerm);
+    if (simplifiedSearch.length < 2) return [];
+
+    const searchWords = simplifiedSearch.split(' ').filter(Boolean);
+    const searchCompact = searchWords.join('');
+    const communesToSearch = departmentFilter ? allCommunes.filter(c => c.dep_code === departmentFilter) : allCommunes;
+
+    const scoredResults = communesToSearch
+        .filter(c => shouldSearchCandidate(c, searchWords, searchCompact, departmentFilter))
+        .map(c => ({ ...c, score: scoreCommuneSearchCandidate(c, searchWords, departmentFilter) }))
+        .filter(c => c.score < 999);
+
+    const aliasResults = searchAliasCommunes(searchWords, departmentFilter);
+    const seenResultKeys = new Set(scoredResults.map(c => `commune:${c.code_insee}:${simplifyString(c.nom_standard)}`));
+
+    aliasResults.forEach((alias) => {
+        const key = `alias:${alias.alias_target_code_insee}:${simplifyString(alias.nom_standard)}`;
+        const sameVisibleNameAlreadyPresent = seenResultKeys.has(`commune:${alias.code_insee}:${simplifyString(alias.nom_standard)}`);
+        if (!seenResultKeys.has(key) && !sameVisibleNameAlreadyPresent) {
+            seenResultKeys.add(key);
+            scoredResults.push(alias);
+        }
+    });
+
+    return scoredResults
+        .sort((a, b) => a.score - b.score || a.nom_standard.length - b.nom_standard.length)
+        .slice(0, 10);
+}
+
+function getGaarCommuneLatLng(commune) {
+    if (!commune) return null;
+    const lat = Number(
+        commune.latitude_mairie ??
+        commune.lat ??
+        commune.latitude ??
+        commune.centre_lat
+    );
+    const lng = Number(
+        commune.longitude_mairie ??
+        commune.lng ??
+        commune.lon ??
+        commune.longitude ??
+        commune.centre_lon
+    );
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
+    return { lat, lng };
+}
+
+function findBestGaarCommuneForInput(value) {
+    const raw = String(value || '').trim();
+    if (!raw) return null;
+
+    const normalizedInput = simplifyString(
+        raw
+            .replace(/\s*\([^)]*\)\s*$/g, '')
+            .replace(/\s+/g, ' ')
+            .trim()
+    );
+
+    const results = searchCommunesForGaarPoint(raw);
+    if (!results.length) return null;
+
+    const exact = results.find((candidate) => {
+        const candidateName = simplifyString(candidate?.nom_standard || candidate?.name || '');
+        const candidateWithDep = simplifyString(formatGaarCommuneResultName(candidate));
+        return candidateName === normalizedInput || candidateWithDep === simplifyString(raw);
+    });
+
+    return exact || results[0];
+}
+
+function applyGaarPointCommune(circuitIndex, pointIndex, commune, fallbackName = '') {
+    const circuit = gaarCircuits[circuitIndex];
+    const point = circuit && circuit.points ? circuit.points[pointIndex] : null;
+    if (!point || !commune) return false;
+
+    const latLng = getGaarCommuneLatLng(commune);
+    if (!latLng) return false;
+
+    point.name = formatGaarCommuneResultName(commune) || String(fallbackName || point.name || 'Point GAAR').trim();
+    point.lat = latLng.lat;
+    point.lng = latLng.lng;
+
+    redrawGaarCircuits();
+    saveGaarCircuits();
+    closeGaarPointSearchOverlay();
+    if (map) {
+        map.closePopup();
+        try { map.panTo([point.lat, point.lng], { animate: false }); } catch (_) {}
+    }
+
+    const status = document.getElementById('gaar-status');
+    if (status) status.textContent = `Point GAAR déplacé sur ${point.name}.`;
+    return true;
+}
+
+function setGaarPointName(circuitIndex, pointIndex, value, options = {}) {
+    const newName = String(value || '').trim();
+    if (!newName) return false;
+
+    if (options && options.moveToCommune === true) {
+        const commune = options.commune || findBestGaarCommuneForInput(newName);
+        if (commune && applyGaarPointCommune(circuitIndex, pointIndex, commune, newName)) {
+            return true;
+        }
+    }
+
+    const circuit = gaarCircuits[circuitIndex];
+    const point = circuit && circuit.points ? circuit.points[pointIndex] : null;
+    if (!point) return false;
+
+    /* v13.64 — saisie libre sans commune reconnue : renommage simple.
+       Sélection d'une commune / OK sur une ville reconnue : déplacement du point sur la commune. */
+    point.name = newName;
+
+    redrawGaarCircuits();
+    saveGaarCircuits();
+    closeGaarPointSearchOverlay();
+    if (map) map.closePopup();
+    return true;
+}
+
+
+function closeGaarPointSearchOverlay() {
+    try {
+        const overlay = document.getElementById('gaar-point-search-overlay');
+        if (overlay && overlay.parentNode) overlay.parentNode.removeChild(overlay);
+        if (document.body) document.body.classList.remove('gaar-point-search-open');
+    } catch (_) {}
+    gaarPointSearchOverlayState = null;
+}
+
+function closeFireSearchPanelForGaarPointEdit() {
+    /*
+     * v13.64 — édition nom point GAAR en panneau haut iPad :
+     * on ferme la fenêtre de recherche feu pour libérer l'écran et éviter que
+     * la liste de résultats du point passe dessous / soit masquée par le clavier.
+     * Les états GAAR (affichage + modification/création de circuit) ne sont pas modifiés.
+     */
+    try {
+        const uiOverlay = document.getElementById('ui-overlay');
+        const toggleSearchButton = document.getElementById('toggle-search-button');
+        const communeDisplay = document.getElementById('commune-info-display');
+        const resultsList = document.getElementById('results-list');
+        const searchInput = document.getElementById('search-input');
+
+        if (resultsList) resultsList.style.display = 'none';
+        if (searchInput) searchInput.blur();
+        if (uiOverlay) uiOverlay.style.display = 'none';
+        if (toggleSearchButton) toggleSearchButton.classList.remove('active');
+
+        if (communeDisplay && (currentCommune || selectedAirportDestination) && communeDisplay.innerHTML.trim() !== '') {
+            communeDisplay.style.display = 'flex';
+        }
+    } catch (_) {}
+}
+
+function openGaarPointSearchOverlay(circuitIndex, pointIndex) {
+    closeFireSearchPanelForGaarPointEdit();
+    if (map) map.closePopup();
+
+    const point = gaarCircuits[circuitIndex]?.points?.[pointIndex];
+    if (!point) return;
+
+    closeGaarPointSearchOverlay();
+    gaarPointSearchOverlayState = { circuitIndex, pointIndex };
+
+    const overlay = document.createElement('div');
+    overlay.id = 'gaar-point-search-overlay';
+    overlay.className = 'gaar-point-search-overlay';
+    if (document.body) document.body.classList.add('gaar-point-search-open');
+    ['click', 'pointerdown', 'touchstart', 'mousedown'].forEach(type => {
+        overlay.addEventListener(type, (event) => stopGaarUiEvent(event, { preventDefault: false, durationMs: 900 }), { passive: true });
+    });
+
+    const panel = document.createElement('div');
+    panel.className = 'gaar-point-search-panel';
+
+    const header = document.createElement('div');
+    header.className = 'gaar-point-search-header';
+
+    const title = document.createElement('div');
+    title.className = 'gaar-point-search-title';
+    title.innerHTML = `<b>Point ${pointIndex + 1}</b><span>${escapeHtml(getGaarPointDisplayName(point))}</span>`;
+
+    const closeButton = document.createElement('button');
+    closeButton.type = 'button';
+    closeButton.className = 'gaar-point-search-close';
+    closeButton.setAttribute('aria-label', 'Fermer');
+    closeButton.textContent = '×';
+    closeButton.addEventListener('pointerdown', (event) => stopGaarUiEvent(event), { passive: false });
+    closeButton.addEventListener('click', (event) => {
+        stopGaarUiEvent(event);
+        closeGaarPointSearchOverlay();
+    });
+
+    header.appendChild(title);
+    header.appendChild(closeButton);
+
+    const inputWrapper = document.createElement('div');
+    inputWrapper.className = 'gaar-point-search-field-wrapper gaar-point-search-field-wrapper-top';
+
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.className = 'gaar-point-search-input gaar-point-search-input-top';
+    input.id = `gaar-input-${circuitIndex}-${pointIndex}`;
+    input.value = getGaarPointDisplayName(point);
+    input.placeholder = 'Rechercher une commune...';
+    input.autocomplete = 'off';
+    input.autocapitalize = 'words';
+    input.spellcheck = false;
+    input.inputMode = 'text';
+
+    const clearButton = document.createElement('button');
+    clearButton.type = 'button';
+    clearButton.className = 'gaar-point-search-clear';
+    clearButton.setAttribute('aria-label', 'Effacer la recherche');
+    clearButton.textContent = '×';
+
+    inputWrapper.appendChild(input);
+    inputWrapper.appendChild(clearButton);
+
+    const resultsList = document.createElement('ul');
+    resultsList.className = 'gaar-point-results gaar-point-results-top';
+    resultsList.style.display = 'none';
+
+    const renderResults = () => {
+        const results = searchCommunesForGaarPoint(input.value);
+        resultsList.innerHTML = '';
+        if (!results.length) {
+            resultsList.style.display = 'none';
+            return;
+        }
+
+        results.forEach((result) => {
+            const li = document.createElement('li');
+            li.textContent = `${result.nom_standard} (${result.dep_nom || result.dep_code} - ${result.dep_code})`;
+            const applyResultName = (event) => {
+                if (event) {
+                    try { event.preventDefault(); } catch (_) {}
+                    try { event.stopPropagation(); } catch (_) {}
+                }
+                suppressNextGaarMapClick(900);
+                const selectedName = formatGaarCommuneResultName(result);
+                input.value = selectedName;
+                /* v13.64 : sélection d'une commune = déplacement du point sur cette commune. */
+                setGaarPointName(circuitIndex, pointIndex, selectedName, { moveToCommune: true, commune: result });
+            };
+            li.addEventListener('pointerdown', applyResultName, { passive: false });
+            li.addEventListener('click', applyResultName);
+            resultsList.appendChild(li);
+        });
+        resultsList.style.display = 'block';
+    };
+
+    const updateClearButtonVisibility = () => {
+        clearButton.style.display = input.value ? 'inline-flex' : 'none';
+    };
+
+    const clearGaarPointSearchInput = () => {
+        input.value = '';
+        resultsList.innerHTML = '';
+        resultsList.style.display = 'none';
+        updateClearButtonVisibility();
+    };
+
+    let searchTimer = null;
+    input.addEventListener('input', () => {
+        updateClearButtonVisibility();
+        if (searchTimer) clearTimeout(searchTimer);
+        searchTimer = setTimeout(renderResults, 160);
+    });
+
+    clearButton.addEventListener('pointerdown', (event) => {
+        stopGaarUiEvent(event, { durationMs: 900 });
+        clearGaarPointSearchInput();
+        /* Garder le clavier ouvert quand iPad l'a déjà affiché. */
+        try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
+    }, { passive: false });
+
+    clearButton.addEventListener('click', (event) => {
+        stopGaarUiEvent(event, { durationMs: 900 });
+        clearGaarPointSearchInput();
+        try { input.focus({ preventScroll: true }); } catch (_) { try { input.focus(); } catch (_) {} }
+    });
+
+    updateClearButtonVisibility();
+
+    /* v13.64 : on ne force plus le focus par JS sur iPad.
+       Le clavier s'ouvre via le tap natif dans l'input ; on bloque seulement la propagation vers la carte. */
+    input.addEventListener('focus', renderResults);
+    input.addEventListener('pointerdown', (event) => {
+        try { event.stopPropagation(); } catch (_) {}
+        suppressNextGaarMapClick(900);
+    }, { passive: true });
+    input.addEventListener('touchstart', (event) => {
+        try { event.stopPropagation(); } catch (_) {}
+        suppressNextGaarMapClick(900);
+    }, { passive: true });
+    input.addEventListener('click', (event) => {
+        try { event.stopPropagation(); } catch (_) {}
+        suppressNextGaarMapClick(900);
+        renderResults();
+    });
+
+    input.addEventListener('keydown', (event) => {
+        if (event.key === 'Enter') {
+            event.preventDefault();
+            setGaarPointName(circuitIndex, pointIndex, input.value, { moveToCommune: true });
+        } else if (event.key === 'Escape') {
+            event.preventDefault();
+            closeGaarPointSearchOverlay();
+        }
+    });
+
+    const actions = document.createElement('div');
+    actions.className = 'gaar-point-popup-actions gaar-point-search-actions';
+
+    const okButton = document.createElement('button');
+    okButton.type = 'button';
+    okButton.className = 'gaar-point-ok-btn';
+    okButton.textContent = 'OK';
+    okButton.addEventListener('pointerdown', (event) => stopGaarUiEvent(event), { passive: false });
+    okButton.addEventListener('click', (event) => {
+        stopGaarUiEvent(event);
+        setGaarPointName(circuitIndex, pointIndex, input.value, { moveToCommune: true });
+    });
+
+    const deleteButton = document.createElement('button');
+    deleteButton.type = 'button';
+    deleteButton.className = 'delete-point-btn gaar-point-delete-btn';
+    deleteButton.textContent = 'Supprimer';
+    deleteButton.addEventListener('pointerdown', (event) => stopGaarUiEvent(event), { passive: false });
+    deleteButton.addEventListener('click', (event) => {
+        stopGaarUiEvent(event);
+        window.deleteGaarPoint(circuitIndex, pointIndex);
+    });
+
+    actions.appendChild(okButton);
+    actions.appendChild(deleteButton);
+
+    panel.appendChild(header);
+    panel.appendChild(inputWrapper);
+    panel.appendChild(resultsList);
+    panel.appendChild(actions);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+}
+
+function redrawGaarCircuits() {
+    gaarLayer.clearLayers();
+    gaarCircuits.forEach((circuit, circuitIndex) => {
+        if (!circuit || circuit.points.length === 0) return;
+        const latlngs = circuit.points.map(p => [p.lat, p.lng]);
+        const lineStyleOptions = {
+            color: circuit.color,
+            weight: 3,
+            opacity: 0.75,
+            fillColor: 'transparent',
+            fillOpacity: 0
+        };
+
+        if (latlngs.length >= 3) {
+            L.polygon(latlngs, lineStyleOptions).addTo(gaarLayer);
+        } else if (latlngs.length > 1) {
+            L.polyline(latlngs, lineStyleOptions).addTo(gaarLayer);
+        }
+
+        circuit.points.forEach((point, pointIndex) => {
+            const marker = L.circleMarker([point.lat, point.lng], {
+                radius: 8,
+                fillColor: circuit.color,
+                color: '#000',
+                weight: 1,
+                opacity: 1,
+                fillOpacity: 0.85
+            }).addTo(gaarLayer);
+
+            ['mousedown', 'touchstart', 'pointerdown'].forEach(type => {
+                marker.on(type, (event) => {
+                    stopGaarUiEvent(event, { preventDefault: false, durationMs: 900 });
+                });
+            });
+
+            marker.on('click', (event) => {
+                stopGaarUiEvent(event, { durationMs: 900 });
+
+                if (isDrawingMode) {
+                    openGaarPointSearchOverlay(circuitIndex, pointIndex);
+                    return;
+                }
+
+                /*
+                 * v13.65 — hors mode Créer/Modifier :
+                 * un clic sur un point GAAR affiche seulement une petite étiquette
+                 * avec le nom du point/ville. Aucune fenêtre d'édition, aucun bouton.
+                 */
+                try {
+                    if (map && typeof map.closePopup === 'function') map.closePopup();
+                    if (typeof L !== 'undefined' && L.popup && map) {
+                        L.popup({
+                            autoPan: false,
+                            closeButton: false,
+                            className: 'gaar-point-name-popup',
+                            offset: [0, -8]
+                        })
+                            .setLatLng([point.lat, point.lng])
+                            .setContent(`<div class="gaar-point-simple-label">${escapeHtml(getGaarPointDisplayName(point))}</div>`)
+                            .openOn(map);
+                    }
+                } catch (_) {}
+            });
+
+            if (isDrawingMode) {
+                marker.bindTooltip(escapeHtml(getGaarPointDisplayName(point)), {
+                    permanent: true,
+                    direction: 'top',
+                    offset: [0, -10],
+                    className: 'gaar-point-label'
+                });
+            }
+        });
+    });
+}
+
+window.updateGaarPoint = function(circuitIndex, pointIndex) {
+    const input = document.getElementById(`gaar-input-${circuitIndex}-${pointIndex}`);
+    setGaarPointName(circuitIndex, pointIndex, input ? input.value : '', { moveToCommune: true });
+};
+window.deleteGaarPoint = function(circuitIndex, pointIndex) {
+    suppressNextGaarMapClick(1200);
+    if (!gaarCircuits[circuitIndex] || !gaarCircuits[circuitIndex].points[pointIndex]) return;
+    gaarCircuits[circuitIndex].points.splice(pointIndex, 1);
+    if (gaarCircuits[circuitIndex].points.length === 0) {
+        gaarCircuits.splice(circuitIndex, 1);
+    }
+    redrawGaarCircuits();
+    saveGaarCircuits();
+    closeGaarPointSearchOverlay();
+    if (map) map.closePopup();
+    const status = document.getElementById('gaar-status');
+    if (status && isDrawingMode) {
+        status.textContent = 'Point GAAR supprimé. Mode création/modification toujours actif.';
+    }
+};
 function clearAllGaarCircuits() { gaarCircuits = []; gaarLayer.clearLayers(); saveGaarCircuits(); }
 function saveGaarCircuits() { localStorage.setItem('gaarCircuits', JSON.stringify(gaarCircuits)); }
 
@@ -7161,7 +19073,7 @@ function updateCalculatorData() {
         CALCULATOR_DATA = { distBaseFeu: 0, distPelicFeu: 0, csFeu: '--:--', distGpsFeu: 0 };
     } else {
         const baseAirport = getAirportByOaci(selectedBaseOACI);
-        const selectedPelican = pelicanAirports.find(ap => ap.oaci === selectedPelicanOACI);
+        const selectedPelican = getSelectedPelicanAirport();
         const { latitude_mairie: feuLat, longitude_mairie: feuLon } = currentCommune;
         let distBaseFeu = 0; if (baseAirport) { distBaseFeu = calculateDistanceInNm(baseAirport.lat, baseAirport.lon, feuLat, feuLon); }
         let distPelicFeu = 0; if (selectedPelican) { distPelicFeu = calculateDistanceInNm(selectedPelican.lat, selectedPelican.lon, feuLat, feuLon); }
@@ -7179,56 +19091,449 @@ function soundex(s) { if (!s) return ""; const a = s.toLowerCase().split(""), f 
 // =========================================================================
 // GESTION DES CARTES HORS-LIGNE
 // =========================================================================
-function initDB() {
+function isOfflineDatabaseClosingError(error) {
+    const name = String(error?.name || '').toLowerCase();
+    const message = String(
+        error?.message || error || ''
+    ).toLowerCase();
+
+    return (
+        name === 'invalidstateerror'
+        || name === 'transactioninactiveerror'
+        || message.includes('connection is closing')
+        || message.includes('database connection is closing')
+        || message.includes('connection is closed')
+        || message.includes('database connection is closed')
+        || message.includes('not allowed to create a transaction')
+    );
+}
+
+function isMainOfflineDatabaseUsable(candidate = db) {
+    if (!candidate) return false;
+    try {
+        candidate.transaction('settings', 'readonly');
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function invalidateMainOfflineDatabase(candidate = db) {
+    const connection = candidate || db;
+    try {
+        connection?.close?.();
+    } catch (_) {}
+    if (!candidate || db === candidate) {
+        db = null;
+    }
+}
+
+function initDB({ force = false } = {}) {
     /*
-     * v11.27 — retour au module offline ancien/simple.
-     * Ouverture conservée en version 3 pour rester compatible avec les bases déjà créées
-     * par les versions récentes, mais sans scan ni logique avancée pendant l'import.
+     * v14.37 — correction ciblée :
+     * - ne jamais réutiliser une connexion fermée ;
+     * - ne jamais ouvrir deux fois la base en parallèle ;
+     * - ne pas modifier la logique de stockage des tuiles.
      */
-    return new Promise((resolve, reject) => {
+    if (!force && isMainOfflineDatabaseUsable(db)) {
+        return Promise.resolve(db);
+    }
+
+    if (force || db) {
+        invalidateMainOfflineDatabase(db);
+    }
+
+    if (offlineDbOpenPromise) {
+        return offlineDbOpenPromise;
+    }
+
+    offlineDbOpenPromise = new Promise((resolve, reject) => {
         if (typeof indexedDB === 'undefined') {
             reject(new Error('IndexedDB indisponible'));
             return;
         }
 
-        const request = indexedDB.open(OFFLINE_DB_NAME, 3);
+        const request = indexedDB.open(
+            OFFLINE_DB_NAME,
+            3
+        );
 
         request.onupgradeneeded = event => {
             const dbInstance = event.target.result;
 
+            if (!dbInstance.objectStoreNames.contains('tiles')) {
+                const store = dbInstance.createObjectStore(
+                    'tiles',
+                    { keyPath: 'url' }
+                );
+                store.createIndex(
+                    'packName',
+                    'packName',
+                    { unique: false }
+                );
+                store.createIndex(
+                    'tileUrl',
+                    'tileUrl',
+                    { unique: false }
+                );
+            } else {
+                const store = event.target.transaction
+                    .objectStore('tiles');
+
+                if (!store.indexNames.contains('packName')) {
+                    store.createIndex(
+                        'packName',
+                        'packName',
+                        { unique: false }
+                    );
+                }
+                if (!store.indexNames.contains('tileUrl')) {
+                    store.createIndex(
+                        'tileUrl',
+                        'tileUrl',
+                        { unique: false }
+                    );
+                }
+            }
+
+            if (
+                !dbInstance.objectStoreNames
+                    .contains('settings')
+            ) {
+                dbInstance.createObjectStore(
+                    'settings',
+                    { keyPath: 'key' }
+                );
+            }
+        };
+
+        request.onsuccess = event => {
+            const openedDb = event.target.result;
+            db = openedDb;
+
+            const clearReference = () => {
+                if (db === openedDb) db = null;
+            };
+
+            try {
+                openedDb.onversionchange = () => {
+                    try {
+                        openedDb.close();
+                    } catch (_) {}
+                    clearReference();
+                };
+            } catch (_) {}
+
+            try {
+                openedDb.addEventListener(
+                    'close',
+                    clearReference,
+                    { once: true }
+                );
+            } catch (_) {}
+
+            console.log('[DB] Connexion réussie.');
+            resolve(openedDb);
+        };
+
+        request.onerror = event => {
+            reject(
+                event.target.error
+                || new Error(
+                    'Ouverture IndexedDB impossible'
+                )
+            );
+        };
+
+        request.onblocked = () => {
+            reject(
+                new Error(
+                    'Base IndexedDB bloquée. Fermez les autres onglets de l’application puis réessayez.'
+                )
+            );
+        };
+    }).finally(() => {
+        offlineDbOpenPromise = null;
+    });
+
+    return offlineDbOpenPromise;
+}
+
+async function runOfflineSettingsTransaction(
+    mode,
+    operation
+) {
+    let lastError = null;
+
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+        const connection = await initDB({
+            force: attempt > 0
+        });
+
+        try {
+            return await new Promise(
+                (resolve, reject) => {
+                    let transaction;
+
+                    try {
+                        transaction =
+                            connection.transaction(
+                                'settings',
+                                mode
+                            );
+                        operation(
+                            transaction.objectStore(
+                                'settings'
+                            ),
+                            transaction
+                        );
+                    } catch (error) {
+                        reject(error);
+                        return;
+                    }
+
+                    transaction.oncomplete = resolve;
+                    transaction.onerror = () => reject(
+                        transaction.error
+                        || new Error(
+                            'Transaction settings échouée'
+                        )
+                    );
+                    transaction.onabort = () => reject(
+                        transaction.error
+                        || new Error(
+                            'Transaction settings annulée'
+                        )
+                    );
+                }
+            );
+        } catch (error) {
+            lastError = error;
+
+            if (
+                attempt >= 1
+                || !isOfflineDatabaseClosingError(error)
+            ) {
+                throw error;
+            }
+
+            invalidateMainOfflineDatabase(connection);
+        }
+    }
+
+    throw lastError;
+}
+
+
+
+function sanitizeOfflineDatabaseToken(value) {
+    const base = String(value || 'Carte')
+        .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 72);
+    return base || 'Carte';
+}
+
+function getOfflineMapDatabaseNameForGroup(groupName) {
+    return `${OFFLINE_MAP_DATABASE_PREFIX}${sanitizeOfflineDatabaseToken(groupName)}`;
+}
+
+function getInstalledMapPacksSafe() {
+    try {
+        const packs = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
+        return Array.isArray(packs) ? packs : [];
+    } catch (_) {
+        return [];
+    }
+}
+
+
+function getOfflineActivePackAliasesForPacks(
+    packs = activeOfflinePacks
+) {
+    const installed = getInstalledMapPacksSafe();
+    const aliases = [];
+    const addAlias = value => {
+        const clean = String(value || '')
+            .replace(/\.zip$/i, '')
+            .trim();
+        if (clean && !aliases.includes(clean)) {
+            aliases.push(clean);
+        }
+    };
+
+    (Array.isArray(packs) ? packs : []).forEach(packName => {
+        addAlias(packName);
+        addAlias(normalizeOfflinePackName(packName));
+
+        const canonicalName =
+            normalizeOfflinePackName(packName);
+        const groupName =
+            getOfflinePackGroupName(packName);
+
+        installed.forEach(pack => {
+            if (!pack) return;
+
+            const packCanonical =
+                normalizeOfflinePackName(pack.name);
+            const packGroup =
+                getOfflinePackGroupName(pack.name);
+
+            if (
+                pack.name === packName
+                || packCanonical === canonicalName
+                || packGroup === groupName
+            ) {
+                addAlias(pack.name);
+                addAlias(pack.sourceName);
+                addAlias(
+                    normalizeOfflinePackName(
+                        pack.sourceName || ''
+                    )
+                );
+            }
+        });
+    });
+
+    return aliases;
+}
+
+function getOfflineDatabaseCandidatesForPack(
+    packName,
+    installed = getInstalledMapPacksSafe()
+) {
+    const names = [];
+    const addName = value => {
+        const clean = String(value || '').trim();
+        if (clean && !names.includes(clean)) {
+            names.push(clean);
+        }
+    };
+
+    const canonicalName =
+        normalizeOfflinePackName(packName);
+    const canonicalGroup =
+        getOfflinePackGroupName(canonicalName);
+
+    installed.forEach(pack => {
+        if (!pack) return;
+
+        const samePack = (
+            pack.name === packName
+            || normalizeOfflinePackName(pack.name)
+                === canonicalName
+            || getOfflinePackGroupName(pack.name)
+                === canonicalGroup
+        );
+
+        if (!samePack) return;
+
+        addName(pack.dbName);
+
+        const sourceGroup =
+            getOfflinePackGroupName(
+                pack.sourceName || pack.name
+            );
+        addName(
+            getOfflineMapDatabaseNameForGroup(
+                sourceGroup
+            )
+        );
+    });
+
+    /*
+     * Base déterministe utilisée par les imports isolés v13.73+.
+     * Elle est ajoutée même si l'ancien enregistrement local a perdu dbName.
+     */
+    addName(
+        getOfflineMapDatabaseNameForGroup(
+            canonicalGroup
+        )
+    );
+
+    /*
+     * Base commune historique, nécessaire pour les cartes importées avant
+     * l'isolation par groupe.
+     */
+    addName(OFFLINE_DB_NAME);
+
+    return names;
+}
+
+function getOfflinePackDatabaseName(packName) {
+    const installed = getInstalledMapPacksSafe();
+    const found = installed.find(pack => pack && pack.name === packName);
+    if (found && found.dbName) return found.dbName;
+
+    const groupName = typeof getOfflinePackGroupName === 'function'
+        ? getOfflinePackGroupName(packName)
+        : String(packName || '').trim();
+    const sameGroupWithDb = installed.find(pack => pack && pack.dbName && typeof getOfflinePackGroupName === 'function' && getOfflinePackGroupName(pack.name) === groupName);
+    if (sameGroupWithDb && sameGroupWithDb.dbName) return sameGroupWithDb.dbName;
+
+    // Compatibilité cartes déjà installées avant v13.73 : ancienne base commune.
+    return OFFLINE_DB_NAME;
+}
+
+function getOfflineActivePackDatabasesForPacks(
+    packs = activeOfflinePacks
+) {
+    const names = [];
+    const installed = getInstalledMapPacksSafe();
+
+    (Array.isArray(packs) ? packs : [])
+        .forEach(packName => {
+            getOfflineDatabaseCandidatesForPack(
+                packName,
+                installed
+            ).forEach(dbName => {
+                if (
+                    dbName
+                    && !names.includes(dbName)
+                ) {
+                    names.push(dbName);
+                }
+            });
+        });
+
+    if (!names.includes(OFFLINE_DB_NAME)) {
+        names.push(OFFLINE_DB_NAME);
+    }
+
+    return names;
+}
+
+function openOfflineTileDatabaseByName(dbName = OFFLINE_DB_NAME, version = 3) {
+    return new Promise((resolve, reject) => {
+        if (typeof indexedDB === 'undefined') {
+            reject(new Error('IndexedDB indisponible'));
+            return;
+        }
+        const safeName = String(dbName || OFFLINE_DB_NAME);
+        const request = indexedDB.open(safeName, version);
+        request.onupgradeneeded = event => {
+            const dbInstance = event.target.result;
             if (!dbInstance.objectStoreNames.contains('tiles')) {
                 const store = dbInstance.createObjectStore('tiles', { keyPath: 'url' });
                 store.createIndex('packName', 'packName', { unique: false });
                 store.createIndex('tileUrl', 'tileUrl', { unique: false });
             } else {
                 const store = event.target.transaction.objectStore('tiles');
-                if (!store.indexNames.contains('packName')) {
-                    store.createIndex('packName', 'packName', { unique: false });
-                }
-                if (!store.indexNames.contains('tileUrl')) {
-                    store.createIndex('tileUrl', 'tileUrl', { unique: false });
-                }
+                if (!store.indexNames.contains('packName')) store.createIndex('packName', 'packName', { unique: false });
+                if (!store.indexNames.contains('tileUrl')) store.createIndex('tileUrl', 'tileUrl', { unique: false });
             }
-
             if (!dbInstance.objectStoreNames.contains('settings')) {
                 dbInstance.createObjectStore('settings', { keyPath: 'key' });
             }
         };
-
         request.onsuccess = event => {
-            db = event.target.result;
-            console.log("[DB] Connexion réussie.");
-            resolve(db);
+            const openedDb = event.target.result;
+            try { openedDb.onversionchange = () => { try { openedDb.close(); } catch (_) {} }; } catch (_) {}
+            resolve(openedDb);
         };
-
-        request.onerror = event => {
-            console.error("[DB] Erreur de connexion:", event.target.error);
-            reject(event.target.error);
-        };
-
-        request.onblocked = () => {
-            reject(new Error("Base IndexedDB bloquée. Fermez les autres onglets de l'application puis réessayez."));
-        };
+        request.onerror = event => reject(event.target.error || new Error(`Erreur ouverture ${safeName}`));
+        request.onblocked = () => reject(new Error(`Base IndexedDB bloquée : ${safeName}`));
     });
 }
 
@@ -7254,27 +19559,45 @@ function getOfflineTilesEnabled() {
     });
 }
 
-function setOfflineTilesEnabled(enabled) {
+async function setOfflineTilesEnabled(enabled) {
     offlineTilesMode = !!enabled;
-    localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, String(offlineTilesMode));
+
+    localStorage.setItem(
+        OFFLINE_TILES_ENABLED_KEY,
+        String(offlineTilesMode)
+    );
     notifyServiceWorkerOfflineTilesPreference(offlineTilesMode);
 
-    if (!db) {
-        return Promise.resolve();
-    }
+    /*
+     * v14.63 — persistance IndexedDB strictement en arrière-plan.
+     * Safari peut conserver une transaction ouverte sans déclencher oncomplete ;
+     * cela ne doit plus bloquer le bouton ni la création de la couche Leaflet.
+     */
+    const valueToPersist = offlineTilesMode;
+    setTimeout(() => {
+        withTimeout(
+            runOfflineSettingsTransaction(
+                'readwrite',
+                store => {
+                    store.put({
+                        key: OFFLINE_TILES_ENABLED_KEY,
+                        value: valueToPersist
+                    });
+                }
+            ),
+            1800,
+            'Timeout persistance du mode Offline'
+        ).catch(error => {
+            console.warn(
+                '[Offline] Mode conservé en localStorage uniquement:',
+                error
+            );
+        });
+    }, 0);
 
-    try {
-        const transaction = db.transaction('settings', 'readwrite');
-        const store = transaction.objectStore('settings');
-        store.put({ key: OFFLINE_TILES_ENABLED_KEY, value: offlineTilesMode });
-        transaction.onerror = () => console.warn('[Offline] Impossible de persister la préférence offline:', transaction.error);
-        transaction.onabort = () => console.warn('[Offline] Transaction annulée lors de la persistance offline:', transaction.error);
-    } catch (error) {
-        console.warn('[Offline] IndexedDB indisponible, préférence conservée en localStorage uniquement:', error);
-    }
-
-    return Promise.resolve();
+    return offlineTilesMode;
 }
+
 
 function notifyServiceWorkerOfflineTilesPreference(enabled) {
     if (!('serviceWorker' in navigator)) return;
@@ -7294,22 +19617,92 @@ function notifyServiceWorkerOfflineOnlineFallback(enabled) {
     });
 }
 
-function notifyServiceWorkerActivePacks(packs) {
-    if (!('serviceWorker' in navigator)) return;
-    if (!navigator.serviceWorker.controller) return;
-    navigator.serviceWorker.controller.postMessage({
+function notifyServiceWorkerActivePacks(
+    packs,
+    { waitForAck = false } = {}
+) {
+    const safePacks = Array.isArray(packs)
+        ? packs.filter(Boolean)
+        : [];
+    const dbNames =
+        getOfflineActivePackDatabasesForPacks(
+            safePacks
+        );
+    const aliases =
+        getOfflineActivePackAliasesForPacks(
+            safePacks
+        );
+
+    activeOfflinePackDatabases = dbNames;
+    activeOfflinePackAliases = aliases;
+
+    try {
+        localStorage.setItem(
+            OFFLINE_ACTIVE_PACK_DATABASES_KEY,
+            JSON.stringify(dbNames)
+        );
+        localStorage.setItem(
+            OFFLINE_ACTIVE_PACK_ALIASES_KEY,
+            JSON.stringify(aliases)
+        );
+    } catch (_) {}
+
+    if (
+        !('serviceWorker' in navigator)
+        || !navigator.serviceWorker.controller
+    ) {
+        return Promise.resolve(false);
+    }
+
+    const message = {
         type: 'OFFLINE_ACTIVE_PACKS_CHANGED',
-        value: Array.isArray(packs) ? packs : []
+        value: safePacks,
+        dbNames,
+        aliases
+    };
+
+    if (!waitForAck) {
+        navigator.serviceWorker.controller
+            .postMessage(message);
+        return Promise.resolve(true);
+    }
+
+    return new Promise(resolve => {
+        const channel = new MessageChannel();
+        const timer = setTimeout(
+            () => resolve(false),
+            2500
+        );
+
+        channel.port1.onmessage = event => {
+            if (
+                event.data?.type
+                !== 'OFFLINE_ACTIVE_PACKS_READY'
+            ) {
+                return;
+            }
+            clearTimeout(timer);
+            resolve(true);
+        };
+
+        navigator.serviceWorker.controller.postMessage(
+            message,
+            [channel.port2]
+        );
     });
 }
 
 async function setOfflineActivePacks(packs) {
     activeOfflinePacks = Array.isArray(packs) ? packs.filter(Boolean) : [];
+    activeOfflinePackDatabases = getOfflineActivePackDatabasesForPacks(activeOfflinePacks);
     localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
+    localStorage.setItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY, JSON.stringify(activeOfflinePackDatabases));
     if (db) {
         try {
             const tx = db.transaction('settings', 'readwrite');
-            tx.objectStore('settings').put({ key: OFFLINE_ACTIVE_PACKS_KEY, value: activeOfflinePacks });
+            const store = tx.objectStore('settings');
+            store.put({ key: OFFLINE_ACTIVE_PACKS_KEY, value: activeOfflinePacks });
+            store.put({ key: OFFLINE_ACTIVE_PACK_DATABASES_KEY, value: activeOfflinePackDatabases });
         } catch (_) {}
     }
     notifyServiceWorkerActivePacks(activeOfflinePacks);
@@ -7340,46 +19733,214 @@ function updateMapSourceButtons() {
     offlineBtn.setAttribute('aria-pressed', String(mapSourceMode === 'offline'));
 }
 
-async function setMapSourceMode(mode) {
-    if (isMapSourceSwitching) return;
-    const previousMode = mapSourceMode;
-    const nextMode = mode === 'offline' ? 'offline' : 'online';
-    if (previousMode === nextMode) {
-        updateMapSourceButtons();
-        updateOfflineStatus();
+
+async function synchronizeOfflineConfigurationWithServiceWorker({
+    scheduleReload = false,
+    timeoutMs = 2200
+} = {}) {
+    if (!('serviceWorker' in navigator)) return false;
+
+    const postConfiguration = worker => {
+        if (!worker || typeof worker.postMessage !== 'function') return false;
+        try {
+            worker.postMessage({
+                type: 'OFFLINE_TILES_ENABLED_CHANGED',
+                value: mapSourceMode === 'offline'
+            });
+            worker.postMessage({
+                type: 'OFFLINE_ONLINE_FALLBACK_CHANGED',
+                value: false
+            });
+            worker.postMessage({
+                type: 'OFFLINE_ACTIVE_PACKS_CHANGED',
+                value: Array.isArray(activeOfflinePacks)
+                    ? activeOfflinePacks.filter(Boolean)
+                    : [],
+                dbNames: getOfflineActivePackDatabasesForPacks(activeOfflinePacks),
+                aliases: getOfflineActivePackAliasesForPacks(activeOfflinePacks)
+            });
+            return true;
+        } catch (_) {
+            return false;
+        }
+    };
+
+    if (navigator.serviceWorker.controller) {
+        postConfiguration(navigator.serviceWorker.controller);
+        return true;
+    }
+
+    let registration = null;
+    try {
+        registration = await withTimeout(
+            navigator.serviceWorker.register('./sw.js', {
+                updateViaCache: 'none'
+            }),
+            timeoutMs,
+            'Timeout enregistrement service worker'
+        );
+    } catch (error) {
+        console.warn('[Offline] Enregistrement SW différé:', error);
+    }
+
+    if (!registration) {
+        try {
+            registration = await withTimeout(
+                navigator.serviceWorker.ready,
+                timeoutMs,
+                'Timeout attente service worker'
+            );
+        } catch (_) {}
+    }
+
+    postConfiguration(
+        navigator.serviceWorker.controller
+        || registration?.active
+        || registration?.waiting
+        || registration?.installing
+    );
+
+    if (navigator.serviceWorker.controller) return true;
+
+    if (scheduleReload && mapSourceMode === 'offline') {
+        try {
+            const guardKey = `npfOfflineSwControlReload:${window.APP_VERSION || 'unknown'}`;
+            if (sessionStorage.getItem(guardKey) !== '1') {
+                sessionStorage.setItem(guardKey, '1');
+                setTimeout(() => {
+                    const refreshUrl = new URL(window.location.href);
+                    refreshUrl.searchParams.set(
+                        'appv',
+                        window.APP_VERSION || 'v14.75'
+                    );
+                    refreshUrl.searchParams.set(
+                        'swctl',
+                        Date.now().toString()
+                    );
+                    window.location.replace(refreshUrl.toString());
+                }, 120);
+            }
+        } catch (_) {}
+    }
+
+    return false;
+}
+
+async function ensureServiceWorkerControlsPageForOffline(options = {}) {
+    return synchronizeOfflineConfigurationWithServiceWorker({
+        scheduleReload: options.scheduleReload !== false,
+        timeoutMs: Number(options.timeoutMs) || 2200
+    });
+}
+
+function applyImmediateBaseTileZoomForMapSource(mode) {
+    if (mode !== 'offline') {
+        baseTileMinNativeZoom = GLOBAL_MIN_ZOOM;
+        baseTileMaxNativeZoom = ONLINE_MAX_NATIVE_ZOOM;
         return;
     }
+
+    const activeOfflineMaxZoomLimit =
+        getOfflinePackMaxNativeZoomLimitForPacks(activeOfflinePacks);
+    const storedMin = Number.parseInt(
+        localStorage.getItem(OFFLINE_TILES_MIN_ZOOM_KEY) || '',
+        10
+    );
+    const storedMax = Number.parseInt(
+        localStorage.getItem(OFFLINE_TILES_MAX_ZOOM_KEY) || '',
+        10
+    );
+
+    baseTileMinNativeZoom = Number.isFinite(storedMin)
+        ? Math.max(
+            GLOBAL_MIN_ZOOM,
+            Math.min(storedMin, activeOfflineMaxZoomLimit)
+        )
+        : GLOBAL_MIN_ZOOM;
+    baseTileMaxNativeZoom = Number.isFinite(storedMax)
+        ? Math.max(
+            baseTileMinNativeZoom,
+            Math.min(storedMax, activeOfflineMaxZoomLimit)
+        )
+        : activeOfflineMaxZoomLimit;
+}
+
+async function setMapSourceMode(mode) {
+    if (isMapSourceSwitching) return false;
+
+    const nextMode = mode === 'offline' ? 'offline' : 'online';
+    if (
+        nextMode === 'offline'
+        && (!Array.isArray(activeOfflinePacks) || !activeOfflinePacks.length)
+    ) {
+        throw new Error('Aucun pack de cartes actif');
+    }
+
     isMapSourceSwitching = true;
     mapSourceMode = nextMode;
+    offlineTilesMode = nextMode === 'offline';
+    if (offlineTilesMode) {
+        directOfflineTileHitCount = 0;
+        directOfflineTileMissCount = 0;
+    }
+
     localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
+    localStorage.setItem(
+        OFFLINE_TILES_ENABLED_KEY,
+        String(offlineTilesMode)
+    );
+
     updateMapSourceButtons();
     updateOfflineStatus();
+    setOfflineMapSwitchBusy(
+        offlineTilesMode
+            ? 'Mode OFFLINE sélectionné — chargement des tuiles…'
+            : 'Mode ONLINE actif.'
+    );
+
     try {
-        await setOfflineTilesEnabled(mapSourceMode === 'offline');
+        /*
+         * v14.63 — le changement visible et la couche sont appliqués
+         * synchroniquement, avant tout accès IndexedDB ou attente du SW.
+         */
+        setOfflineTilesEnabled(offlineTilesMode);
         setOfflineOnlineFallbackMode(false);
         notifyServiceWorkerActivePacks(activeOfflinePacks);
-        try {
-            await withTimeout(
-                updateBaseTileNativeZoomFromAvailability({ forceScan: true }),
-                5000,
-                'Analyse des tuiles trop longue.'
-            );
-        } catch (zoomError) {
-            console.warn('Analyse zoom offline interrompue:', zoomError);
-        }
-        if (map && baseTileLayer) setupBaseTileLayer();
-    } catch (error) {
-        mapSourceMode = previousMode;
-        localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
-        try {
-            await setOfflineTilesEnabled(mapSourceMode === 'offline');
-        } catch (_) {}
-        throw error;
+        applyImmediateBaseTileZoomForMapSource(nextMode);
+        rebuildBaseTileLayerAfterOfflineSwitch('setMapSourceMode-immediate-v14.69');
     } finally {
         isMapSourceSwitching = false;
         updateMapSourceButtons();
         updateOfflineStatus();
     }
+
+    if (offlineTilesMode) {
+        synchronizeOfflineConfigurationWithServiceWorker({
+            scheduleReload: true,
+            timeoutMs: 2200
+        }).then(controlled => {
+            if (!controlled || mapSourceMode !== 'offline') return;
+            notifyServiceWorkerOfflineTilesPreference(true);
+            notifyServiceWorkerActivePacks(activeOfflinePacks);
+            rebuildBaseTileLayerAfterOfflineSwitch('sw-synchronized-v14.69');
+        }).catch(error => {
+            console.warn('[Offline] Synchronisation SW différée:', error);
+        });
+    }
+
+    withTimeout(
+        updateBaseTileNativeZoomFromAvailability({ forceScan: false }),
+        2400,
+        'Timeout analyse des niveaux de zoom'
+    ).then(() => {
+        if (mapSourceMode === nextMode) {
+            rebuildBaseTileLayerAfterOfflineSwitch('zoom-ready-v14.69');
+        }
+    }).catch(error => {
+        console.warn('[Offline] Niveaux de zoom par défaut conservés:', error);
+    });
+
+    return true;
 }
 
 function updateOfflineStatus() {
@@ -7390,13 +19951,39 @@ function updateOfflineStatus() {
 
 async function initializeOfflineTilePreference() {
     const enabled = mapSourceMode === 'offline';
-    await setOfflineTilesEnabled(enabled);
+    offlineTilesMode = enabled;
+
+    localStorage.setItem(
+        OFFLINE_TILES_ENABLED_KEY,
+        String(enabled)
+    );
+    applyImmediateBaseTileZoomForMapSource(mapSourceMode);
+    setOfflineTilesEnabled(enabled);
     setOfflineOnlineFallbackMode(false);
+
+    if (Array.isArray(activeOfflinePacks) && activeOfflinePacks.length) {
+        persistSimpleActiveOfflinePacks(activeOfflinePacks).catch(error => {
+            console.warn('[Offline] Persistance des packs différée:', error);
+        });
+    }
+
     notifyServiceWorkerOfflineTilesPreference(enabled);
     notifyServiceWorkerOfflineOnlineFallback(false);
     notifyServiceWorkerActivePacks(activeOfflinePacks);
     updateMapSourceButtons();
     updateOfflineStatus();
+
+    /* Plusieurs envois courts couvrent le changement de contrôleur Safari. */
+    [0, 500, 1600].forEach((delay, index) => {
+        setTimeout(() => {
+            synchronizeOfflineConfigurationWithServiceWorker({
+                scheduleReload: enabled && index === 2,
+                timeoutMs: 1800
+            }).catch(() => {});
+        }, delay);
+    });
+
+    return enabled;
 }
 
 async function purgeInactivePacksCache() {
@@ -7440,13 +20027,95 @@ async function purgeInactivePacksCache() {
 
     const updatedInstalled = installedPacks.filter((pack) => !inactiveSet.has(pack.name));
     localStorage.setItem('installedMapPacks', JSON.stringify(updatedInstalled));
-    await updateBaseTileNativeZoomFromAvailability({ forceScan: mapSourceMode === 'offline' });
+    await updateBaseTileNativeZoomFromAvailability({ forceScan: false });
     displayInstalledMaps();
     alert(`Purge terminée: ${deletedCount} tuiles supprimées (${inactiveNames.length} pack(s)).`);
 }
 
 
+
+async function persistOfflineImportPauseSettings() {
+    /*
+     * v13.70 — import ZIP stable iPad.
+     * On écrit réellement dans IndexedDB/settings que les tuiles offline sont suspendues
+     * et qu'aucun pack n'est actif. Le service worker relit périodiquement ces settings :
+     * si on ne les met pas à jour, il peut reprendre la lecture de l'ancien pack pendant
+     * que l'import écrit le nouveau ZIP, ce qui bloque Safari/iPadOS dès le premier lot.
+     */
+    try { localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, 'false'); } catch (_) {}
+    try { localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify([])); } catch (_) {}
+    try { localStorage.setItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY, JSON.stringify([])); } catch (_) {}
+
+    if (!db) {
+        try { await initDB(); } catch (_) {}
+    }
+
+    if (!db) return;
+
+    await new Promise((resolve, reject) => {
+        try {
+            const tx = db.transaction('settings', 'readwrite');
+            const store = tx.objectStore('settings');
+            store.put({ key: OFFLINE_TILES_ENABLED_KEY, value: false });
+            store.put({ key: OFFLINE_ACTIVE_PACKS_KEY, value: [] });
+            store.put({ key: OFFLINE_ACTIVE_PACK_DATABASES_KEY, value: [] });
+            tx.oncomplete = resolve;
+            tx.onerror = () => reject(tx.error || new Error('Erreur suspension settings offline'));
+            tx.onabort = () => reject(tx.error || new Error('Transaction suspension settings annulée'));
+        } catch (error) {
+            reject(error);
+        }
+    }).catch((error) => {
+        console.warn('[Offline] Suspension settings import incomplète:', error);
+    });
+}
+
+function postServiceWorkerMessageWithAck(message, expectedType = 'OFFLINE_IMPORT_READY', timeoutMs = 2500) {
+    return new Promise((resolve) => {
+        try {
+            if (!('serviceWorker' in navigator) || !navigator.serviceWorker.controller || typeof MessageChannel === 'undefined') {
+                resolve(false);
+                return;
+            }
+
+            const channel = new MessageChannel();
+            let done = false;
+            const finish = (value) => {
+                if (done) return;
+                done = true;
+                try { channel.port1.close(); } catch (_) {}
+                resolve(value);
+            };
+
+            const timer = setTimeout(() => finish(false), timeoutMs);
+            channel.port1.onmessage = (event) => {
+                const data = event.data || {};
+                if (data.type === expectedType) {
+                    clearTimeout(timer);
+                    finish(true);
+                }
+            };
+
+            navigator.serviceWorker.controller.postMessage(message, [channel.port2]);
+        } catch (error) {
+            console.warn('[Offline] ACK service worker impossible:', error);
+            resolve(false);
+        }
+    });
+}
+
+
 async function suspendOfflineMapRenderingDuringImport(reason = 'Import offline en cours') {
+    /*
+     * v13.70 — suspension renforcée.
+     * La suspension n'est plus seulement en mémoire/localStorage : elle est aussi
+     * écrite dans IndexedDB/settings pour empêcher le service worker de reprendre
+     * l'ancien pack en plein import.
+     */
+
+    await persistOfflineImportPauseSettings();
+    offlineTilesMode = false;
+
     /*
      * v12.16 — accélération du deuxième gros import.
      *
@@ -7470,10 +20139,13 @@ async function suspendOfflineMapRenderingDuringImport(reason = 'Import offline e
      */
     try {
         activeOfflinePacks = [];
+        activeOfflinePackDatabases = [];
         localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify([]));
+        localStorage.setItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY, JSON.stringify([]));
     } catch (_) {}
 
     try {
+        notifyServiceWorkerOfflineTilesPreference(false);
         notifyServiceWorkerActivePacks([]);
     } catch (_) {}
 
@@ -7513,9 +20185,7 @@ async function releaseOfflineDatabaseForHeavyOperation(reason = 'Opération offl
     await suspendOfflineMapRenderingDuringImport(reason);
 
     try {
-        if ('serviceWorker' in navigator && navigator.serviceWorker.controller) {
-            navigator.serviceWorker.controller.postMessage({ type: 'OFFLINE_IMPORT_START' });
-        }
+        await postServiceWorkerMessageWithAck({ type: 'OFFLINE_IMPORT_START' }, 'OFFLINE_IMPORT_READY', 3000);
     } catch (_) {}
 
     try {
@@ -7523,7 +20193,7 @@ async function releaseOfflineDatabaseForHeavyOperation(reason = 'Opération offl
     } catch (_) {}
     db = null;
 
-    await new Promise(resolve => setTimeout(resolve, 900));
+    await new Promise(resolve => setTimeout(resolve, 1200));
     await initDB();
 }
 
@@ -7538,16 +20208,27 @@ async function handleZipImport(file) {
         return;
     }
 
-    const packName = file.name.replace(/\.zip$/i, '');
+    const sourcePackName = file.name.replace(/\.zip$/i, '');
+    const packName = normalizeOfflinePackName(sourcePackName);
+    const packGroupNameForImport = getOfflinePackGroupName(packName);
+    const isolatedImportDbName = getOfflineMapDatabaseNameForGroup(packGroupNameForImport);
+    let importTileDb = null;
     const progressSection = document.getElementById('import-progress-section');
     const statusMessage = document.getElementById('import-status-message');
     const progressBar = document.getElementById('import-progress-bar');
 
     progressSection.style.display = 'block';
     progressBar.style.width = '0%';
-    statusMessage.textContent = `Ouverture du ZIP ${packName}...`;
+    statusMessage.textContent = sourcePackName === packName
+        ? `Ouverture du ZIP ${packName}...`
+        : `Ouverture du ZIP ${sourcePackName} → ${packName}...`;
     isZipImportRunning = true;
     try { sessionStorage.setItem('npfZipImportRunning', '1'); } catch (_) {}
+
+    const previousImportOfflineTilesMode = !!offlineTilesMode;
+    const previousImportMapSourceMode = mapSourceMode;
+    const previousImportActiveOfflinePacks = Array.isArray(activeOfflinePacks) ? [...activeOfflinePacks] : [];
+    let zipImportCompletedSuccessfully = false;
 
     /*
      * v12.25 — OpenStreet en ZIP découpés : import progressif.
@@ -7585,27 +20266,29 @@ async function handleZipImport(file) {
 
     const reopenDbCleanly = async () => {
         try {
-            if (db) db.close();
+            if (importTileDb) importTileDb.close();
         } catch (_) {}
-        db = null;
+        importTileDb = null;
         await idle(180);
-        await initDB();
+        importTileDb = await openOfflineTileDatabaseByName(isolatedImportDbName, 3);
     };
 
     const getTileWriteTransaction = () => {
         /*
-         * v12.11 — import gros volume renforcé.
-         * durability:'relaxed' accélère et stabilise les écritures IndexedDB quand le
-         * navigateur le supporte. Safari ignore parfois l'option : fallback standard.
+         * v13.73 — import isolé par carte.
+         * Les tuiles sont écrites dans une base dédiée au groupe de carte,
+         * afin de ne plus écrire dans la base IndexedDB déjà utilisée par la carte active.
          */
+        const targetDb = importTileDb || db;
+        if (!targetDb) throw new Error('Base de tuiles import indisponible');
         try {
-            return db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+            return targetDb.transaction('tiles', 'readwrite', { durability: 'relaxed' });
         } catch (_) {
-            return db.transaction('tiles', 'readwrite');
+            return targetDb.transaction('tiles', 'readwrite');
         }
     };
 
-    const putTileBatch = (batch) => new Promise((resolve, reject) => {
+    const putTileBatch = (batch, timeoutMs = 22000) => new Promise((resolve, reject) => {
         if (!batch.length) {
             resolve();
             return;
@@ -7613,15 +20296,55 @@ async function handleZipImport(file) {
 
         const transaction = getTileWriteTransaction();
         const store = transaction.objectStore('tiles');
+        let finished = false;
 
-        batch.forEach(tileData => {
-            store.put(tileData);
-        });
+        const finish = (callback, value) => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            callback(value);
+        };
 
-        transaction.oncomplete = resolve;
-        transaction.onerror = () => reject(transaction.error);
-        transaction.onabort = () => reject(transaction.error || new Error('Transaction IndexedDB annulée'));
+        const timer = setTimeout(() => {
+            try { transaction.abort(); } catch (_) {}
+            finish(reject, new Error(`Transaction IndexedDB bloquée plus de ${Math.round(timeoutMs / 1000)} s`));
+        }, timeoutMs);
+
+        try {
+            batch.forEach(tileData => {
+                store.put(tileData);
+            });
+        } catch (error) {
+            try { transaction.abort(); } catch (_) {}
+            finish(reject, error);
+            return;
+        }
+
+        transaction.oncomplete = () => finish(resolve);
+        transaction.onerror = () => finish(reject, transaction.error || new Error('Erreur transaction IndexedDB'));
+        transaction.onabort = () => finish(reject, transaction.error || new Error('Transaction IndexedDB annulée'));
     });
+
+    const putTileBatchResilient = async (batch) => {
+        try {
+            await putTileBatch(batch);
+            return;
+        } catch (error) {
+            /*
+             * v13.70 — reprise automatique si Safari bloque une transaction.
+             * Le blocage observé à 171/22387 correspond typiquement au premier
+             * gros lot qui ne se termine jamais après utilisation d'une carte active.
+             * On rouvre la base et on réécrit le même lot en micro-lots.
+             */
+            console.warn('[Offline] Lot IndexedDB bloqué, reprise micro-lots:', error);
+            await updateImportProgress('Base iPad occupée : reprise en petits lots...', null, true);
+            await reopenDbCleanly();
+            for (let i = 0; i < batch.length; i += 12) {
+                await putTileBatch(batch.slice(i, i + 12), 18000);
+                await idle(6);
+            }
+        }
+    };
 
     const deleteExistingTilesForPack = (packNameToDelete, isLargeZipPack) => new Promise((resolve, reject) => {
         /*
@@ -7629,7 +20352,7 @@ async function handleZipImport(file) {
          * C'est critique pour OpenStreet ~900 Mo : sans purge préalable,
          * Safari/iPadOS peut atteindre le quota avant d'avoir remplacé les tuiles.
          */
-        if (!db || !packNameToDelete) {
+        if (!importTileDb || !packNameToDelete) {
             resolve(0);
             return;
         }
@@ -7703,7 +20426,7 @@ async function handleZipImport(file) {
             throw new Error("Aucune tuile valide trouvée dans le ZIP. La structure doit être /zoom/colonne/ligne.png");
         }
 
-        await updateImportProgress(`Préparation terminée. Lecture de ${totalFiles} tuiles...`, 1, true);
+        await updateImportProgress(`Préparation terminée. Base isolée ${isolatedImportDbName}. Lecture de ${totalFiles} tuiles...`, 1, true);
         await idle(120);
 
         const isLargeZip = file.size > 300 * 1024 * 1024;
@@ -7720,18 +20443,19 @@ async function handleZipImport(file) {
          */
         const useConservativeLargeImport = isLargeZip && isOpenStreetPack;
         const useSplitZipFastProfile = isOpenStreetPack && !isLargeZip;
+        const useSafeMultiZipImport = !isLargeZip && totalFiles >= 5000 && !useSplitZipFastProfile;
 
         /*
-         * v12.51 — profil ZIP fractionné rapide sans blocage 1008.
-         * v12.50 était trop prudent : beaucoup de petites transactions de 120
-         * tuiles ralentissaient l'installation. On repasse sur un débit plus
-         * élevé avec 240 tuiles par transaction et 48 lectures parallèles, mais
-         * sans revenir aux transactions de ~1000 tuiles qui bloquaient Safari.
+         * v13.70 — profil multi-ZIP stable iPad.
+         * Les nouveaux ZIP de carte France peuvent contenir ~20 000 à 25 000 tuiles par bloc
+         * sans être nommés OpenStreet. Après utilisation d'une carte active, Safari bloquait
+         * le premier gros lot autour de 171/22387. On force donc un profil plus petit,
+         * progressif et rouvert régulièrement pour ces ZIP.
          */
         const batchSize = useConservativeLargeImport
             ? 35
-            : (useSplitZipFastProfile ? 240 : (isIgnPack ? 320 : (isOaciPack ? 35 : (isLargeZip ? 160 : 180))));
-        const reopenEveryTiles = useConservativeLargeImport ? 700 : (isOaciPack ? 350 : 0);
+            : (useSafeMultiZipImport ? 40 : (useSplitZipFastProfile ? 240 : (isIgnPack ? 320 : (isOaciPack ? 35 : (isLargeZip ? 160 : 180)))));
+        const reopenEveryTiles = useConservativeLargeImport ? 700 : (useSafeMultiZipImport ? 400 : (isOaciPack ? 350 : 0));
         const splitZipReadConcurrency = useSplitZipFastProfile ? 48 : 1;
         const splitZipUiYieldEveryTiles = useSplitZipFastProfile ? 960 : 0;
         const usePackScopedKey = !isOpenStreetPack;
@@ -7774,16 +20498,18 @@ async function handleZipImport(file) {
             if (!batch.length) return;
             const toWrite = batch;
             batch = [];
-            await putTileBatch(toWrite);
+            await putTileBatchResilient(toWrite);
             processedFiles += toWrite.length;
 
             const percent = Math.min(100, Math.round((processedFiles / totalFiles) * 100));
             await updateImportProgress(
                 useSplitZipFastProfile
                     ? `ZIP fractionné rapide : ${processedFiles} / ${totalFiles} tuiles`
-                    : `Écriture iPad... ${processedFiles} / ${totalFiles} tuiles`,
+                    : (useSafeMultiZipImport
+                        ? `Import sécurisé iPad : ${processedFiles} / ${totalFiles} tuiles`
+                        : `Écriture iPad... ${processedFiles} / ${totalFiles} tuiles`),
                 percent,
-                useConservativeLargeImport || useSplitZipFastProfile
+                useConservativeLargeImport || useSplitZipFastProfile || useSafeMultiZipImport
             );
 
             if (reopenEveryTiles && processedFiles > 0 && processedFiles % reopenEveryTiles < toWrite.length) {
@@ -7855,7 +20581,9 @@ async function handleZipImport(file) {
 
                 if (!useConservativeLargeImport && !useSplitZipFastProfile && (i === 0 || i % 10 === 0)) {
                     const readPercent = Math.min(95, Math.max(2, Math.round((i / totalFiles) * 100)));
-                    await updateImportProgress(`Lecture tuiles... ${i + 1} / ${totalFiles}`, readPercent, true);
+                    await updateImportProgress(useSafeMultiZipImport
+                        ? `Import sécurisé : lecture ${i + 1} / ${totalFiles}`
+                        : `Lecture tuiles... ${i + 1} / ${totalFiles}`, readPercent, true);
                 }
 
                 if (useConservativeLargeImport && (i === 0 || i % 10 === 0)) {
@@ -7905,18 +20633,56 @@ async function handleZipImport(file) {
 
         await updateImportProgress(skippedTiles > 0 ? `Importation de ${packName} terminée — ${skippedTiles} tuile(s) ignorée(s).` : `Importation de ${packName} terminée !`, 100, true);
 
-        const installedPacks = JSON.parse(localStorage.getItem('installedMapPacks') || '[]');
-        const existingPack = installedPacks.find(p => p.name === packName);
-        if (existingPack) {
-            existingPack.date = new Date().toLocaleDateString();
-        } else {
-            installedPacks.push({ name: packName, date: new Date().toLocaleDateString() });
-        }
-        localStorage.setItem('installedMapPacks', JSON.stringify(installedPacks));
+        const installedPacks = JSON.parse(
+            localStorage.getItem('installedMapPacks') || '[]'
+        );
+
+        /*
+         * Un ancien enregistrement NPF_France_V8_01 ou NPF_France_V9_01 est
+         * remplacé logiquement par NPF_France_01. Il ne peut donc pas apparaître
+         * comme une deuxième dalle dans la liste.
+         */
+        const installedPacksWithoutSameCanonicalName = installedPacks.filter(
+            pack => (
+                !pack
+                || normalizeOfflinePackName(pack.name) !== packName
+            )
+        );
+
+        installedPacksWithoutSameCanonicalName.push({
+            name: packName,
+            sourceName: sourcePackName,
+            date: new Date().toLocaleDateString(),
+            groupName: packGroupNameForImport,
+            dbName: isolatedImportDbName,
+            storageMode: 'isolated-v13.73'
+        });
+
+        localStorage.setItem(
+            'installedMapPacks',
+            JSON.stringify(installedPacksWithoutSameCanonicalName)
+        );
 
         const importedGroupName = getOfflinePackGroupName(packName);
         const importedGroupPacks = getInstalledPackNamesForGroup(importedGroupName);
         await persistSimpleActiveOfflinePacks(importedGroupPacks.length ? importedGroupPacks : [packName]);
+
+        try {
+            localStorage.removeItem(OFFLINE_TILES_MIN_ZOOM_KEY);
+            localStorage.removeItem(OFFLINE_TILES_MAX_ZOOM_KEY);
+        } catch (_) {}
+
+        const restoreOfflineAfterImport = previousImportMapSourceMode === 'offline' || previousImportOfflineTilesMode;
+        mapSourceMode = restoreOfflineAfterImport ? 'offline' : 'online';
+        localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
+        await setOfflineTilesEnabled(restoreOfflineAfterImport);
+        notifyServiceWorkerActivePacks(activeOfflinePacks);
+        updateMapSourceButtons();
+        updateOfflineStatus();
+        zipImportCompletedSuccessfully = true;
+
+        try { if (importTileDb) importTileDb.close(); } catch (_) {}
+        importTileDb = null;
 
         if (isLargeZip) {
             reloadAfterOfflinePackChange(`Importation de ${packName} terminée. Rechargement mémoire...`);
@@ -7933,7 +20699,23 @@ async function handleZipImport(file) {
             statusMessage.textContent += " — vérifiez l'espace iPad disponible, puis relancez après fermeture/réouverture de NPF.";
         }
         console.error("Erreur d'importation ZIP:", error);
+
+        if (!zipImportCompletedSuccessfully) {
+            try {
+                mapSourceMode = previousImportMapSourceMode || 'online';
+                localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
+                await persistSimpleActiveOfflinePacks(previousImportActiveOfflinePacks);
+                await setOfflineTilesEnabled(previousImportOfflineTilesMode);
+                notifyServiceWorkerActivePacks(previousImportActiveOfflinePacks);
+                updateMapSourceButtons();
+                updateOfflineStatus();
+            } catch (restoreError) {
+                console.warn('[Offline] Restauration état offline après échec import impossible:', restoreError);
+            }
+        }
     } finally {
+        try { if (importTileDb) importTileDb.close(); } catch (_) {}
+        importTileDb = null;
         isZipImportRunning = false;
         try { sessionStorage.removeItem('npfZipImportRunning'); } catch (_) {}
         setTimeout(() => { progressSection.style.display = 'none'; }, 7000);
@@ -7976,38 +20758,69 @@ function parseTilePathFromName(name) {
 
 
 async function persistSimpleActiveOfflinePacks(packs) {
-    /*
-     * v11.35 — affichage carte propre.
-     * Le pack actif est écrit à la fois dans localStorage et dans IndexedDB/settings,
-     * car le service worker relit périodiquement IndexedDB. Sans cela, il peut
-     * continuer à servir l'ancien pack et mélanger OACI / OpenStreet.
-     */
-    activeOfflinePacks = Array.isArray(packs) ? packs.filter(Boolean) : [];
-    localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
+    activeOfflinePacks = Array.isArray(packs)
+        ? packs.filter(Boolean)
+        : [];
+    activeOfflinePackDatabases =
+        getOfflineActivePackDatabasesForPacks(activeOfflinePacks);
+    activeOfflinePackAliases =
+        getOfflineActivePackAliasesForPacks(activeOfflinePacks);
 
-    if (!db) {
-        try {
-            await initDB();
-        } catch (_) {}
-    }
+    localStorage.setItem(
+        OFFLINE_ACTIVE_PACKS_KEY,
+        JSON.stringify(activeOfflinePacks)
+    );
+    localStorage.setItem(
+        OFFLINE_ACTIVE_PACK_DATABASES_KEY,
+        JSON.stringify(activeOfflinePackDatabases)
+    );
+    localStorage.setItem(
+        OFFLINE_ACTIVE_PACK_ALIASES_KEY,
+        JSON.stringify(activeOfflinePackAliases)
+    );
 
-    if (db) {
-        try {
-            await new Promise((resolve, reject) => {
-                const tx = db.transaction('settings', 'readwrite');
-                const store = tx.objectStore('settings');
-                store.put({ key: OFFLINE_ACTIVE_PACKS_KEY, value: activeOfflinePacks });
-                tx.oncomplete = resolve;
-                tx.onerror = () => reject(tx.error);
-                tx.onabort = () => reject(tx.error || new Error('Transaction settings annulée'));
-            });
-        } catch (error) {
-            console.warn('[Offline] Impossible de persister le pack actif dans IndexedDB:', error);
-        }
-    }
+    try {
+        localStorage.removeItem(OFFLINE_TILES_MIN_ZOOM_KEY);
+        localStorage.removeItem(OFFLINE_TILES_MAX_ZOOM_KEY);
+    } catch (_) {}
 
     notifyServiceWorkerActivePacks(activeOfflinePacks);
+
+    const packsToPersist = [...activeOfflinePacks];
+    const databasesToPersist = [...activeOfflinePackDatabases];
+    const aliasesToPersist = [...activeOfflinePackAliases];
+    setTimeout(() => {
+        withTimeout(
+            runOfflineSettingsTransaction(
+                'readwrite',
+                store => {
+                    store.put({
+                        key: OFFLINE_ACTIVE_PACKS_KEY,
+                        value: packsToPersist
+                    });
+                    store.put({
+                        key: OFFLINE_ACTIVE_PACK_DATABASES_KEY,
+                        value: databasesToPersist
+                    });
+                    store.put({
+                        key: OFFLINE_ACTIVE_PACK_ALIASES_KEY,
+                        value: aliasesToPersist
+                    });
+                }
+            ),
+            2000,
+            'Timeout persistance des packs Offline'
+        ).catch(error => {
+            console.warn(
+                '[Offline] Packs conservés en localStorage uniquement:',
+                error
+            );
+        });
+    }, 0);
+
+    return activeOfflinePacks;
 }
+
 
 function reloadAfterOfflinePackChange(message = 'Rechargement de la carte...') {
     const statusMessage = document.getElementById('import-status-message');
@@ -8034,13 +20847,67 @@ function reloadAfterOfflinePackChange(message = 'Rechargement de la carte...') {
 }
 
 
+
+function normalizeOfflinePackName(packName) {
+    /*
+     * v14.34 — la version de fabrication du pack ne fait pas partie de son
+     * identité locale.
+     *
+     * Exemples :
+     * NPF_France_V9_01.zip    -> NPF_France_01
+     * NPF_France_V12_10.zip   -> NPF_France_10
+     * NPF_France_V9.2_03.zip  -> NPF_France_03
+     * NPF_France_04.zip       -> NPF_France_04
+     *
+     * Le suffixe final reste le numéro de dalle. Il est normalisé sur au moins
+     * deux chiffres pour conserver l'ordre 01...10.
+     */
+    const rawName = String(packName || '')
+        .split(/[\\/]/)
+        .pop()
+        .replace(/\.zip$/i, '')
+        .trim();
+
+    const cleaned = rawName
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+
+    const versionedMatch = cleaned.match(
+        /^(.*?)[\s_-]+v(?:ersion)?[\s_-]*\d+(?:\.\d+)*(?:[\s_-]+(?:part|partie|zip)?[\s_-]*(\d{1,3}))$/i
+    );
+
+    if (!versionedMatch) {
+        return cleaned;
+    }
+
+    const prefix = versionedMatch[1]
+        .replace(/[\s_-]+$/g, '')
+        .trim();
+
+    const partNumber = Number.parseInt(versionedMatch[2], 10);
+    if (!prefix || !Number.isFinite(partNumber)) {
+        return cleaned;
+    }
+
+    const sourcePartWidth = String(versionedMatch[2]).length;
+    const normalizedPartWidth = Math.max(2, sourcePartWidth);
+    const normalizedPart = String(partNumber).padStart(
+        normalizedPartWidth,
+        '0'
+    );
+
+    return `${prefix}_${normalizedPart}`;
+}
+
+
 function getOfflinePackGroupName(packName) {
     /*
      * v12.15 — groupes de packs offline plus tolérants.
      * Exemples :
      * OpenStreet_01, OpenStreet-02, IGN_001, IGN 03, IGN_part04 => groupe IGN.
      */
-    const name = String(packName || '').trim();
+    const name = normalizeOfflinePackName(packName);
     const cleaned = name
         .replace(/\s*\(\d+\)\s*$/i, '')
         .replace(/\s+(copy|copie)\s*$/i, '')
@@ -8104,7 +20971,7 @@ function displayInstalledMaps() {
                 <small>À utiliser si une suppression reste bloquée.</small>
             </span>
             <div class="offline-map-actions">
-                <button class="delete-map-btn offline-full-reset-btn" onclick="window.resetAllOfflineMapsStorage()">Tout réinitialiser</button>
+                <button class="delete-map-btn offline-full-reset-btn" onclick="window.resetAllOfflineMapsStorage()">Réinitialiser profond</button>
             </div>
         `;
         list.appendChild(resetLi);
@@ -8123,12 +20990,13 @@ function displayInstalledMaps() {
         const partiallyActive = activeCount > 0 && !isActive;
         const packLabel = packNames.length > 1 ? `${packNames.length} fichiers` : '1 fichier';
         const dateLabel = group.date ? `Installé le ${group.date}` : 'Installé';
+        const storageLabel = group.packs.some(pack => pack && pack.dbName) ? 'base séparée' : 'base héritée';
 
         li.className = packNames.length > 1 ? 'offline-map-group-line' : '';
         li.innerHTML = `
             <span class="offline-map-name-line">
                 <input type="checkbox" class="offline-map-select-checkbox" ${isActive ? 'checked' : ''} data-partial="${partiallyActive ? 'true' : 'false'}" onchange="window.selectSimpleMapGroup('${group.name}', this.checked)">
-                <strong>${group.name}</strong> (${packLabel} — ${dateLabel})${isActive ? ' — actif' : partiallyActive ? ` — partiel ${activeCount}/${packNames.length}` : ''}
+                <strong>${group.name}</strong> (${packLabel} — ${dateLabel} — ${storageLabel})${isActive ? ' — actif' : partiallyActive ? ` — partiel ${activeCount}/${packNames.length}` : ''}
             </span>
             <div class="offline-map-actions">
                 <button class="delete-map-btn" onclick="window.deleteMapGroup('${group.name}')">Supprimer</button>
@@ -8138,6 +21006,75 @@ function displayInstalledMaps() {
     });
 
     updateOfflineStatus();
+}
+
+async function applyOfflineMapGroupSelectionInPlace(groupName, checked, packNames) {
+    const token = ++offlineMapSwitchToken;
+    const nextPacks = checked ? packNames : [];
+    const nextMode = checked ? 'offline' : 'online';
+
+    isMapSourceSwitching = true;
+    updateMapSourceButtons();
+    setOfflineMapSwitchBusy(
+        checked
+            ? `Carte ${groupName} sélectionnée — chargement des tuiles…`
+            : 'Carte offline désactivée. Retour online…'
+    );
+    closeOfflineMapModalSoon(120);
+
+    try {
+        await persistSimpleActiveOfflinePacks(nextPacks);
+        if (token !== offlineMapSwitchToken) return false;
+
+        mapSourceMode = nextMode;
+        offlineTilesMode = nextMode === 'offline';
+        localStorage.setItem(MAP_SOURCE_MODE_KEY, mapSourceMode);
+        localStorage.setItem(
+            OFFLINE_TILES_ENABLED_KEY,
+            String(offlineTilesMode)
+        );
+
+        setOfflineTilesEnabled(offlineTilesMode);
+        setOfflineOnlineFallbackMode(false);
+        notifyServiceWorkerActivePacks(activeOfflinePacks);
+        applyImmediateBaseTileZoomForMapSource(nextMode);
+        rebuildBaseTileLayerAfterOfflineSwitch('selectSimpleMapGroup-immediate-v14.69');
+    } catch (error) {
+        console.error('Changement de carte offline impossible:', error);
+        alert(`Impossible de changer de carte offline: ${error.message || error}`);
+        return false;
+    } finally {
+        if (token === offlineMapSwitchToken) {
+            isMapSourceSwitching = false;
+            updateMapSourceButtons();
+            updateOfflineStatus();
+            displayInstalledMaps();
+        }
+    }
+
+    if (checked) {
+        synchronizeOfflineConfigurationWithServiceWorker({
+            scheduleReload: true,
+            timeoutMs: 2200
+        }).then(controlled => {
+            if (!controlled || mapSourceMode !== 'offline') return;
+            notifyServiceWorkerOfflineTilesPreference(true);
+            notifyServiceWorkerActivePacks(activeOfflinePacks);
+            rebuildBaseTileLayerAfterOfflineSwitch('group-sw-ready-v14.69');
+        }).catch(() => {});
+    }
+
+    withTimeout(
+        updateBaseTileNativeZoomFromAvailability({ forceScan: false }),
+        2400,
+        'Timeout analyse carte sélectionnée'
+    ).then(() => {
+        if (token === offlineMapSwitchToken) {
+            rebuildBaseTileLayerAfterOfflineSwitch('group-zoom-ready-v14.69');
+        }
+    }).catch(() => {});
+
+    return true;
 }
 
 window.selectSimpleMapGroup = async function(groupName, checked = true) {
@@ -8152,12 +21089,7 @@ window.selectSimpleMapGroup = async function(groupName, checked = true) {
      * v12.12 — une seule carte active à la fois, mais une carte peut être composée
      * de plusieurs ZIP indépendants : OpenStreet_01...OpenStreet_05.
      */
-    await persistSimpleActiveOfflinePacks(checked ? packNames : []);
-    reloadAfterOfflinePackChange(
-        checked
-            ? `Carte ${groupName} sélectionnée (${packNames.length} fichier(s)). Rechargement...`
-            : 'Carte offline désactivée. Rechargement...'
-    );
+    await applyOfflineMapGroupSelectionInPlace(groupName, checked, packNames);
 };
 
 window.selectSimpleMapPack = async function(packName, checked = true) {
@@ -8180,7 +21112,9 @@ function removeInstalledOfflinePacksLogically(packNames = []) {
 
     if (Array.isArray(activeOfflinePacks) && activeOfflinePacks.some(name => targetSet.has(name))) {
         activeOfflinePacks = activeOfflinePacks.filter(name => !targetSet.has(name));
+        activeOfflinePackDatabases = getOfflineActivePackDatabasesForPacks(activeOfflinePacks);
         localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify(activeOfflinePacks));
+        localStorage.setItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY, JSON.stringify(activeOfflinePackDatabases));
         notifyServiceWorkerActivePacks(activeOfflinePacks);
     }
 
@@ -8265,6 +21199,7 @@ window.resetAllOfflineMapsStorage = async function() {
 
         localStorage.removeItem('installedMapPacks');
         localStorage.removeItem(OFFLINE_ACTIVE_PACKS_KEY);
+        localStorage.removeItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY);
         localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, String(DEFAULT_OFFLINE_TILES_ENABLED));
         activeOfflinePacks = [];
 
@@ -8285,6 +21220,171 @@ window.resetAllOfflineMapsStorage = async function() {
         alert(`Réinitialisation impossible : ${message}`);
     }
 };;
+
+
+/*
+ * v13.70 — reset profond offline iPad.
+ * Le reset logique ne suffit pas sur iPadOS quand IndexedDB reste verrouillée :
+ * l'import suivant peut bloquer dès 31 tuiles, et seule la suppression de la PWA
+ * libère réellement le stockage. Cette version :
+ * - utilise une nouvelle base OfflineTilesDB_v13_70_clean ;
+ * - ferme la connexion page + service worker ;
+ * - supprime les bases OfflineTilesDB connues quand Safari l'autorise ;
+ * - désinscrit le service worker uniquement pendant le reset, puis recharge l'app
+ *   pour qu'il soit réinstallé proprement.
+ */
+function deleteIndexedDatabaseWithTimeoutForNpf(name, timeoutMs = 3200) {
+    return new Promise((resolve) => {
+        if (!name || typeof indexedDB === 'undefined') {
+            resolve({ name, status: 'skipped' });
+            return;
+        }
+        let done = false;
+        const finish = (status, detail = '') => {
+            if (done) return;
+            done = true;
+            clearTimeout(timer);
+            resolve({ name, status, detail });
+        };
+        const timer = setTimeout(() => finish('timeout'), timeoutMs);
+        try {
+            const request = indexedDB.deleteDatabase(name);
+            request.onsuccess = () => finish('deleted');
+            request.onerror = () => finish('error', request.error && request.error.message ? request.error.message : 'deleteDatabase error');
+            request.onblocked = () => finish('blocked');
+        } catch (error) {
+            finish('exception', error && error.message ? error.message : String(error));
+        }
+    });
+}
+
+async function getNpfOfflineDatabaseNamesForReset() {
+    const names = new Set([
+        OFFLINE_DB_NAME,
+        'OfflineTilesDB',
+        'OfflineTilesDB_v12_20',
+        'OfflineTilesDB_v12_21',
+        'OfflineTilesDB_v13_70_clean'
+    ]);
+    try {
+        if (indexedDB && typeof indexedDB.databases === 'function') {
+            const databases = await indexedDB.databases();
+            (databases || []).forEach((entry) => {
+                const name = entry && entry.name ? String(entry.name) : '';
+                if (/^OfflineTilesDB/i.test(name) || /^OfflineMap_/i.test(name)) names.add(name);
+            });
+        }
+    } catch (_) {}
+    return Array.from(names).filter(Boolean);
+}
+
+window.resetAllOfflineMapsStorage = async function() {
+    const confirmed = confirm(
+        'Réinitialisation profonde des cartes offline ?\n\n' +
+        'Cette action désactive la carte offline, ferme IndexedDB, nettoie les bases de tuiles et recharge NPF.\n' +
+        'Elle remplace la suppression complète de la PWA dans la plupart des cas.'
+    );
+    if (!confirmed) return;
+
+    const progressSection = document.getElementById('import-progress-section');
+    const statusMessage = document.getElementById('import-status-message') || document.getElementById('offline-status');
+    const progressBar = document.getElementById('import-progress-bar');
+    const setProgress = async (message, percent) => {
+        if (progressSection) progressSection.style.display = 'block';
+        if (progressBar && typeof percent === 'number') progressBar.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+        if (statusMessage) statusMessage.textContent = message;
+        await new Promise(resolve => setTimeout(resolve, 60));
+    };
+
+    try {
+        isZipImportRunning = false;
+        try { sessionStorage.removeItem('npfZipImportRunning'); } catch (_) {}
+
+        await setProgress('Réinitialisation profonde : suspension carte offline...', 5);
+        try {
+            mapSourceMode = 'online';
+            localStorage.setItem(MAP_SOURCE_MODE_KEY, 'online');
+            offlineTilesMode = false;
+            activeOfflinePacks = [];
+            localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, 'false');
+            localStorage.setItem(OFFLINE_ACTIVE_PACKS_KEY, JSON.stringify([]));
+            localStorage.setItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY, JSON.stringify([]));
+            localStorage.setItem(OFFLINE_ONLINE_FALLBACK_KEY, 'false');
+            localStorage.removeItem('installedMapPacks');
+            notifyServiceWorkerOfflineTilesPreference(false);
+            notifyServiceWorkerOfflineOnlineFallback(false);
+            notifyServiceWorkerActivePacks([]);
+        } catch (_) {}
+
+        try {
+            if (map && baseTileLayer) {
+                map.removeLayer(baseTileLayer);
+                baseTileLayer = null;
+            }
+        } catch (_) {}
+
+        await setProgress('Fermeture service worker / IndexedDB...', 18);
+        try {
+            await postServiceWorkerMessageWithAck({ type: 'OFFLINE_FACTORY_RESET' }, 'OFFLINE_IMPORT_READY', 2500);
+        } catch (_) {}
+
+        try {
+            if (db) db.close();
+        } catch (_) {}
+        db = null;
+
+        await setProgress('Nettoyage caches de tuiles...', 35);
+        try { await clearTileCaches(); } catch (_) {}
+
+        await setProgress('Service worker conservé pour le mode hors ligne...', 48);
+        /*
+         * v13.71 — on ne désinscrit plus le service worker pendant le reset.
+         * La désinscription v13.70 nettoyait parfois trop bien : la PWA pouvait
+         * repartir sans contrôleur SW, donc les tuiles offline n'étaient plus
+         * servies. On ferme seulement sa connexion IndexedDB via OFFLINE_FACTORY_RESET.
+         */
+        await new Promise(resolve => setTimeout(resolve, 600));
+
+        await setProgress('Suppression bases offline...', 62);
+        const dbNames = await getNpfOfflineDatabaseNamesForReset();
+        const results = [];
+        for (const name of dbNames) {
+            const result = await deleteIndexedDatabaseWithTimeoutForNpf(name, 3200);
+            results.push(result);
+        }
+        const blockedOrTimedOut = results.filter(r => r && (r.status === 'blocked' || r.status === 'timeout'));
+
+        try {
+            localStorage.removeItem('installedMapPacks');
+            localStorage.removeItem(OFFLINE_ACTIVE_PACKS_KEY);
+            localStorage.removeItem(OFFLINE_ACTIVE_PACK_DATABASES_KEY);
+            localStorage.removeItem(OFFLINE_ACTIVE_PACK_ALIASES_KEY);
+            localStorage.setItem(OFFLINE_TILES_ENABLED_KEY, 'false');
+            localStorage.setItem(MAP_SOURCE_MODE_KEY, 'online');
+            localStorage.setItem('npfOfflineDeepResetAt', String(Date.now()));
+        } catch (_) {}
+
+        await setProgress(blockedOrTimedOut.length
+            ? 'Reset profond terminé avec bases verrouillées ignorées. Rechargement sur base neuve...'
+            : 'Reset profond terminé. Rechargement sur base neuve...', 100);
+
+        try {
+            await ensureServiceWorkerControlsPageForOffline();
+        } catch (_) {}
+
+        setTimeout(() => {
+            const refreshUrl = new URL(window.location.href);
+            refreshUrl.searchParams.set('appv', APP_VERSION);
+            refreshUrl.searchParams.set('resetdb', Date.now().toString());
+            refreshUrl.searchParams.set('swkeep', '1');
+            window.location.replace(refreshUrl.toString());
+        }, 900);
+    } catch (error) {
+        const message = error && error.message ? error.message : String(error);
+        if (statusMessage) statusMessage.textContent = `Réinitialisation profonde impossible : ${message}`;
+        alert(`Réinitialisation profonde impossible : ${message}\n\nDernier recours : supprimer la PWA puis la réinstaller.`);
+    }
+};
 
 
 window.deleteMapGroup = async function(groupName) {
@@ -8419,7 +21519,15 @@ async function deleteTilesForPackName(packName, onProgress = null) {
      * - recommencer jusqu'à zéro clé ;
      * - fallback scan complet si l'index ne trouve rien.
      */
-    if (!db || !packName) return 0;
+    if (!packName) return 0;
+    const tileDbNameForDelete = getOfflinePackDatabaseName(packName);
+    let targetDbForDelete = db;
+    let closeTargetDbForDelete = false;
+    if (tileDbNameForDelete && tileDbNameForDelete !== OFFLINE_DB_NAME) {
+        targetDbForDelete = await openOfflineTileDatabaseByName(tileDbNameForDelete, 3);
+        closeTargetDbForDelete = true;
+    }
+    if (!targetDbForDelete) return 0;
 
     const CHUNK_SIZE = 500;
     let totalDeleted = 0;
@@ -8427,7 +21535,7 @@ async function deleteTilesForPackName(packName, onProgress = null) {
 
     const getKeysByIndex = () => new Promise((resolve, reject) => {
         try {
-            const tx = db.transaction('tiles', 'readonly');
+            const tx = targetDbForDelete.transaction('tiles', 'readonly');
             const store = tx.objectStore('tiles');
 
             if (!(store.indexNames && store.indexNames.contains('packName')) || typeof store.index('packName').getAllKeys !== 'function') {
@@ -8452,9 +21560,9 @@ async function deleteTilesForPackName(packName, onProgress = null) {
         try {
             let tx;
             try {
-                tx = db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+                tx = targetDbForDelete.transaction('tiles', 'readwrite', { durability: 'relaxed' });
             } catch (_) {
-                tx = db.transaction('tiles', 'readwrite');
+                tx = targetDbForDelete.transaction('tiles', 'readwrite');
             }
 
             const store = tx.objectStore('tiles');
@@ -8472,9 +21580,9 @@ async function deleteTilesForPackName(packName, onProgress = null) {
         try {
             let tx;
             try {
-                tx = db.transaction('tiles', 'readwrite', { durability: 'relaxed' });
+                tx = targetDbForDelete.transaction('tiles', 'readwrite', { durability: 'relaxed' });
             } catch (_) {
-                tx = db.transaction('tiles', 'readwrite');
+                tx = targetDbForDelete.transaction('tiles', 'readwrite');
             }
 
             const store = tx.objectStore('tiles');
@@ -8555,6 +21663,7 @@ async function deleteTilesForPackName(packName, onProgress = null) {
         }
     }
 
+    try { if (closeTargetDbForDelete && targetDbForDelete) targetDbForDelete.close(); } catch (_) {}
     return totalDeleted;
 };
 
@@ -8566,13 +21675,20 @@ const calculateBingo = (dist) => (dist <= 70) ? (dist * 5) + 700 : (dist * 4) + 
 const calculateFuelToGo = (dist) => (dist <= 70) ? (dist * 5) : (dist * 4);
 const calculateConsoRotation = (dist) => { const effectiveDist = Math.max(dist, 10); return (effectiveDist <= 70) ? (effectiveDist * 10) + 250 : (effectiveDist * 8) + 250; };
 const calculateTransitTime = (dist) => (dist <= 70) ? (dist * (60 / 210)) : (dist * (60 / 240));
+
+/*
+ * v14.47 — forfait premier transit piloté par le champ RLT Départ.
+ * Ce forfait est distinct des 10 minutes conservées avant validation du largage.
+ */
+const RETARDANT_LOADING_FORFAIT_MIN = 10;
+
 const calculateRotationTime = (dist) => {
     const effectiveDist = Math.max(dist, 10);
     const rotationDistance = effectiveDist * 2;
     return (effectiveDist <= 50) ? (20 + (rotationDistance / 3.5)) : (20 + (rotationDistance / 4));
 };
 let masterRecalculate = () => {};
-let isFuelSurFeuManual = false, isSuiviConsoManual = false, isSuiviDureeManual = false;
+let isSuiviConsoManual = false, isSuiviDureeManual = false;
 const MULTI_FLIGHT_STORAGE_KEY = 'calculator_flights_v12_28';
 const ACTIVE_FLIGHT_ID_STORAGE_KEY = 'calculator_active_flight_id_v12_28';
 const DEROUT_EMPTY_RETARDANT_KEY = 'derout_empty_retardant_v12_29';
@@ -8581,6 +21697,23 @@ let activeFlightId = null;
 let isApplyingFlightState = false;
 const parseTime = (timeString) => { if (!timeString || !timeString.includes(':')) return null; const parts = timeString.split(':'); return parseInt(parts[0], 10) * 60 + parseInt(parts[1], 10); };
 const formatTime = (totalMinutes) => { if (totalMinutes === null || isNaN(totalMinutes) || totalMinutes < 0) return ''; const roundedMinutes = Math.round(totalMinutes); const hours = Math.floor(roundedMinutes / 60); const minutes = roundedMinutes % 60; return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}`; };
+function normalizeClockLimitAfterReference(limitMinutes, referenceMinutes) {
+    if (limitMinutes === null || !Number.isFinite(limitMinutes)) return limitMinutes;
+    if (referenceMinutes === null || !Number.isFinite(referenceMinutes)) return limitMinutes;
+    let normalized = limitMinutes;
+    while (normalized < referenceMinutes) normalized += 1440;
+    return normalized;
+}
+function formatClockLimitTime(totalMinutes) {
+    if (totalMinutes === null || !Number.isFinite(totalMinutes) || totalMinutes < 0) return '';
+    const roundedMinutes = Math.round(totalMinutes);
+    const dayOffset = Math.floor(roundedMinutes / 1440);
+    const minutesOfDay = ((roundedMinutes % 1440) + 1440) % 1440;
+    const hours = Math.floor(minutesOfDay / 60);
+    const minutes = minutesOfDay % 60;
+    const suffix = dayOffset > 0 ? ` +${dayOffset}j` : '';
+    return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}${suffix}`;
+}
 const parseNumeric = (numericString) => { if (!numericString) return null; const value = parseInt(numericString.replace(/[^0-9]/g, ''), 10); return isNaN(value) ? null : value; };
 
 function updateAndSortRotations(container, current, params) {
@@ -8737,28 +21870,29 @@ function updateAndSortRotations(container, current, params) {
         if (type === 'tmd') {
             const firstDropTime = canCalculateTime ? current.time + FIRST_DROP_FORFAIT_MIN : null;
             const backBaseAfterFirstDropTime = canCalculateTime ? firstDropTime + returnBaseTime : null;
-            const canFirstDropAndReturnBeforeTmd = canCalculateTime && params.tmdTime !== null && Number.isFinite(params.tmdTime) && backBaseAfterFirstDropTime <= params.tmdTime;
-            const remainingForRotations = canFirstDropAndReturnBeforeTmd ? (params.tmdTime - firstDropTime - returnBaseTime) : null;
+            const effectiveTmdTime = normalizeClockLimitAfterReference(params.tmdTime, current.time);
+            const canFirstDropAndReturnBeforeTmd = canCalculateTime && effectiveTmdTime !== null && Number.isFinite(effectiveTmdTime) && backBaseAfterFirstDropTime <= effectiveTmdTime;
+            const remainingForRotations = canFirstDropAndReturnBeforeTmd ? (effectiveTmdTime - firstDropTime - returnBaseTime) : null;
             formulaString = [
                 `TMD`,
                 ``,
                 currentContextDetails(),
-                `Fin TMD = ${timeOrNA(params.tmdTime)}`,
+                `Fin TMD = ${formatClockLimitTime(effectiveTmdTime) || 'N/A'}`,
                 ``,
                 rotationFormulaDetails(),
                 ``,
                 `Validation du +1 :`,
                 `+1 possible uniquement si l'avion peut arriver sur feu, larguer avec le forfait ${FIRST_DROP_FORFAIT_MIN} min, puis revenir base avant la fin TMD.`,
                 `Test : Heure sur feu + ${FIRST_DROP_FORFAIT_MIN} min + retour base ≤ TMD`,
-                `Test : ${timeOrNA(current.time)} + ${FIRST_DROP_FORFAIT_MIN} min + ${minOrNA(returnBaseTime)} = ${timeOrNA(backBaseAfterFirstDropTime)} ≤ ${timeOrNA(params.tmdTime)} → ${canFirstDropAndReturnBeforeTmd ? 'OUI' : 'NON'}`,
+                `Test : ${timeOrNA(current.time)} + ${FIRST_DROP_FORFAIT_MIN} min + ${minOrNA(returnBaseTime)} = ${formatClockLimitTime(backBaseAfterFirstDropTime) || 'N/A'} ≤ ${formatClockLimitTime(effectiveTmdTime) || 'N/A'} → ${canFirstDropAndReturnBeforeTmd ? 'OUI' : 'NON'}`,
                 ``,
                 `Si le +1 est impossible : résultat = 0.`,
                 `Si le +1 est possible :`,
                 `Nbr rotations TMD = 1 + ((TMD - Heure premier largage - Retour base final) / Durée rotation)`,
                 `Heure premier largage = Heure sur feu + ${FIRST_DROP_FORFAIT_MIN} min`,
-                `Calcul = 1 + ((${timeOrNA(params.tmdTime)} - ${timeOrNA(firstDropTime)} - ${minOrNA(returnBaseTime)}) / ${minOrNA(params.rotationTime)})`
+                `Calcul = 1 + ((${formatClockLimitTime(effectiveTmdTime) || 'N/A'} - ${formatClockLimitTime(firstDropTime) || 'N/A'} - ${minOrNA(returnBaseTime)}) / ${minOrNA(params.rotationTime)})`
             ].join('\n');
-            if (canCalculateTime && params.tmdTime !== null && Number.isFinite(params.tmdTime)) {
+            if (canCalculateTime && effectiveTmdTime !== null && Number.isFinite(effectiveTmdTime)) {
                 value = canFirstDropAndReturnBeforeTmd ? 1 + (remainingForRotations / params.rotationTime) : 0;
             }
         }
@@ -8933,6 +22067,7 @@ function recalculateBlocFuel() {
     });
 }
 
+// v13.88 — Fuel sur feu Prévi en lecture seule, RLT départ et espacements ajustés.
 function updatePreviTab() {
     const defaultFormula = "Données insuffisantes pour le calcul.";
     const setHelp = (id, formula) => {
@@ -8947,7 +22082,7 @@ function updatePreviTab() {
         document.getElementById('heure-sur-feu').textContent = '--:--';
         document.getElementById('duree-transit').textContent = '--:--';
         document.getElementById('conso-aller-feu').textContent = '-- kg';
-        document.getElementById('fuel-sur-feu-wrapper').querySelector('.display-input').value = '';
+        const previFuelSurFeuNoCommune = document.getElementById('fuel-sur-feu'); if (previFuelSurFeuNoCommune) previFuelSurFeuNoCommune.textContent = '-- kg';
         document.getElementById('duree-rotation').textContent = '--:--';
         document.getElementById('conso-par-rotation').textContent = '-- kg';
         document.getElementById('cs-sur-feu').textContent = '--:--';
@@ -8973,13 +22108,17 @@ function updatePreviTab() {
     const rotationTime = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
     const consoRotation = calculateConsoRotation(CALCULATOR_DATA.distPelicFeu);
     const consoAller = calculateFuelToGo(CALCULATOR_DATA.distBaseFeu);
-    const heureSurFeu = heureTO !== null ? heureTO + transitTime : null;
+    const rltDepartMass = parseNumeric(document.getElementById('rlt-depart')?.querySelector('.display-input')?.value || '');
+    const firstTransitAlreadyLoaded = rltDepartMass !== null && rltDepartMass > 0;
+    const previForfaitRltMin = firstTransitAlreadyLoaded ? 0 : RETARDANT_LOADING_FORFAIT_MIN;
+    const previTempsAvantFeu = previForfaitRltMin + transitTime;
+    const heureSurFeu = heureTO !== null ? heureTO + previTempsAvantFeu : null;
 
     document.getElementById('duree-transit').textContent = formatTime(transitTime) || '--:--';
     setHelp('duree-transit-help', `DURÉE TRANSIT BASE → FEU\n\nFormule : Distance Base → Feu × (60 / Vitesse)\n\nRègle vitesse :\n- Distance ≤ 70 Nm : 210 kt\n- Distance > 70 Nm : 240 kt\n\nDistance Base → Feu : ${CALCULATOR_DATA.distBaseFeu} Nm\nVitesse retenue : ${CALCULATOR_DATA.distBaseFeu <= 70 ? 210 : 240} kt\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} × (60 / ${CALCULATOR_DATA.distBaseFeu <= 70 ? 210 : 240}) = ${formatTime(transitTime)} (${transitTime} min)`);
 
     document.getElementById('heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
-    setHelp('heure-sur-feu-help', `HEURE SUR FEU\n\nFormule : HEURE TO + Durée transit Base → Feu\n\nHEURE TO : ${formatTime(heureTO) || 'N/A'}\nDurée transit : ${formatTime(transitTime)} (${transitTime} min)\n\nCalcul : ${formatTime(heureTO) || 'N/A'} + ${formatTime(transitTime)} = ${formatTime(heureSurFeu) || 'N/A'}\n\nCette heure sert ensuite à vérifier le +1 Coucher Soleil et TMD avec le forfait de 10 min avant largage.`);
+    setHelp('heure-sur-feu-help', `HEURE SUR FEU — PRÉVI\n\nFormule : BLOC DÉPART + forfait plein retardant éventuel + durée transit Base → Feu\n\nBLOC DÉPART : ${formatTime(heureTO) || 'N/A'}\nRLT Départ : ${rltDepartMass !== null ? `${rltDepartMass} kg` : 'non renseigné'}\nForfait plein retardant : ${previForfaitRltMin} min\nDurée transit : ${formatTime(transitTime)} (${transitTime} min)\n\nCalcul : ${formatTime(heureTO) || 'N/A'} + ${previForfaitRltMin} min + ${formatTime(transitTime)} = ${formatTime(heureSurFeu) || 'N/A'}\n\n${firstTransitAlreadyLoaded ? 'Aucun forfait au premier transit : le champ RLT Départ de l’en-tête contient déjà une masse.' : `Le champ RLT Départ est vide : le forfait de ${RETARDANT_LOADING_FORFAIT_MIN} min est appliqué avant le premier transit.`}\nLes 10 min avant validation du largage restent appliquées séparément dans les limites CS/TMD/HDV.`);
 
     document.getElementById('conso-aller-feu').textContent = `${consoAller} kg`;
     setHelp('conso-aller-feu-help', `CONSO TRANSIT BASE → FEU\n\nFormule : Distance Base → Feu × Conso au Nm\n\nRègle consommation :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nDistance Base → Feu : ${CALCULATOR_DATA.distBaseFeu} Nm\nConso retenue : ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} kg/Nm\n\nCalcul : ${CALCULATOR_DATA.distBaseFeu} × ${CALCULATOR_DATA.distBaseFeu <= 70 ? 5 : 4} = ${consoAller} kg`);
@@ -8990,23 +22129,58 @@ function updatePreviTab() {
     document.getElementById('conso-par-rotation').textContent = consoRotation === 250 ? '-- kg' : `${consoRotation} kg`;
     setHelp('conso-par-rotation-help', `CONSO ROTATION FEU ↔ PÉLIC\n\nFormule : (Distance retenue × conso aller-retour) + forfait largage\n\nDistance retenue :\n- Distance Feu → Pélicandrome mesurée si ≥ 10 Nm\n- 10 Nm minimum si la distance mesurée est < 10 Nm\n\nDistance Feu → Pélic mesurée : ${CALCULATOR_DATA.distPelicFeu} Nm\nDistance retenue : ${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} Nm\n\nRègle consommation aller-retour :\n- Distance retenue ≤ 70 Nm : 10 kg/Nm\n- Distance retenue > 70 Nm : 8 kg/Nm\n\nForfait largage : 250 kg\n\nCalcul : (${Math.max(CALCULATOR_DATA.distPelicFeu, 10)} × ${Math.max(CALCULATOR_DATA.distPelicFeu, 10) <= 70 ? 10 : 8}) + 250 = ${consoRotation} kg`);
 
-    const fuelSurFeuInput = document.getElementById('fuel-sur-feu-wrapper').querySelector('.display-input');
-    const fuelEstime = fuelDepart ? fuelDepart - consoAller : null;
-    if (!isFuelSurFeuManual) { fuelSurFeuInput.value = fuelEstime ? `${fuelEstime} kg` : ''; }
-    setHelp('fuel-sur-feu-help', `FUEL SUR FEU\n\nMode AUTO :\nFormule : FUEL Départ - Conso transit Base → Feu\n\nFUEL Départ : ${fuelDepart || 'N/A'} kg\nConso transit : ${consoAller} kg\n\nCalcul : ${fuelDepart || 'N/A'} - ${consoAller} = ${fuelEstime !== null ? fuelEstime + ' kg' : 'N/A'}\n\nEn mode manuel, cette valeur peut être corrigée directement. Elle sert aux calculs Fuel retour Base/Pélic.`);
+    const fuelSurFeuDisplay = document.getElementById('fuel-sur-feu');
+    const fuelEstime = fuelDepart !== null ? fuelDepart - consoAller : null;
+    if (fuelSurFeuDisplay) fuelSurFeuDisplay.textContent = fuelEstime !== null ? `${fuelEstime} kg` : '-- kg';
+    setHelp('fuel-sur-feu-help', `FUEL SUR FEU
 
-    const fuelSurFeu = parseNumeric(fuelSurFeuInput.value);
+Valeur calculée automatiquement et non modifiable.
+
+Formule : FUEL Départ - Conso transit Base → Feu
+
+FUEL Départ : ${fuelDepart !== null ? fuelDepart : 'N/A'} kg
+Conso transit : ${consoAller} kg
+
+Calcul : ${fuelDepart !== null ? fuelDepart : 'N/A'} - ${consoAller} = ${fuelEstime !== null ? fuelEstime + ' kg' : 'N/A'}
+
+Cette valeur sert aux calculs Fuel retour Base/Pélic.`);
+
+    const fuelSurFeu = fuelEstime;
 
     document.getElementById('cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
     document.getElementById('tmd-display').textContent = formatTime(tmdTime);
     document.getElementById('hdv-restant-display').textContent = formatTime(limiteHDV);
 
-    updateAndSortRotations(document.getElementById('previ-rotation-results-container'), { fuel: fuelSurFeu, time: heureSurFeu }, { bingoBase, bingoPelic, consoRotation, rotationTime, csFeuTime, tmdTime, limiteHDV, transitTime, consoTransitFromGps: consoAller });
+    updateAndSortRotations(
+        document.getElementById('previ-rotation-results-container'),
+        { fuel: fuelSurFeu, time: heureSurFeu },
+        {
+            bingoBase,
+            bingoPelic,
+            consoRotation,
+            rotationTime,
+            csFeuTime,
+            tmdTime,
+            limiteHDV,
+            transitTime: previTempsAvantFeu,
+            rawTransitTime: transitTime,
+            preTransitForfaitMin: previForfaitRltMin,
+            effectiveTransitDistance: CALCULATOR_DATA.distBaseFeu,
+            transitSourceLabel: selectedBaseOACI ? `BLOC DÉPART / base (${selectedBaseOACI})` : 'BLOC DÉPART / base non renseignée',
+            currentTimeLabel: 'Heure sur feu',
+            consoTransitFromGps: consoAller,
+            firstDropForfaitMin: 10
+        }
+    );
 }
 
 function updateSuiviTab() {
     const suiviConsoInput = document.getElementById('suivi-conso-rotation-wrapper').querySelector('.display-input');
     const suiviDureeInput = document.getElementById('suivi-duree-rotation-wrapper').querySelector('.display-input');
+    const setSuiviHelp = (id, formula) => {
+        const icon = document.getElementById(id);
+        if (icon) icon.onclick = () => alert(formula || 'Données insuffisantes pour le calcul.');
+    };
 
     if (!currentCommune) {
         document.getElementById('suivi-bingo-base').innerHTML = '-- kg';
@@ -9018,6 +22192,10 @@ function updateSuiviTab() {
         document.getElementById('suivi-cs-sur-feu').textContent = '--:--';
         const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
         if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
+        setSuiviHelp('suivi-duree-transit-help');
+        setSuiviHelp('suivi-fuel-sur-feu-help');
+        setSuiviHelp('suivi-duree-rotation-help');
+        setSuiviHelp('suivi-conso-rotation-help');
         suiviConsoInput.value = '';
         suiviDureeInput.value = '';
         return;
@@ -9071,6 +22249,8 @@ function updateSuiviTab() {
 
     const blocDepartTime = parseTime(document.getElementById('bloc-depart')?.querySelector('.display-input')?.value || '');
     const fuelDepart = parseNumeric(document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '');
+    const rltDepartMass = parseNumeric(document.getElementById('rlt-depart')?.querySelector('.display-input')?.value || '');
+    const firstTransitAlreadyLoaded = rltDepartMass !== null && rltDepartMass > 0;
     const limiteHdvDepart = (typeof getEffectiveLimitHdvForActiveFlight === 'function')
         ? getEffectiveLimitHdvForActiveFlight()
         : parseTime(document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '');
@@ -9082,6 +22262,7 @@ function updateSuiviTab() {
     let transitEffectiveDistanceVersFeu = null;
     let transitConsoDistanceVersFeu = null;
     let preTransitForfaitMin = 0;
+    let preTransitForfaitReason = '';
     let transitSourceLabel = '';
     let transitSourceDetail = '';
 
@@ -9110,7 +22291,8 @@ function updateSuiviTab() {
     if (lastFilledRow) {
         currentFuel = getRowFuel(lastFilledRow);
         currentTime = getRowTime(lastFilledRow);
-        preTransitForfaitMin = 10;
+        preTransitForfaitMin = RETARDANT_LOADING_FORFAIT_MIN;
+        preTransitForfaitReason = `Forfait plein retardant appliqué après la dernière ligne BLOC/FUEL renseignée.`;
 
         if (lastFilledRow === firstRow && isFirstRowFullDeparture) {
             const firstRowOaci = getRowOaci(firstRow);
@@ -9119,18 +22301,22 @@ function updateSuiviTab() {
             currentHdv = limiteHdvDepart;
             transitSourceLabel = firstRowOaci ? `1re ligne Plein au départ (${firstRowOaci})` : '1re ligne Plein au départ — OACI non renseigné';
             transitSourceDetail = `Terrain départ retenu : 1re ligne BLOC/FUEL en mode Plein au départ`;
+
         } else {
             currentHdv = parseTime(lastFilledRow.querySelector('.tps-vol-restant-cell')?.textContent || '');
             const hasSelectedPelicForSuivi = !!selectedPelicanOACI && Number.isFinite(CALCULATOR_DATA.distPelicFeu);
             setTransitDistancePolicy({ measuredDistance: hasSelectedPelicForSuivi ? CALCULATOR_DATA.distPelicFeu : null, usePelicMinimum: true });
             transitSourceLabel = selectedPelicanOACI ? `Pélic sélectionné (${selectedPelicanOACI})` : 'Pélic sélectionné non renseigné';
-            transitSourceDetail = `Terrain départ retenu : pélicandrome sélectionné après le premier transit`;
+            transitSourceDetail = `Terrain départ retenu : pélicandrome sélectionné après la dernière ligne BLOC/FUEL`;
         }
     } else {
         currentFuel = fuelDepart;
         currentTime = blocDepartTime;
         currentHdv = limiteHdvDepart;
-        preTransitForfaitMin = 0;
+        preTransitForfaitMin = firstTransitAlreadyLoaded ? 0 : RETARDANT_LOADING_FORFAIT_MIN;
+        preTransitForfaitReason = firstTransitAlreadyLoaded
+            ? `Premier transit sans forfait : le champ RLT Départ de l’en-tête contient ${rltDepartMass} kg.`
+            : `Premier transit avec forfait plein retardant de ${RETARDANT_LOADING_FORFAIT_MIN} min : le champ RLT Départ est vide.`;
         setTransitDistancePolicy({ measuredDistance: Number.isFinite(CALCULATOR_DATA.distBaseFeu) ? CALCULATOR_DATA.distBaseFeu : null, usePelicMinimum: false });
         transitSourceLabel = selectedBaseOACI ? `BLOC DÉPART / base (${selectedBaseOACI})` : 'BLOC DÉPART / base non renseignée';
         transitSourceDetail = `Terrain départ retenu : ligne BLOC DÉPART / FUEL DÉPART / BASE`;
@@ -9146,6 +22332,95 @@ function updateSuiviTab() {
     const heureSurFeu = (currentTime !== null && tempsAvantFeu !== null) ? currentTime + tempsAvantFeu : null;
     const fuelSurFeu = (currentFuel !== null && consoTransitVersFeu !== null) ? currentFuel - consoTransitVersFeu : currentFuel;
 
+    const transitSpeedKt = Number.isFinite(transitEffectiveDistanceVersFeu)
+        ? (transitEffectiveDistanceVersFeu <= 70 ? 210 : 240)
+        : null;
+    const transitConsoRate = Number.isFinite(transitConsoDistanceVersFeu)
+        ? (transitConsoDistanceVersFeu <= 70 ? 5 : 4)
+        : null;
+    const rotationDistanceRetained = Number.isFinite(CALCULATOR_DATA.distPelicFeu)
+        ? Math.max(CALCULATOR_DATA.distPelicFeu, 10)
+        : null;
+    const rotationSpeedNmMin = Number.isFinite(rotationDistanceRetained)
+        ? (rotationDistanceRetained <= 50 ? 3.5 : 4)
+        : null;
+    const rotationConsoRate = Number.isFinite(rotationDistanceRetained)
+        ? (rotationDistanceRetained <= 70 ? 10 : 8)
+        : null;
+
+    setSuiviHelp('suivi-duree-transit-help', transitTimeVersFeu !== null
+        ? `DURÉE TRANSIT SOURCE → FEU — SUIVI ROTATIONS
+
+${transitSourceDetail}
+Source utilisée : ${transitSourceLabel}
+
+Distance mesurée : ${Number.isFinite(transitDistanceVersFeu) ? transitDistanceVersFeu : 'N/A'} Nm
+Distance retenue pour la durée : ${Number.isFinite(transitEffectiveDistanceVersFeu) ? transitEffectiveDistanceVersFeu : 'N/A'} Nm
+Règle vitesse : ≤ 70 Nm = 210 kt ; > 70 Nm = 240 kt
+Vitesse retenue : ${transitSpeedKt ?? 'N/A'} kt
+
+Calcul : ${Number.isFinite(transitEffectiveDistanceVersFeu) ? transitEffectiveDistanceVersFeu : 'N/A'} × (60 / ${transitSpeedKt ?? 'N/A'}) = ${formatTime(transitTimeVersFeu)} (${transitTimeVersFeu} min)
+
+La valeur affichée correspond uniquement au temps de vol source → feu.
+Forfait plein retardant avant transit : ${preTransitForfaitMin} min, intégré à « Heure sur Feu » mais pas à la durée affichée.
+${preTransitForfaitReason}`
+        : 'Distance vers le feu indisponible. Vérifiez le terrain de départ, le pélicandrome sélectionné et le feu.');
+
+    setSuiviHelp('suivi-fuel-sur-feu-help', fuelSurFeu !== null && currentFuel !== null && consoTransitVersFeu !== null
+        ? `FUEL SUR FEU — SUIVI ROTATIONS
+
+Formule : Fuel retenu au départ du transit - Conso transit vers le feu
+
+${transitSourceDetail}
+Source utilisée : ${transitSourceLabel}
+Fuel retenu au départ du transit : ${currentFuel} kg
+Distance retenue pour la consommation : ${Number.isFinite(transitConsoDistanceVersFeu) ? transitConsoDistanceVersFeu : 'N/A'} Nm
+Règle consommation : ≤ 70 Nm = 5 kg/Nm ; > 70 Nm = 4 kg/Nm
+Taux retenu : ${transitConsoRate ?? 'N/A'} kg/Nm
+Conso transit : ${consoTransitVersFeu} kg
+
+Calcul : ${currentFuel} - ${consoTransitVersFeu} = ${fuelSurFeu} kg
+
+Le forfait avant transit de ${preTransitForfaitMin} min n'ajoute pas de consommation forfaitaire dans ce calcul.`
+        : 'Fuel de départ du transit ou distance vers le feu indisponible.');
+
+    setSuiviHelp('suivi-duree-rotation-help', rotationDistanceRetained !== null && rotationTime !== null
+        ? `DURÉE ROTATION FEU ↔ PÉLIC — SUIVI ROTATIONS
+
+Mode actuel : ${isSuiviDureeManual ? 'MANUEL' : 'AUTO'}
+Valeur utilisée : ${formatTime(rotationTime) || 'N/A'}${rotationTime !== null ? ` (${rotationTime} min)` : ''}
+
+Référence du mode AUTO :
+20 min + ((Distance retenue × 2) / Vitesse)
+
+Pélic sélectionné : ${selectedPelicanOACI || 'N/A'}
+Distance Feu → Pélic mesurée : ${Number.isFinite(CALCULATOR_DATA.distPelicFeu) ? CALCULATOR_DATA.distPelicFeu : 'N/A'} Nm
+Distance retenue : ${rotationDistanceRetained} Nm, avec un minimum de 10 Nm
+Vitesse retenue : ${rotationSpeedNmMin} Nm/min (${rotationSpeedNmMin === 3.5 ? 210 : 240} kt)
+Calcul AUTO : 20 + ((${rotationDistanceRetained} × 2) / ${rotationSpeedNmMin}) = ${formatTime(Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu)))}
+
+${isSuiviDureeManual ? 'La valeur manuelle remplace actuellement le calcul AUTO dans le nombre de rotations.' : 'La valeur AUTO est utilisée dans le nombre de rotations.'}`
+        : 'Sélectionnez un pélicandrome et renseignez une durée de rotation exploitable.');
+
+    setSuiviHelp('suivi-conso-rotation-help', rotationDistanceRetained !== null && consoRotation !== null
+        ? `CONSO ROTATION FEU ↔ PÉLIC — SUIVI ROTATIONS
+
+Mode actuel : ${isSuiviConsoManual ? 'MANUEL' : 'AUTO'}
+Valeur utilisée : ${consoRotation} kg
+
+Référence du mode AUTO :
+(Distance retenue × conso aller-retour) + forfait largage
+
+Pélic sélectionné : ${selectedPelicanOACI || 'N/A'}
+Distance Feu → Pélic mesurée : ${Number.isFinite(CALCULATOR_DATA.distPelicFeu) ? CALCULATOR_DATA.distPelicFeu : 'N/A'} Nm
+Distance retenue : ${rotationDistanceRetained} Nm, avec un minimum de 10 Nm
+Conso aller-retour retenue : ${rotationConsoRate} kg/Nm
+Forfait largage : 250 kg
+Calcul AUTO : (${rotationDistanceRetained} × ${rotationConsoRate}) + 250 = ${calculateConsoRotation(CALCULATOR_DATA.distPelicFeu)} kg
+
+${isSuiviConsoManual ? 'La valeur manuelle remplace actuellement le calcul AUTO dans le nombre de rotations.' : 'La valeur AUTO est utilisée dans le nombre de rotations.'}`
+        : 'Sélectionnez un pélicandrome et renseignez une consommation de rotation exploitable.');
+
     if (currentFuel === null && currentTime === null) {
         document.getElementById('suivi-fuel-actuel').textContent = '-- kg';
         document.getElementById('suivi-heure-sur-feu').textContent = '--:--';
@@ -9153,7 +22428,7 @@ function updateSuiviTab() {
         const suiviDureeTransitEl = document.getElementById('suivi-duree-transit'); if (suiviDureeTransitEl) suiviDureeTransitEl.textContent = '--:--';
         const suiviFuelSurFeuEl = document.getElementById('suivi-fuel-sur-feu'); if (suiviFuelSurFeuEl) suiviFuelSurFeuEl.textContent = '-- kg';
         const suiviHeureHelpIcon = document.getElementById('suivi-heure-sur-feu-help');
-        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour le calcul.'); }
+        if (suiviHeureHelpIcon) { suiviHeureHelpIcon.onclick = () => alert('Données insuffisantes pour calculer l’heure sur feu.'); }
         document.querySelectorAll('#suivi-rotation-results-container .value').forEach(el => { el.textContent = '--'; el.className = 'value rotation-value-default'; });
     } else {
         document.getElementById('suivi-fuel-actuel').textContent = currentFuel !== null ? `${currentFuel} kg` : '--';
@@ -9165,16 +22440,18 @@ function updateSuiviTab() {
         if (suiviHeureHelpIcon) {
             suiviHeureHelpIcon.onclick = () => alert(`HEURE SUR FEU — SUIVI ROTATION
 
-Règle v12.88 :
-- depuis BLOC DÉPART / FUEL DÉPART / BASE : premier transit depuis la base ;
-- depuis une ligne BLOC/FUEL en mode Plein au départ : premier transit depuis l'OACI de cette ligne ;
-- depuis une arrivée pélicandrome : 10 min de mise en œuvre/roulage/décollage, puis transit vers le feu ;
-- le largage est ensuite validé avec 10 min supplémentaires avant largage.
+Règle v14.47 :
+- premier transit : BLOC DÉPART + 10 min plein retardant + transit vers le feu ;
+- exception au premier transit : si le champ RLT Départ de l’en-tête BLOC/FUEL contient une masse, le forfait de 10 min n'est pas ajouté ;
+- les cellules Masse RLT des lignes du tableau ne commandent jamais cette exception ;
+- après chaque ligne BLOC/FUEL : heure de la ligne + 10 min plein retardant + transit vers le feu ;
+- les 10 min avant validation du largage restent ensuite appliquées séparément.
 
 ${transitSourceDetail}
 Source utilisée : ${transitSourceLabel}
 Heure départ retenue : ${formatTime(currentTime) || 'N/A'}
-Forfait avant transit : ${preTransitForfaitMin} min
+Forfait plein retardant : ${preTransitForfaitMin} min
+${preTransitForfaitReason}
 Distance source → Feu mesurée : ${Number.isFinite(transitDistanceVersFeu) ? transitDistanceVersFeu : 'N/A'} Nm
 Distance transit retenue : ${Number.isFinite(transitEffectiveDistanceVersFeu) ? transitEffectiveDistanceVersFeu : 'N/A'} Nm
 Règle vitesse : ≤70 Nm = 210 kt, >70 Nm = 240 kt
@@ -9219,6 +22496,13 @@ function updateDeroutementTab() {
         const icon = document.getElementById(id);
         if (icon) { icon.onclick = () => alert(formula || "Données insuffisantes pour le calcul."); }
     };
+    const isEmptyRetardant = document.getElementById('derout-empty-retardant-checkbox')?.checked === true;
+    const deroutEmptyModeState = isEmptyRetardant
+        ? 'COCHÉE — trajet initial GPS → Pélic → Feu, avec 10 min au pélicandrome'
+        : 'NON COCHÉE — trajet initial direct GPS → Feu';
+    const deroutModeImpactText = isEmptyRetardant
+        ? 'La case modifie le trajet initial vers le feu. Elle ne modifie pas la durée ni la consommation des rotations suivantes Feu ↔ Pélic.'
+        : 'Le trajet initial est direct vers le feu. La durée et la consommation de rotation concernent ensuite les rotations Feu ↔ Pélic.';
 
     const deroutFuelMiniPelicLabel = document.getElementById('derout-fuel-mini-pelic-label');
     if (deroutFuelMiniPelicLabel) {
@@ -9234,8 +22518,32 @@ function updateDeroutementTab() {
         document.getElementById('derout-fuel-mini-base').textContent = '-- kg';
         document.getElementById('derout-fuel-mini-pelic').textContent = '-- kg';
         document.getElementById('derout-heure-sur-feu').textContent = '--:--';
+        const deroutDureeRotationEmpty = document.getElementById('derout-duree-rotation');
+        if (deroutDureeRotationEmpty) deroutDureeRotationEmpty.textContent = '--:--';
+        const deroutConsoRotationEmpty = document.getElementById('derout-conso-rotation');
+        if (deroutConsoRotationEmpty) deroutConsoRotationEmpty.textContent = '-- kg';
         document.getElementById('derout-cs-sur-feu').textContent = '--:--';
-        setHelp('derout-fuel-mini-base-help'); setHelp('derout-fuel-mini-pelic-help'); setHelp('derout-heure-sur-feu-help');
+        setHelp('derout-duree-rotation-help', `DURÉE ROTATION — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Sélectionnez un feu pour afficher le calcul détaillé.`);
+        setHelp('derout-conso-rotation-help', `CONSO ROTATION — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Sélectionnez un feu pour afficher le calcul détaillé.`);
+        setHelp('derout-fuel-mini-base-help', `Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+
+Sélectionnez un feu pour afficher le calcul détaillé.`);
+        setHelp('derout-fuel-mini-pelic-help', `Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+
+Sélectionnez un feu pour afficher le calcul détaillé.`);
+        setHelp('derout-heure-sur-feu-help', `Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+
+Sélectionnez un feu pour afficher le calcul détaillé.`);
         return;
     }
 
@@ -9246,6 +22554,67 @@ function updateDeroutementTab() {
     const bingoPelic = calculateBingo(CALCULATOR_DATA.distPelicFeu);
     const rotationTime = Math.round(calculateRotationTime(CALCULATOR_DATA.distPelicFeu));
     const consoRotation = calculateConsoRotation(CALCULATOR_DATA.distPelicFeu);
+    const deroutDureeRotationDisplay = document.getElementById('derout-duree-rotation');
+    if (deroutDureeRotationDisplay) {
+        deroutDureeRotationDisplay.textContent = (rotationTime === 20 || !selectedPelicanOACI) ? '--:--' : formatTime(rotationTime);
+    }
+    const deroutConsoRotationDisplay = document.getElementById('derout-conso-rotation');
+    if (deroutConsoRotationDisplay) {
+        deroutConsoRotationDisplay.textContent = (consoRotation === 250 || !selectedPelicanOACI) ? '-- kg' : `${consoRotation} kg`;
+    }
+
+    const deroutRotationDistance = Number.isFinite(CALCULATOR_DATA.distPelicFeu)
+        ? Math.max(CALCULATOR_DATA.distPelicFeu, 10)
+        : null;
+    const deroutRotationSpeedNmMin = deroutRotationDistance !== null
+        ? (deroutRotationDistance <= 50 ? 3.5 : 4)
+        : null;
+    const deroutRotationConsoRate = deroutRotationDistance !== null
+        ? (deroutRotationDistance <= 70 ? 10 : 8)
+        : null;
+
+    setHelp('derout-duree-rotation-help', selectedPelicanOACI && deroutRotationDistance !== null
+        ? `DURÉE ROTATION FEU ↔ PÉLIC — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Pélic sélectionné : ${selectedPelicanOACI}
+Distance Feu → Pélic mesurée : ${CALCULATOR_DATA.distPelicFeu} Nm
+Distance retenue : ${deroutRotationDistance} Nm, avec un minimum de 10 Nm
+Règle vitesse : ≤ 50 Nm = 3,5 Nm/min (210 kt) ; > 50 Nm = 4 Nm/min (240 kt)
+Vitesse retenue : ${deroutRotationSpeedNmMin} Nm/min
+Forfait rotation : 20 min
+
+Calcul : 20 + ((${deroutRotationDistance} × 2) / ${deroutRotationSpeedNmMin}) = ${formatTime(rotationTime)} (${rotationTime} min)`
+        : `DURÉE ROTATION — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Sélectionnez un pélicandrome pour calculer la durée de rotation.`);
+
+    setHelp('derout-conso-rotation-help', selectedPelicanOACI && deroutRotationDistance !== null
+        ? `CONSO ROTATION FEU ↔ PÉLIC — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Pélic sélectionné : ${selectedPelicanOACI}
+Distance Feu → Pélic mesurée : ${CALCULATOR_DATA.distPelicFeu} Nm
+Distance retenue : ${deroutRotationDistance} Nm, avec un minimum de 10 Nm
+Règle consommation aller-retour : ≤ 70 Nm = 10 kg/Nm ; > 70 Nm = 8 kg/Nm
+Taux retenu : ${deroutRotationConsoRate} kg/Nm
+Forfait largage : 250 kg
+
+Calcul : (${deroutRotationDistance} × ${deroutRotationConsoRate}) + 250 = ${consoRotation} kg`
+        : `CONSO ROTATION — DÉROUT. / GAAR
+
+Case « Retour Pélic avant feu » : ${deroutEmptyModeState}
+${deroutModeImpactText}
+
+Sélectionnez un pélicandrome pour calculer la consommation de rotation.`);
+
     const csFeuTime = parseTime(CALCULATOR_DATA.csFeu);
     const tmdTime = parseTime(document.getElementById('tmd').querySelector('.display-input').value);
     const limiteHDV = parseTime(document.getElementById('limite-hdv').querySelector('.display-input').value);
@@ -9257,8 +22626,6 @@ function updateDeroutementTab() {
         : (Number.isFinite(lastGpsLat) && Number.isFinite(lastGpsLng) ? { lat: lastGpsLat, lng: lastGpsLng } : null);
     const hasGpsPosition = !!userLatLng;
     const selectedPelicForDeroutement = selectedPelicanOACI ? getAirportByOaci(selectedPelicanOACI) : null;
-    const isEmptyRetardant = document.getElementById('derout-empty-retardant-checkbox')?.checked === true;
-
     const distGpsFeu = (hasGpsPosition && currentCommune)
         ? Math.round(calculateDistanceInNm(userLatLng.lat, userLatLng.lng, currentCommune.latitude_mairie, currentCommune.longitude_mairie))
         : null;
@@ -9304,12 +22671,12 @@ function updateDeroutementTab() {
         : `Distance GPS → Feu : ${distGpsFeu ?? 'N/A'} Nm`;
 
     setHelp('derout-fuel-mini-base-help', consoTransitFromGps !== null
-        ? `FUEL MINI 1 LRG / BASE\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Base\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Base :\n700 kg + conso Feu → Base = ${bingoBase} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase} = ${fuelMiniBase} kg`
+        ? `FUEL MINI 1 LRG / BASE\n\nCase « Retour Pélic avant feu » : ${deroutEmptyModeState}\n${deroutModeImpactText}\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Base\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Base :\n700 kg + conso Feu → Base = ${bingoBase} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoBase} = ${fuelMiniBase} kg`
         : (isEmptyRetardant && !selectedPelicForDeroutement)
             ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
             : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
     setHelp('derout-fuel-mini-pelic-help', consoTransitFromGps !== null
-        ? `FUEL MINI 1 LRG / PÉLIC\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Pélic\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Pélic :\n700 kg + conso Feu → Pélic = ${bingoPelic} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic} = ${fuelMiniPelic} kg`
+        ? `FUEL MINI 1 LRG / PÉLIC\n\nCase « Retour Pélic avant feu » : ${deroutEmptyModeState}\n${deroutModeImpactText}\n\nFormule : Conso ${deroutFirstLegLabel} + forfait largage + BINGO Pélic\n\n${deroutFirstLegDetail}\n\nRègle conso transit :\n- Distance ≤ 70 Nm : 5 kg/Nm\n- Distance > 70 Nm : 4 kg/Nm\n\nForfait largage : 250 kg\n\nBINGO Pélic :\n700 kg + conso Feu → Pélic = ${bingoPelic} kg\n\nCalcul : ${consoTransitFromGps} + 250 + ${bingoPelic} = ${fuelMiniPelic} kg`
         : (isEmptyRetardant && !selectedPelicForDeroutement)
             ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
             : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
@@ -9318,7 +22685,7 @@ function updateDeroutementTab() {
     document.getElementById('derout-heure-sur-feu').textContent = formatTime(heureSurFeu) || '--:--';
     document.getElementById('derout-cs-sur-feu').textContent = CALCULATOR_DATA.csFeu;
     setHelp('derout-heure-sur-feu-help', transitTimeFromGps !== null
-        ? `HEURE SUR FEU — DÉROUTEMENT\n\nFormule : Heure actuelle + Durée ${deroutFirstLegLabel}\n\n${deroutFirstLegDetail}\n\nRègle vitesse :\n- Distance ≤ 70 Nm : 210 kt\n- Distance > 70 Nm : 240 kt\n\nHeure actuelle : ${formatTime(heureActuelle) || 'N/A'}\nDurée ${deroutFirstLegLabel} : ${formatTime(transitTimeFromGps) || 'N/A'} (${transitTimeFromGps} min)\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'} = ${formatTime(heureSurFeu) || 'N/A'}`
+        ? `HEURE SUR FEU — DÉROUTEMENT\n\nCase « Retour Pélic avant feu » : ${deroutEmptyModeState}\n${deroutModeImpactText}\n\nFormule : Heure actuelle + Durée ${deroutFirstLegLabel}\n\n${deroutFirstLegDetail}\n\nRègle vitesse :\n- Distance ≤ 70 Nm : 210 kt\n- Distance > 70 Nm : 240 kt\n\nHeure actuelle : ${formatTime(heureActuelle) || 'N/A'}\nDurée ${deroutFirstLegLabel} : ${formatTime(transitTimeFromGps) || 'N/A'} (${transitTimeFromGps} min)\n\nCalcul : ${formatTime(heureActuelle) || 'N/A'} + ${formatTime(transitTimeFromGps) || 'N/A'} = ${formatTime(heureSurFeu) || 'N/A'}`
         : (isEmptyRetardant && !selectedPelicForDeroutement)
             ? 'Sélectionnez un pélicandrome pour le mode “vide retardant”.'
             : 'Distance GPS indisponible. Utilisez “🛰️ Rafraîchir GPS”.');
@@ -9516,6 +22883,8 @@ function initializeTeamChat() {
     const CHAT_CLIENT_ID_KEY = 'teamChatClientId';
     const CHAT_OUTBOX_KEY = 'teamChatOutbox';
     const CHAT_SEEN_IDS_KEY = 'teamChatSeenIds';
+    const CHAT_CONNECTION_DESIRED_KEY = 'teamChatConnectionDesired';
+    let chatConnectionDesired = localStorage.getItem(CHAT_CONNECTION_DESIRED_KEY) === 'true';
     let unreadCount = 0;
     let reconnectAfterOnlineTimeout = null;
     let isChatConnecting = false;
@@ -9556,6 +22925,14 @@ function initializeTeamChat() {
         appendChatMessage(item.user, item.text, item.time, item.system === true, item);
     });
 
+    const setChatConnectionDesired = (desired) => {
+        chatConnectionDesired = desired === true;
+        localStorage.setItem(
+            CHAT_CONNECTION_DESIRED_KEY,
+            chatConnectionDesired ? 'true' : 'false'
+        );
+    };
+
     const setConnectionState = (isOnline, label = null) => {
         chatConnected = isOnline;
         const effectiveLabel = label || (isOnline ? 'Connecté' : 'Hors ligne');
@@ -9565,8 +22942,11 @@ function initializeTeamChat() {
         offlineBadge.style.display = isOnline ? 'none' : 'flex';
 
         if (connectButton) {
-            connectButton.disabled = effectiveLabel === 'Connexion...';
-            connectButton.textContent = isOnline ? 'Déconnexion' : (effectiveLabel === 'Connexion...' ? 'Connexion...' : 'Connexion');
+            const connecting = effectiveLabel === 'Connexion...' || effectiveLabel === 'Reconnexion...';
+            connectButton.disabled = connecting;
+            connectButton.textContent = isOnline
+                ? 'Déconnexion'
+                : (connecting ? 'Connexion...' : (chatConnectionDesired ? 'Déconnexion' : 'Connexion'));
         }
     };
     setConnectionState(false);
@@ -10312,6 +23692,15 @@ function initializeTeamChat() {
     };
 
     const reconnectIfNeeded = (reasonLabel = 'Reconnexion...') => {
+        /*
+         * v14.07 — la reprise réseau / premier plan ne doit jamais annuler
+         * une déconnexion volontaire de l'utilisateur.
+         */
+        if (!chatConnectionDesired) {
+            console.info('[Chat] Reconnexion ignorée : état utilisateur = déconnecté.');
+            return;
+        }
+
         const roomName = (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, '');
         const userName = (userInput.value || '').trim();
         if (!roomName || !userName) return;
@@ -10685,9 +24074,17 @@ function initializeTeamChat() {
     updateChatValidateButtonState();
 
     connectButton.addEventListener('click', () => {
-        if (chatConnected || isChatConnecting) {
+        /*
+         * L'intention mémorisée prime sur le seul état MQTT instantané.
+         * Ainsi, même hors réseau, le bouton permet d'annuler une future
+         * reconnexion automatique.
+         */
+        if (chatConnectionDesired || chatConnected || isChatConnecting) {
+            setChatConnectionDesired(false);
             disconnectFromChat();
         } else {
+            setChatConnectionDesired(true);
+            setConnectionState(false, 'Connexion...');
             connectToChat();
         }
     });
@@ -10729,6 +24126,20 @@ function initializeTeamChat() {
             }, 200);
         }
     });
+
+    /*
+     * Restauration de l'état lors d'un démarrage complet :
+     * - préférence connectée : tentative de connexion ;
+     * - préférence déconnectée : maintien hors ligne.
+     */
+    if (chatConnectionDesired) {
+        setConnectionState(false, 'Connexion...');
+        setTimeout(() => {
+            reconnectIfNeeded('Restauration du dernier état du chat.');
+        }, 350);
+    } else {
+        setConnectionState(false, 'Hors ligne');
+    }
 
     window.addEventListener('beforeunload', () => {
         publishOwnLocationClear();
@@ -11020,13 +24431,48 @@ function initializeCalculator() {
         return { ...bestAirport, distance: bestDistance };
     }
 
+    function normalizeBlocDepartAirportOaci(value) {
+        return String(value || '').trim().toUpperCase();
+    }
+
     function getBlocDepartAirportOaci() {
         const blocDepartWrapper = document.getElementById('bloc-depart');
         const blocDepartValue = blocDepartWrapper?.querySelector('.display-input')?.value || '';
-        if (parseTime(blocDepartValue) === null) return '';
+
+        if (parseTime(blocDepartValue) === null) {
+            if (blocDepartWrapper) blocDepartWrapper.dataset.airportOaci = '';
+            return '';
+        }
+
+        return normalizeBlocDepartAirportOaci(blocDepartWrapper?.dataset?.airportOaci || '');
+    }
+
+    function setBlocDepartAirportOaci(oaci) {
+        const blocDepartWrapper = document.getElementById('bloc-depart');
+        if (!blocDepartWrapper) return '';
+        const normalized = normalizeBlocDepartAirportOaci(oaci);
+        blocDepartWrapper.dataset.airportOaci = normalized;
+        return normalized;
+    }
+
+    function clearBlocDepartAirportOaci() {
+        setBlocDepartAirportOaci('');
+    }
+
+    function lockBlocDepartAirportOaciIfNeeded({ force = false } = {}) {
+        const blocDepartWrapper = document.getElementById('bloc-depart');
+        const blocDepartValue = blocDepartWrapper?.querySelector('.display-input')?.value || '';
+
+        if (parseTime(blocDepartValue) === null) {
+            clearBlocDepartAirportOaci();
+            return '';
+        }
+
+        const existing = getBlocDepartAirportOaci();
+        if (existing && !force) return existing;
 
         const airport = getAirportAtCurrentPosition();
-        return airport ? airport.oaci : '';
+        return setBlocDepartAirportOaci(airport ? airport.oaci : '');
     }
 
     function updateBlocDepartAirportLabel() {
@@ -11134,9 +24580,11 @@ function initializeCalculator() {
             closed: false,
             state: {
                 'bloc-depart': '',
-                'fuel-depart': '3400 kg',
+                'bloc-depart-oaci': '',
+                'fuel-depart': '3500 kg',
+                'rlt-depart': '',
                 'previ-bloc-depart': '',
-                'previ-fuel-depart': '3400 kg',
+                'previ-fuel-depart': '3500 kg',
                 'tmd': '21:30',
                 'limite-hdv': '08:00',
                 calculator_table_data: []
@@ -11246,6 +24694,8 @@ function initializeCalculator() {
                 state[wrapper.id] = value;
             }
         });
+
+        state['bloc-depart-oaci'] = getBlocDepartAirportOaci();
 
         const tableData = [];
         document.querySelectorAll('#bloc-fuel tbody tr').forEach(row => {
@@ -11383,15 +24833,15 @@ function initializeCalculator() {
 
     function updateDisplayedLimitHdvForActiveFlight() {
         /*
-         * v2026.54 — affichage dynamique : dès qu'un BLOC ARRIVÉE est saisi,
-         * LIMITE HDV affiche le restant journée disponible.
-         * Les calculs du tableau BLOC/FUEL utilisent toujours la limite au
-         * début du vol actif afin de ne pas soustraire deux fois le vol courant.
+         * v13.54 — LIMITE HDV figée par vol :
+         * - vol n°1 : affiche la limite journée saisie par l'utilisateur ;
+         * - vols n°2 et suivants : affiche le restant disponible après les vols précédents ;
+         * - la durée du vol actif n'est pas retranchée de son propre champ LIMITE HDV.
          */
         const globalLabel = getStoredGlobalLimitHdvLabel();
         setStoredGlobalLimitHdvLabel(globalLabel, { persistFirstFlight: false });
 
-        const effectiveLimit = getEffectiveLimitHdvForActiveFlight({ includeCurrentFlight: true });
+        const effectiveLimit = getEffectiveLimitHdvForActiveFlight({ includeCurrentFlight: false });
         const effectiveLabel = formatTime(effectiveLimit) || '00:00';
 
         const mainWrapper = document.getElementById('limite-hdv');
@@ -11621,6 +25071,7 @@ function initializeCalculator() {
                     <div class="header-grid">
                         <div><b>BLOC DÉPART</b><span>${plainExportHtml(state['bloc-depart'], '--:--')}</span></div>
                         <div class="header-card-fuel-depart"><b>FUEL DÉPART</b><span class="fuel-depart-export-value">${kgExportHtml(state['fuel-depart'])}</span></div>
+                        <div class="header-card-rlt-depart"><b>RLT</b><span>${kgExportHtml(state['rlt-depart'])}</span></div>
                         <div><b>BASE</b><span>${plainExportHtml(state['base-oaci-input'] || selectedBaseOACI || DEFAULT_BASE_OACI)}</span></div>
                         <div><b>TMD</b><span>${plainExportHtml(state['tmd'], '--:--')}</span></div>
                         <div><b>LIMITE HDV</b><span>${plainExportHtml(state['limite-hdv'], '--:--')}</span></div>
@@ -11673,7 +25124,7 @@ function initializeCalculator() {
     .flight-title-row { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; margin-bottom: 9px; }
     h2 { margin: 0; font-size: 20px; color: #0f172a; }
     .flight-title-row span { font-size: 15px; font-weight: 900; color: #005a9c; white-space: nowrap; }
-    .header-grid { display: grid; grid-template-columns: .95fr 1.25fr .95fr .95fr 1fr; gap: 8px; margin-bottom: 10px; }
+    .header-grid { display: grid; grid-template-columns: .9fr 1.15fr .85fr .85fr .9fr .95fr; gap: 7px; margin-bottom: 10px; }
     .header-grid div { border: 1px solid #d7dee8; background: #fff; border-radius: 10px; padding: 8px 9px; min-height: 76px; overflow: hidden; display: grid; grid-template-rows: 28px 1fr; align-items: stretch; }
     .header-grid b { display: flex; align-items: flex-start; min-height: 28px; margin: 0; font-size: 10.5px; line-height: 1.1; letter-spacing: .04em; color: #64748b; text-transform: uppercase; }
     .header-grid span { display: flex; align-items: center; justify-content: flex-start; width: 100%; min-width: 0; margin: 0; font-size: 19px; line-height: 1; font-weight: 950; color: #111827; white-space: nowrap; overflow: visible; }
@@ -11686,6 +25137,9 @@ function initializeCalculator() {
     .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-number,
     .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-unit { font-size: 1em !important; line-height: 1 !important; }
     .header-grid .header-card-fuel-depart .fuel-depart-export-value .kg-unit { margin-left: 0 !important; }
+    .header-card-rlt-depart .kg-inline { justify-content: flex-start !important; gap: 4px !important; }
+    .header-card-rlt-depart .kg-number { font-size: 1em !important; }
+    .header-card-rlt-depart .kg-unit { font-size: .55em !important; }
     .kg-inline { display: inline-flex !important; align-items: baseline; justify-content: center; gap: 4px; white-space: nowrap; line-height: 1 !important; }
     .kg-number { display: inline-block; line-height: 1 !important; }
     .kg-unit { display: inline-block; font-size: .48em; line-height: 1 !important; font-weight: 900; color: #111827; }
@@ -11848,7 +25302,7 @@ function initializeCalculator() {
                 : `Tps de vol : ${formatDurationForFlightSummary(flightDuration)}`;
             addBlank();
             addLine(`VOL N°${flight.number || exportIndex + 1}${flight.closed ? ' - cloture' : ''}    ${durationText}`);
-            addLine(`BLOC DEPART : ${state['bloc-depart'] || '--:--'}    FUEL Depart : ${state['fuel-depart'] || '-- kg'}    Base : ${state['base-oaci-input'] || selectedBaseOACI || DEFAULT_BASE_OACI}    TMD : ${state['tmd'] || '--:--'}    LIMITE HDV : ${state['limite-hdv'] || '--:--'}`);
+            addLine(`BLOC DEPART : ${state['bloc-depart'] || '--:--'}    FUEL Depart : ${state['fuel-depart'] || '-- kg'}    RLT : ${state['rlt-depart'] || '-- kg'}    Base : ${state['base-oaci-input'] || selectedBaseOACI || DEFAULT_BASE_OACI}    TMD : ${state['tmd'] || '--:--'}    LIMITE HDV : ${state['limite-hdv'] || '--:--'}`);
             addLine('BLOC Arr | FUEL Pelic | OACI | Masse Rlt | Duree Rot | Fuel Rot | Tps Vol | Restant');
             addSeparator();
 
@@ -12058,14 +25512,15 @@ function initializeCalculator() {
             dailyFlights = [createEmptyFlight(1)];
             dailyFlights[0].state = {
                 'bloc-depart': legacyState['bloc-depart'] || '',
-                'fuel-depart': legacyState['fuel-depart'] || '3400 kg',
+                'bloc-depart-oaci': legacyState['bloc-depart-oaci'] || '',
+                'fuel-depart': legacyState['fuel-depart'] || '3500 kg',
+                'rlt-depart': legacyState['rlt-depart'] || '',
                 'previ-bloc-depart': legacyState['previ-bloc-depart'] || legacyState['bloc-depart'] || '',
-                'previ-fuel-depart': legacyState['previ-fuel-depart'] || legacyState['fuel-depart'] || '3400 kg',
+                'previ-fuel-depart': legacyState['previ-fuel-depart'] || legacyState['fuel-depart'] || '3500 kg',
                 'tmd': legacyState['tmd'] || '21:30',
                 'limite-hdv': legacyState['limite-hdv'] || '08:00',
                 'deroutement-heure-wrapper': legacyState['deroutement-heure-wrapper'] || '',
                 'deroutement-fuel-wrapper': legacyState['deroutement-fuel-wrapper'] || '',
-                'fuel-sur-feu-wrapper': legacyState['fuel-sur-feu-wrapper'] || '',
                 'suivi-conso-rotation-wrapper': legacyState['suivi-conso-rotation-wrapper'] || '',
                 'suivi-duree-rotation-wrapper': legacyState['suivi-duree-rotation-wrapper'] || '',
                 calculator_table_data: legacyState.calculator_table_data || []
@@ -12152,19 +25607,20 @@ function initializeCalculator() {
             tableBody.innerHTML = '';
 
             initializeTimeInput(document.getElementById('bloc-depart'), state['bloc-depart']);
-            initializeNumericInput(document.getElementById('fuel-depart'), state['fuel-depart'] || '3400 kg');
+            setBlocDepartAirportOaci(state['bloc-depart-oaci'] || '');
+            initializeNumericInput(document.getElementById('fuel-depart'), state['fuel-depart'] || '3500 kg');
+            initializeNumericInput(document.getElementById('rlt-depart'), state['rlt-depart'] || '');
             initializeTimeInput(document.getElementById('tmd'), state['tmd'] || '21:30');
             initializeTimeInput(document.getElementById('limite-hdv'), state['limite-hdv'] || '08:00');
 
             initializeTimeInput(document.getElementById('previ-bloc-depart'), state['previ-bloc-depart'] || state['bloc-depart'] || '');
-            initializeNumericInput(document.getElementById('previ-fuel-depart'), state['previ-fuel-depart'] || state['fuel-depart'] || '3400 kg');
+            initializeNumericInput(document.getElementById('previ-fuel-depart'), state['previ-fuel-depart'] || state['fuel-depart'] || '3500 kg');
             initializeTimeInput(document.getElementById('previ-tmd'), state['tmd'] || '21:30');
             initializeTimeInput(document.getElementById('previ-limite-hdv'), state['limite-hdv'] || '08:00');
 
             refreshSharedHeaderMirrorValues();
             initializeTimeInput(document.getElementById('deroutement-heure-wrapper'), state['deroutement-heure-wrapper']);
             initializeNumericInput(document.getElementById('deroutement-fuel-wrapper'), state['deroutement-fuel-wrapper']);
-            initializeNumericInput(document.getElementById('fuel-sur-feu-wrapper'), state['fuel-sur-feu-wrapper']);
             initializeNumericInput(document.getElementById('suivi-conso-rotation-wrapper'), state['suivi-conso-rotation-wrapper']);
             initializeTimeInput(document.getElementById('suivi-duree-rotation-wrapper'), state['suivi-duree-rotation-wrapper']);
 
@@ -12246,13 +25702,23 @@ function initializeCalculator() {
         };
 
         const recalculateAndSave = () => {
-            if (wrapperRole === 'limite-hdv') {
+            if (wrapperRole === 'limite-hdv' && getActiveFlightIndex() <= 0) {
+                /*
+                 * v13.54 — LIMITE HDV journée figée par le vol n°1 :
+                 * seul le premier vol peut modifier la limite de référence.
+                 * Les vols suivants affichent le restant issu des vols précédents.
+                 */
                 setStoredGlobalLimitHdvLabel(displayInput.value);
             }
 
             syncSharedHeaderFromWrapper(wrapper);
 
             if (wrapperRole === 'bloc-depart') {
+                if (parseTime(displayInput.value || '') === null) {
+                    clearBlocDepartAirportOaci();
+                } else {
+                    lockBlocDepartAirportOaciIfNeeded();
+                }
                 updateBlocDepartAirportLabel();
             } else {
                 const row = wrapper.closest('tr');
@@ -12720,7 +26186,49 @@ function initializeCalculator() {
         displayInput.addEventListener('blur', () => { if (displayInput.readOnly) return; shouldClearOnNextInput = false; let v = displayInput.value.replace(/[^0-9]/g, ''); if (v) { displayInput.value = `${v} ${unit}`; } else { displayInput.value = ''; } masterRecalculate(); saveCalculatorState(); });
         displayInput.addEventListener('input', (e) => { if (displayInput.readOnly) return; if (shouldClearOnNextInput && e.data) { displayInput.value = e.data.replace(/[^0-9]/g, ''); shouldClearOnNextInput = false; } else { displayInput.value = displayInput.value.replace(/[^0-9]/g, ''); } masterRecalculate(); });
         displayInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); displayInput.blur(); } });
-        if (clearBtn) { clearBtn.addEventListener('click', () => { displayInput.value = ''; masterRecalculate(); saveCalculatorState(); }); }
+        if (clearBtn) {
+            if (wrapper.id === 'rlt-depart') {
+                /*
+                 * v13.90 — cellule RLT de l'en-tête BLOC / FUEL.
+                 * Sur iPad, le premier appui sur × donnait auparavant le focus au champ :
+                 * le gestionnaire focus retirait seulement le suffixe « kg », puis un second
+                 * appui était nécessaire pour vider la valeur. L'effacement est désormais
+                 * exécuté dès pointerdown, avant toute prise de focus du champ.
+                 */
+                if (clearBtn.dataset.rltDirectClearBound !== '1') {
+                    clearBtn.dataset.rltDirectClearBound = '1';
+
+                    const clearRltDepartImmediately = (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        shouldClearOnNextInput = false;
+                        displayInput.value = '';
+                        if (document.activeElement === displayInput) displayInput.blur();
+                        masterRecalculate();
+                        saveCalculatorState();
+                    };
+
+                    if (window.PointerEvent) {
+                        clearBtn.addEventListener('pointerdown', clearRltDepartImmediately);
+                    } else {
+                        clearBtn.addEventListener('touchstart', clearRltDepartImmediately, { passive: false });
+                        clearBtn.addEventListener('mousedown', clearRltDepartImmediately);
+                    }
+
+                    clearBtn.addEventListener('click', (event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        if (displayInput.value) clearRltDepartImmediately(event);
+                    });
+                }
+            } else {
+                clearBtn.addEventListener('click', () => {
+                    displayInput.value = '';
+                    masterRecalculate();
+                    saveCalculatorState();
+                });
+            }
+        }
     }
 
 
@@ -13783,19 +27291,17 @@ function initializeCalculator() {
             masterRecalculate();
         });
     }
-    setupManualButton('fuel-sur-feu-manual-btn', 'fuel-sur-feu-wrapper', () => isFuelSurFeuManual = !isFuelSurFeuManual);
     setupManualButton('suivi-conso-rotation-manual-btn', 'suivi-conso-rotation-wrapper', () => isSuiviConsoManual = !isSuiviConsoManual);
     setupManualButton('suivi-duree-rotation-manual-btn', 'suivi-duree-rotation-wrapper', () => isSuiviDureeManual = !isSuiviDureeManual);
 
-    ['fuel-sur-feu-wrapper', 'suivi-conso-rotation-wrapper'].forEach((wrapperId) => {
+    ['suivi-conso-rotation-wrapper'].forEach((wrapperId) => {
         const wrapper = document.getElementById(wrapperId);
         const input = wrapper?.querySelector('.display-input');
         if (!wrapper || !input || wrapper.dataset.fuelSplitManualBound === '1') return;
         wrapper.dataset.fuelSplitManualBound = '1';
         wrapper.addEventListener('click', (event) => {
             if (event.target && event.target.classList && event.target.classList.contains('clear-btn')) return;
-            const isManualWrapper = (wrapperId === 'fuel-sur-feu-wrapper' && isFuelSurFeuManual)
-                || (wrapperId === 'suivi-conso-rotation-wrapper' && isSuiviConsoManual);
+            const isManualWrapper = wrapperId === 'suivi-conso-rotation-wrapper' && isSuiviConsoManual;
             if (isManualWrapper) {
                 event.preventDefault();
                 event.stopPropagation();
@@ -13827,9 +27333,9 @@ function initializeCalculator() {
             if (activeFlight) {
                 newFlight.state['tmd'] = activeFlight.state?.['tmd'] || document.getElementById('tmd')?.querySelector('.display-input')?.value || '21:30';
                 newFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || document.getElementById('limite-hdv')?.querySelector('.display-input')?.value || '08:00';
-                newFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '3400 kg';
+                newFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || document.getElementById('fuel-depart')?.querySelector('.display-input')?.value || '3500 kg';
                 newFlight.state['previ-bloc-depart'] = activeFlight.state?.['previ-bloc-depart'] || document.getElementById('previ-bloc-depart')?.querySelector('.display-input')?.value || '';
-                newFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || document.getElementById('previ-fuel-depart')?.querySelector('.display-input')?.value || '3400 kg';
+                newFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || document.getElementById('previ-fuel-depart')?.querySelector('.display-input')?.value || '3500 kg';
             }
             dailyFlights.push(newFlight);
             activeFlightId = newFlight.id;
@@ -13855,9 +27361,9 @@ function initializeCalculator() {
                     const nextFlight = createEmptyFlight(dailyFlights.length + 1);
                     nextFlight.state['tmd'] = activeFlight.state?.['tmd'] || '21:30';
                     nextFlight.state['limite-hdv'] = activeFlight.state?.['limite-hdv'] || '08:00';
-                    nextFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || '3400 kg';
+                    nextFlight.state['fuel-depart'] = activeFlight.state?.['fuel-depart'] || '3500 kg';
                     nextFlight.state['previ-bloc-depart'] = activeFlight.state?.['previ-bloc-depart'] || '';
-                    nextFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || '3400 kg';
+                    nextFlight.state['previ-fuel-depart'] = activeFlight.state?.['previ-fuel-depart'] || '3500 kg';
                     dailyFlights.push(nextFlight);
                     activeFlightId = nextFlight.id;
                     persistFlights();
@@ -13947,3 +27453,12 @@ document.addEventListener('visibilitychange', () => {
     }, 200);
 });
 
+
+
+// v13.89 — corrections d'affichage RLT/Suivi et alerte post-MAJ gérées par index.html/style.css.
+
+
+// v14.44 — filtres trafic : centre carte unique et affichage au sol optionnel.
+
+
+// v14.44 — restauration de getOwnTrafficAltitudeFeet : connexion SafeSky rétablie, carte inchangée.
