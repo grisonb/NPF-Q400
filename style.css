@@ -1,3 +1,6 @@
+/* v2026.58 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
+/* v14.80 — Brive conservé uniquement sous LFSL. */
+/* NPF-Q400  v13.58 — fluidité carte iPad : CSS inchangé depuis v13.54. */
  :root {
     --primary-color: #005a9c;
     --secondary-color: #e3001b;
@@ -1645,6 +1648,20 @@ body.fuel-keyboard-open .fuel-split-hint {
    ========================================================================= */
 .airport-popup .pdf-btn {
     background-color: #6f42c1;
+    color: #ffffff;
+}
+
+
+/* v13.66 — PDF pélic + document FDF réduite commun */
+.airport-popup .popup-pdf-buttons {
+    margin-top: 6px;
+}
+.airport-popup .popup-pdf-buttons button {
+    min-width: 0;
+    white-space: nowrap;
+}
+.airport-popup .fdf-reduced-pdf-btn {
+    background-color: #0f766e;
     color: #ffffff;
 }
 
@@ -5251,6 +5268,76 @@ body {
     border-color: rgba(255,255,255,.75);
 }
 
+/* v13.68 — bouton carte Fréquences OPS avec icône parabole */
+.ops-frequencies-map-button .radio-frequency-icon {
+    width: 62px;
+    height: 62px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.ops-frequencies-map-button svg {
+    width: 62px;
+    height: 62px;
+    overflow: visible;
+}
+
+.ops-frequencies-map-button .radio-dish-bowl,
+.ops-frequencies-map-button .radio-dish-rim,
+.ops-frequencies-map-button .radio-dish-arm,
+.ops-frequencies-map-button .radio-wave,
+.ops-frequencies-map-button .radio-dish-foot {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 4;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.ops-frequencies-map-button .radio-dish-bowl {
+    stroke-width: 4.4;
+}
+
+.ops-frequencies-map-button .radio-dish-rim {
+    stroke-width: 4.8;
+}
+
+.ops-frequencies-map-button .radio-wave {
+    stroke-width: 3.7;
+}
+
+.ops-frequencies-map-button .radio-dish-node {
+    fill: currentColor;
+    stroke: currentColor;
+    stroke-width: 1;
+}
+
+.ops-frequencies-map-button .ops-frequency-label {
+    position: absolute;
+    right: 7px;
+    bottom: 6px;
+    min-width: 31px;
+    height: 19px;
+    padding: 0 5px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.92);
+    color: var(--primary-color);
+    border: 1px solid rgba(0,90,156,.28);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 900;
+    letter-spacing: .02em;
+}
+
+.left-map-action-button.active .ops-frequency-label {
+    background: rgba(255,255,255,.96);
+    color: var(--primary-color);
+    border-color: rgba(255,255,255,.75);
+}
+
 @media (max-width: 760px) {
     #left-map-action-buttons {
         top: calc(env(safe-area-inset-top, 0px) + 8px) !important;
@@ -5291,6 +5378,28 @@ body {
         padding: 0 3px !important;
         font-size: 9px !important;
     }
+
+    .ops-frequencies-map-button .radio-frequency-icon,
+    .ops-frequencies-map-button svg {
+        width: 36px !important;
+        height: 36px !important;
+    }
+
+    .ops-frequencies-map-button .radio-antenna-base,
+    .ops-frequencies-map-button .radio-antenna-mast,
+    .ops-frequencies-map-button .radio-wave,
+    .ops-frequencies-map-button .radio-antenna-feet {
+        stroke-width: 4.2px !important;
+    }
+
+    .ops-frequencies-map-button .ops-frequency-label {
+        right: 3px !important;
+        bottom: 3px !important;
+        min-width: 22px !important;
+        height: 14px !important;
+        padding: 0 3px !important;
+        font-size: 9px !important;
+    }
 }
 
 @media (max-width: 430px) {
@@ -5312,6 +5421,12 @@ body {
 
     .high-voltage-map-button .powerline-icon,
     .high-voltage-map-button svg {
+        width: 38px !important;
+        height: 38px !important;
+    }
+
+    .ops-frequencies-map-button .radio-frequency-icon,
+    .ops-frequencies-map-button svg {
         width: 38px !important;
         height: 38px !important;
     }
@@ -5400,7 +5515,7 @@ body {
 
 
 
-/* v12.96 TEST — calque trafic ADS-B indicatif */
+/* v12.96 — calque trafic ADS-B indicatif */
 .traffic-map-button {
     font-size: 34px;
     overflow: hidden;
@@ -6700,7 +6815,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.01 TEST — bandeau commune à gauche + état trafic par couleur
+   v13.01 — bandeau commune à gauche + état trafic par couleur
    ========================================================================== */
 #nearest-commune-display {
     left: 14px !important;
@@ -6791,7 +6906,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.02 TEST — bandeau commune bas droit décalé + fenêtre filtres ADS-B
+   v13.02 — bandeau commune bas droit décalé + fenêtre filtres ADS-B
    ========================================================================== */
 #nearest-commune-display {
     left: auto !important;
@@ -7010,7 +7125,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.03 TEST — ADS-B sans bandeau, étiquette altitude et refresh 15 s
+   v13.03 — ADS-B sans bandeau, étiquette altitude et refresh 15 s
    ========================================================================== */
 .traffic-status-display {
     display: none !important;
@@ -7082,7 +7197,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.04 TEST — meilleure visibilité de la position propre
+   v13.04 — meilleure visibilité de la position propre
    ========================================================================== */
 .own-gps-vector-time-marker {
     pointer-events: none !important;
@@ -7101,7 +7216,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.05 TEST — étiquette pélicandrome cliquable
+   v13.05 — étiquette pélicandrome cliquable
    ========================================================================== */
 .leaflet-tooltip.route-tooltip-clickable {
     cursor: pointer !important;
@@ -7117,7 +7232,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.06 TEST — priorités affichage commune + filtres trafic enrichis
+   v13.06 — priorités affichage commune + filtres trafic enrichis
    ========================================================================== */
 #nearest-commune-display {
     z-index: 980 !important;
@@ -7179,7 +7294,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.07 TEST — MAJ PWA, modal trafic et vecteurs trafic corrigés
+   v13.07 — MAJ PWA, modal trafic et vecteurs trafic corrigés
    ========================================================================== */
 .traffic-settings-relative-line {
     grid-column: 1 / -1;
@@ -7277,11 +7392,11 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* v13.08 TEST — fenêtre post-MAJ rétablie côté index.html ; styles existants conservés. */
+/* v13.08 — fenêtre post-MAJ rétablie côté index.html ; styles existants conservés. */
 
 
 /* ==========================================================================
-   v13.09 TEST — export BLOC/FUEL PDF + centrage vecteur trafic
+   v13.09 — export BLOC/FUEL PDF + centrage vecteur trafic
    ========================================================================== */
 #export-bloc-fuel-pdf-btn {
     background: #005a9c !important;
@@ -7318,7 +7433,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.11 TEST — vecteur trafic centré + partage BLOC/FUEL
+   v13.11 — vecteur trafic centré + partage BLOC/FUEL
    ========================================================================== */
 #export-bloc-fuel-pdf-btn {
     background: #005a9c !important;
@@ -7385,7 +7500,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ========================================================================== 
-   v13.11 TEST — aperçu export BLOC/FUEL intégré à l'application
+   v13.11 — aperçu export BLOC/FUEL intégré à l'application
    ========================================================================== */
 #bloc-fuel-export-overlay {
     position: fixed;
@@ -7475,7 +7590,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ========================================================================== 
-   v13.12 TEST — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
+   v13.12 — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
    ========================================================================== */
 .bloc-fuel-export-toolbar .print-primary {
     background: #005a9c !important;
@@ -7499,7 +7614,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.14 TEST — ajustements UI, export, position et trafic masqué
+   v13.14 — ajustements UI, export, position et trafic masqué
    ========================================================================== */
 #traffic-layer-button {
     display: none !important;
@@ -7567,7 +7682,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.27 TEST — suivi automatique position GPS depuis le bouton centrage
+   v13.27 — suivi automatique position GPS depuis le bouton centrage
    ========================================================================== */
 #center-gps-button.center-follow-active {
     background: rgba(210, 245, 222, 0.96) !important;
@@ -7674,7 +7789,7 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 /* ========================================================================== 
-   v13.34 TEST — Suivi GPS, historique et commune survolée longue
+   v13.34 — Suivi GPS, historique et commune survolée longue
    ========================================================================== */
 
 /* Historique ouvert : la flèche est replacée dans la zone du titre,
@@ -7752,7 +7867,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ========================================================================== 
-   v13.34 TEST — Bandeau feu : ETA GPS + durée rotation / exports dans historique
+   v13.34 — Bandeau feu : ETA GPS + durée rotation / exports dans historique
    ========================================================================== */
 
 #commune-info-display {
@@ -7869,7 +7984,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ========================================================================== 
-   v13.41 TEST — Retour v13.34 : bandeau feu sur une ligne / suivi GPS sans refresh
+   v13.41 — Retour v13.34 : bandeau feu sur une ligne / suivi GPS sans refresh
    ========================================================================== */
 
 /* Bandeau du feu sélectionné : nom + CS + route/distance/temps + Rot. sur une seule ligne. */
@@ -7937,7 +8052,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ========================================================================== 
-   v13.41 TEST — Historique exports décalés / ligne Réfracto. retardant
+   v13.41 — Historique exports décalés / ligne Réfracto. retardant
    ========================================================================== */
 
 /* Historique des feux : éloigner ForeFlight / SDVFR du X sans changer la logique JS. */
@@ -8021,7 +8136,7 @@ body:not(.app-ready) #nearest-commune-display {
     }
 }
 
-/* v2026.56 — Volume/Masse retardant : ligne Réfracto. compacte pour dégager le clavier iPad.
+/* v13.54 — Volume/Masse retardant : ligne Réfracto. compacte pour dégager le clavier iPad.
    Objectif : gagner de la hauteur uniquement sur la ligne Réfracto. = Densité,
    sans réduire les deux lignes de calcul Masse/Volume ni les boutons. */
 .rlt-refracto-row {
@@ -8084,3 +8199,4031 @@ body:not(.app-ready) #nearest-commune-display {
     }
 }
 
+
+/* v13.59/v13.61 — GAAR : popup point plus large + recherche commune type feu */
+.leaflet-popup.gaar-point-popup .leaflet-popup-content-wrapper {
+    border-radius: 16px;
+    box-shadow: 0 8px 28px rgba(0,0,0,.28);
+}
+
+.leaflet-popup.gaar-point-popup .leaflet-popup-content {
+    width: 370px !important;
+    max-width: 82vw !important;
+    margin: 14px 16px;
+}
+
+.gaar-point-popup-form {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.gaar-point-popup-title {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-bottom: 10px;
+    color: #1f2937;
+    font-size: 15px;
+}
+
+.gaar-point-popup-title b {
+    color: #005a9c;
+    font-size: 17px;
+}
+
+.gaar-point-search-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.gaar-point-search-input {
+    width: 100%;
+    min-height: 50px;
+    padding: 13px 14px;
+    font-size: 18px;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    box-sizing: border-box;
+    -webkit-appearance: none;
+    outline: none;
+}
+
+.gaar-point-search-input:focus {
+    border-color: #005a9c;
+    box-shadow: 0 0 0 3px rgba(0, 90, 156, .18);
+}
+
+.gaar-point-results {
+    list-style: none;
+    margin: 8px 0 0;
+    padding: 0;
+    max-height: 230px;
+    overflow-y: auto;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: #ffffff;
+    -webkit-overflow-scrolling: touch;
+}
+
+.gaar-point-results li {
+    padding: 13px 14px;
+    border-bottom: 1px solid #eef2f5;
+    font-size: 16px;
+    font-weight: 650;
+    cursor: pointer;
+}
+
+.gaar-point-results li:last-child {
+    border-bottom: none;
+}
+
+.gaar-point-results li:active,
+.gaar-point-results li:hover {
+    background: #e9f5ff;
+}
+
+.gaar-point-popup-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 12px;
+}
+
+.gaar-point-popup-actions button {
+    flex: 1;
+    min-height: 46px;
+    padding: 10px 12px;
+    border: none;
+    border-radius: 12px;
+    color: #ffffff;
+    font-size: 16px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.gaar-point-ok-btn {
+    background: var(--success-color);
+}
+
+.gaar-point-delete-btn {
+    background: var(--secondary-color);
+}
+
+/* v13.61 — étiquettes des points visibles uniquement lorsque le mode modification GAAR est actif.
+   Le JS ne crée ces tooltips que pendant isDrawingMode. */
+.leaflet-tooltip.gaar-point-label {
+    display: block !important;
+    background: rgba(255,255,255,.96) !important;
+    border: 1px solid rgba(0,0,0,.35) !important;
+    border-radius: 7px !important;
+    color: #1f2937 !important;
+    box-shadow: 0 2px 7px rgba(0,0,0,.22) !important;
+    padding: 3px 7px !important;
+    font-size: 12px !important;
+    font-weight: 800 !important;
+    white-space: nowrap !important;
+}
+
+/* v13.61 — la popup de recherche point GAAR passe devant et reste exploitable au clavier iPad. */
+.leaflet-popup.gaar-point-popup {
+    z-index: 2147483200 !important;
+}
+
+.leaflet-popup.gaar-point-popup .leaflet-popup-content {
+    width: min(520px, calc(100vw - 42px)) !important;
+    max-width: calc(100vw - 42px) !important;
+}
+
+.gaar-point-results {
+    max-height: min(46vh, 330px) !important;
+}
+
+@media (max-height: 760px) {
+    .gaar-point-results {
+        max-height: 180px !important;
+    }
+
+    .leaflet-popup.gaar-point-popup .leaflet-popup-content {
+        margin: 10px 12px !important;
+    }
+
+    .gaar-point-search-input {
+        min-height: 46px !important;
+        font-size: 17px !important;
+    }
+}
+
+
+
+/* v13.61 — GAAR : bouton Créer/Modifier avec état actif nettement visible */
+#gaar-controls .gaar-edit-button {
+    min-width: 170px;
+}
+
+#gaar-controls .gaar-edit-button.active,
+#gaar-controls .gaar-edit-button[aria-pressed="true"] {
+    color: #ffffff !important;
+    background: linear-gradient(180deg, #16a34a 0%, #0f7a34 100%) !important;
+    border: 2px solid #064e3b !important;
+    box-shadow: 0 0 0 4px rgba(22, 163, 74, .26), 0 4px 12px rgba(0,0,0,.25) !important;
+}
+
+#gaar-controls .gaar-edit-button .gaar-edit-state-label {
+    display: inline-block;
+    margin-top: 3px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: rgba(255,255,255,.22);
+    color: #ffffff;
+    font-size: 12px;
+    letter-spacing: .08em;
+}
+
+#map.gaar-editing-active {
+    outline: 4px solid rgba(22, 163, 74, .45);
+    outline-offset: -4px;
+}
+
+/* v13.61 — recherche nom point GAAR : panneau fixe en haut, indépendant du point/Leaflet */
+.gaar-point-search-overlay {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 12px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2147483600;
+    width: min(620px, calc(100vw - 20px));
+    max-height: calc(100vh - env(safe-area-inset-top, 0px) - 24px);
+    pointer-events: none;
+}
+
+.gaar-point-search-panel {
+    width: 100%;
+    box-sizing: border-box;
+    padding: 12px;
+    border-radius: 18px;
+    background: rgba(255, 255, 255, .98);
+    border: 1px solid rgba(0,0,0,.16);
+    box-shadow: 0 10px 32px rgba(0,0,0,.34);
+    pointer-events: auto;
+}
+
+.gaar-point-search-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 8px;
+}
+
+.gaar-point-search-title {
+    display: flex;
+    flex-direction: column;
+    line-height: 1.15;
+    min-width: 0;
+}
+
+.gaar-point-search-title b {
+    color: #005a9c;
+    font-size: 17px;
+}
+
+.gaar-point-search-title span {
+    color: #1f2937;
+    font-size: 14px;
+    font-weight: 700;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.gaar-point-search-close {
+    flex: 0 0 auto;
+    width: 42px;
+    height: 42px;
+    border-radius: 12px;
+    border: 1px solid #cbd5e1;
+    background: #f8fafc;
+    color: #0f172a;
+    font-size: 28px;
+    font-weight: 800;
+    line-height: 1;
+    cursor: pointer;
+}
+
+.gaar-point-search-input-top {
+    display: block !important;
+    width: 100% !important;
+    min-height: 54px !important;
+    font-size: 19px !important;
+    touch-action: manipulation;
+    -webkit-user-select: text !important;
+    user-select: text !important;
+    pointer-events: auto !important;
+}
+
+.gaar-point-results-top {
+    max-height: min(38vh, 300px) !important;
+    margin-top: 8px !important;
+}
+
+.gaar-point-search-actions {
+    margin-top: 10px !important;
+}
+
+@media (max-height: 760px) {
+    .gaar-point-search-overlay {
+        top: calc(env(safe-area-inset-top, 0px) + 6px);
+        width: calc(100vw - 12px);
+    }
+    .gaar-point-search-panel {
+        padding: 8px;
+        border-radius: 14px;
+    }
+    .gaar-point-search-input-top {
+        min-height: 48px !important;
+        font-size: 17px !important;
+    }
+    .gaar-point-results-top {
+        max-height: 160px !important;
+    }
+}
+
+
+/* v13.64 — GAAR : bandeau clair de création/modification + sécurisation des clics suppression */
+.gaar-editing-banner {
+    position: fixed;
+    top: calc(env(safe-area-inset-top, 0px) + 10px);
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 2147483300;
+    width: min(680px, calc(100vw - 24px));
+    box-sizing: border-box;
+    padding: 10px 14px;
+    border-radius: 16px;
+    background: linear-gradient(180deg, rgba(22, 163, 74, .98), rgba(13, 122, 52, .98));
+    color: #ffffff;
+    border: 2px solid rgba(6, 78, 59, .98);
+    box-shadow: 0 8px 24px rgba(0,0,0,.34);
+    text-align: center;
+    font-size: 17px;
+    font-weight: 900;
+    letter-spacing: .01em;
+    pointer-events: none;
+}
+
+.gaar-editing-banner .gaar-editing-banner-subtitle {
+    display: block;
+    margin-top: 3px;
+    font-size: 12px;
+    font-weight: 750;
+    opacity: .92;
+}
+
+body.gaar-editing-active-ui #map {
+    outline: 5px solid rgba(22, 163, 74, .55);
+    outline-offset: -5px;
+}
+
+body.gaar-point-search-open .gaar-editing-banner {
+    top: calc(env(safe-area-inset-top, 0px) + 84px);
+    opacity: .94;
+}
+
+.gaar-point-delete-btn {
+    min-height: 54px !important;
+    font-size: 17px !important;
+}
+
+@media (max-height: 760px) {
+    .gaar-editing-banner {
+        top: calc(env(safe-area-inset-top, 0px) + 5px);
+        padding: 8px 10px;
+        font-size: 15px;
+        border-radius: 13px;
+    }
+    .gaar-editing-banner .gaar-editing-banner-subtitle {
+        font-size: 11px;
+    }
+    body.gaar-point-search-open .gaar-editing-banner {
+        top: calc(env(safe-area-inset-top, 0px) + 70px);
+    }
+}
+
+
+/* ========================================================================== 
+   v13.64 — GAAR : X d'effacement dans recherche point + renommage sans déplacement
+   ========================================================================== */
+.gaar-point-search-field-wrapper {
+    position: relative;
+    width: 100%;
+}
+
+.gaar-point-search-field-wrapper .gaar-point-search-input {
+    padding-right: 54px !important;
+}
+
+.gaar-point-search-clear {
+    position: absolute;
+    right: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 38px;
+    height: 38px;
+    border: none;
+    border-radius: 999px;
+    background: rgba(15, 23, 42, .10);
+    color: #334155;
+    font-size: 27px;
+    font-weight: 900;
+    line-height: 1;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    touch-action: manipulation;
+    z-index: 2;
+}
+
+.gaar-point-search-clear:active {
+    background: rgba(15, 23, 42, .18);
+}
+
+
+/* v13.65 — GAAR : hors mode Créer/Modifier, clic point = petite étiquette simple */
+.gaar-point-name-popup .leaflet-popup-content-wrapper {
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.96);
+    border: 1px solid rgba(0, 0, 0, 0.22);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.22);
+    padding: 0;
+}
+
+.gaar-point-name-popup .leaflet-popup-content {
+    margin: 0;
+}
+
+.gaar-point-name-popup .leaflet-popup-tip-container {
+    display: none;
+}
+
+.gaar-point-simple-label {
+    padding: 5px 9px;
+    color: #111827;
+    font-size: 13px;
+    font-weight: 800;
+    line-height: 1.15;
+    white-space: nowrap;
+}
+
+
+/* v13.75 — pélicandromes plus faciles à toucher en vol. */
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-active,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-water,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    width: 28px !important;
+    height: 28px !important;
+    line-height: 28px !important;
+    font-size: 17px !important;
+    border-width: 2px !important;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.92), 0 2px 7px rgba(0,0,0,.45) !important;
+    box-sizing: border-box !important;
+}
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 24px !important;
+    font-size: 20px !important;
+}
+
+/* v13.75 — l'étiquette BASE est éloignée de l'icône pour ne plus la masquer. */
+.leaflet-tooltip.route-tooltip-base.route-tooltip-near-icon {
+    margin: 0 !important;
+    padding: 4px 9px !important;
+    box-shadow: 0 2px 8px rgba(0,0,0,.22) !important;
+}
+
+/* v13.75 — marqueurs 2'/5'/10' du vecteur temps plus lisibles. */
+.own-gps-vector-time-marker {
+    z-index: 1700 !important;
+}
+
+
+/* v13.77 — pélicandromes : icônes moins grosses, zone tactile conservée par hitbox JS. */
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-active,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-water,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    width: 22px !important;
+    height: 22px !important;
+    line-height: 22px !important;
+    font-size: 14px !important;
+    border-width: 2px !important;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.88), 0 2px 6px rgba(0,0,0,.40) !important;
+    box-sizing: border-box !important;
+}
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 18px !important;
+    font-size: 16px !important;
+}
+
+/* ========================================================================== 
+   v13.79 — bandeaux carte remontés / hauteur optimisée / icônes épurées
+   ========================================================================== */
+
+/* Icônes latérales : suppression des libellés texte HT / OPS pour ne garder
+   que le pictogramme. */
+.high-voltage-map-button .powerline-label,
+.ops-frequencies-map-button .ops-frequency-label {
+    display: none !important;
+}
+
+.high-voltage-map-button .powerline-icon,
+.ops-frequencies-map-button .radio-frequency-icon {
+    margin: 0 auto !important;
+}
+
+/* Bandeau BINGO : positionné au plus haut sur la carte, plus compact en
+   hauteur sans réduire la taille des polices. */
+#bingo-map-display {
+    top: calc(var(--safe-area-top) + 4px) !important;
+    min-height: 56px !important;
+    height: auto !important;
+    padding: 8px 22px !important;
+    border-radius: 18px !important;
+    align-items: center !important;
+    line-height: 1 !important;
+}
+
+/* Bandeau feu / CS / route / rotation : remonté au maximum sous le BINGO,
+   avec une hauteur optimisée. */
+#commune-info-display {
+    top: calc(var(--safe-area-top) + 68px) !important;
+    min-height: 44px !important;
+    height: auto !important;
+    padding: 5px 10px 5px 14px !important;
+    border-radius: 16px !important;
+    align-items: center !important;
+    line-height: 1 !important;
+}
+
+#commune-info-display > .commune-name {
+    line-height: 1.02 !important;
+}
+
+#commune-info-display .sunset-info {
+    line-height: 1 !important;
+}
+
+#commune-info-display .gps-feu-route-info,
+#commune-info-display .gps-feu-rotation-info {
+    padding: 4px 9px !important;
+    line-height: 1 !important;
+}
+
+@media (min-width: 761px) and (max-width: 1180px) {
+    #bingo-map-display {
+        top: calc(var(--safe-area-top) + 4px) !important;
+        min-height: 54px !important;
+        padding: 7px 18px !important;
+    }
+
+    #commune-info-display {
+        top: calc(var(--safe-area-top) + 66px) !important;
+        min-height: 42px !important;
+        padding: 4px 8px 4px 12px !important;
+    }
+}
+
+@media (max-width: 760px) {
+    #bingo-map-display {
+        top: calc(var(--safe-area-top) + 4px) !important;
+    }
+
+    #commune-info-display {
+        top: calc(var(--safe-area-top) + 40px) !important;
+    }
+}
+
+/* ==========================================================================
+   v13.80 — pélicandromes légèrement plus compacts
+   Taille visuelle 20 px ; la zone tactile invisible JS reste à 40 px.
+   ========================================================================== */
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-active,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-water,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    width: 20px !important;
+    height: 20px !important;
+    line-height: 20px !important;
+    font-size: 13px !important;
+    border-width: 2px !important;
+    box-shadow: 0 0 0 2px rgba(255,255,255,.88), 0 2px 5px rgba(0,0,0,.38) !important;
+    box-sizing: border-box !important;
+}
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 16px !important;
+    font-size: 15px !important;
+}
+
+/* ========================================================================== 
+   v13.81 — pélicandromes réellement réduits
+   Taille visuelle 16 px ; halo affiné ; zone tactile invisible JS conservée à 40 px.
+   ========================================================================== */
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-active,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-water,
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    width: 16px !important;
+    height: 16px !important;
+    line-height: 16px !important;
+    font-size: 10px !important;
+    border-width: 1px !important;
+    box-shadow: 0 0 0 1px rgba(255,255,255,.90), 0 1px 4px rgba(0,0,0,.38) !important;
+    box-sizing: border-box !important;
+}
+.leaflet-marker-icon.custom-marker-icon.airport-marker-base.airport-marker-disabled {
+    line-height: 14px !important;
+    font-size: 12px !important;
+}
+
+/* ==========================================================================
+   v13.82 — bouton MAJ retiré / commune survolée décalée à droite
+   Seule la position horizontale du bandeau commune survolée est modifiée.
+   ========================================================================== */
+#nearest-commune-display {
+    right: calc(env(safe-area-inset-right, 0px) + 16px) !important;
+    max-width: min(560px, calc(100vw - 32px)) !important;
+}
+
+@media (max-width: 760px) {
+    #nearest-commune-display {
+        right: calc(env(safe-area-inset-right, 0px) + 10px) !important;
+        max-width: calc(100vw - 20px) !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.83 — BINGO compacts dans Suivi/Déroutement + données rotation en lecture seule
+   Les tailles de police sont conservées. Seuls les hauteurs, marges et espacements
+   verticaux sont réduits afin d'éviter le défilement sur iPad.
+   ========================================================================== */
+@media (min-width: 761px) {
+    #suivi-rotations .analyse-grid,
+    #deroutement .analyse-grid {
+        gap: 16px 34px !important;
+        padding: 12px 18px 8px !important;
+    }
+
+    #suivi-rotations .bingo-group,
+    #deroutement .bingo-group {
+        margin-bottom: 2px !important;
+    }
+
+    #suivi-rotations .bingo-group .result-line,
+    #deroutement .bingo-group .result-line {
+        margin-bottom: 2px !important;
+        min-height: 0 !important;
+    }
+
+    #suivi-rotations .bingo-group .result-line .value,
+    #deroutement .bingo-group .result-line .value {
+        min-height: 36px !important;
+        margin-top: 0 !important;
+        padding-top: 3px !important;
+        padding-bottom: 3px !important;
+        line-height: 1.05 !important;
+    }
+
+    #suivi-rotations .analyse-separator,
+    #deroutement .analyse-separator {
+        margin-bottom: 6px !important;
+    }
+
+    #suivi-rotations .rotations-group,
+    #deroutement .rotations-group {
+        padding-top: 8px !important;
+        padding-bottom: 4px !important;
+        margin-bottom: 6px !important;
+    }
+
+    #suivi-rotations .rotations-group .analyse-col-title,
+    #deroutement .rotations-group .analyse-col-title {
+        margin-bottom: 8px !important;
+    }
+
+    #suivi-rotations .rotations-group .result-line,
+    #deroutement .rotations-group .result-line {
+        margin-bottom: 8px !important;
+    }
+
+    #suivi-rotations .rotations-group .result-line:last-child,
+    #deroutement .rotations-group .result-line:last-child {
+        margin-bottom: 2px !important;
+    }
+
+    #deroutement .derout-gps-status-row-outside {
+        margin-top: 8px !important;
+        gap: 6px !important;
+    }
+
+    #deroutement .derout-gps-status-row-outside #refresh-gps-btn {
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.84 — espacements ciblés et harmonisation des fenêtres rotations
+   - les fenêtres « nombre de rotations » de Suivi et Dérout/GAAR reprennent
+     la mise en page et les espacements verticaux de Prévi. nbr rotations ;
+   - les séparations demandées sont renforcées dans les colonnes de droite,
+     sans augmenter la hauteur globale afin de conserver un affichage sans scroll.
+   ========================================================================== */
+@media (min-width: 761px) {
+    /* Colonne gauche : même cadre, padding, titre et rythme vertical que Prévi. */
+    #suivi-rotations .analyse-col:first-child .rotations-group,
+    #deroutement .analyse-col:first-child .rotations-group {
+        padding: 14px 14px 8px !important;
+        margin-bottom: 14px !important;
+    }
+
+    #suivi-rotations .analyse-col:first-child .rotations-group .analyse-col-title,
+    #deroutement .analyse-col:first-child .rotations-group .analyse-col-title {
+        margin-bottom: 15px !important;
+    }
+
+    #suivi-rotation-results-container .result-line,
+    #derout-rotation-results-container .result-line {
+        margin-bottom: 25px !important;
+    }
+
+    /* Suivi rotations : séparation nette Fuel sur feu / Durée rotation. */
+    #suivi-rotations .analyse-col:nth-child(2) .rotations-group .result-line {
+        margin-bottom: 6px !important;
+    }
+
+    #suivi-rotations .analyse-col:nth-child(2) .suivi-fuel-sur-feu-line {
+        margin-bottom: 16px !important;
+    }
+
+    #suivi-rotations .analyse-col:nth-child(2) .rotations-group .result-line:last-child {
+        margin-bottom: 2px !important;
+    }
+
+    /* Dérout/GAAR : trois séparations fonctionnelles, hauteur totale maîtrisée. */
+    #deroutement .analyse-col:nth-child(2) .rotations-group .result-line {
+        margin-bottom: 5px !important;
+    }
+
+    #deroutement .analyse-col:nth-child(2) .derout-current-time-line,
+    #deroutement .analyse-col:nth-child(2) .derout-empty-retardant-line,
+    #deroutement .analyse-col:nth-child(2) .derout-conso-rotation-line {
+        margin-bottom: 14px !important;
+    }
+
+    #deroutement .analyse-col:nth-child(2) .rotations-group .result-line:last-child {
+        margin-bottom: 2px !important;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.85 — application effective des espacements demandés
+   Les sélecteurs reposent maintenant sur des classes explicites et ne sont plus
+   limités par la largeur du viewport. Les tailles de police restent inchangées.
+   ========================================================================== */
+
+/* Fenêtres « Nbr Rotations » : présentation strictement calée sur Prévi. */
+#suivi-rotations .rotation-count-group,
+#deroutement .rotation-count-group {
+    border: 2px solid #d9e3ef !important;
+    border-radius: 12px !important;
+    background: #f7fbff !important;
+    padding: 14px 14px 8px !important;
+    margin-bottom: 14px !important;
+}
+
+#suivi-rotations .rotation-count-group .analyse-col-title,
+#deroutement .rotation-count-group .analyse-col-title {
+    margin-top: 0 !important;
+    margin-bottom: 15px !important;
+}
+
+#suivi-rotations .rotation-results-container .result-line,
+#deroutement .rotation-results-container .result-line,
+#suivi-rotations .rotation-results-container .result-line:last-child,
+#deroutement .rotation-results-container .result-line:last-child {
+    margin-bottom: 25px !important;
+}
+
+/* Colonnes de droite : rythme compact, avec séparations fonctionnelles visibles. */
+#suivi-rotations .rotation-details-group .result-line,
+#deroutement .rotation-details-group .result-line {
+    margin-top: 0 !important;
+    margin-bottom: 4px !important;
+}
+
+/* Suivi rotations : espace entre Fuel sur Feu et Durée Rotation. */
+#suivi-rotations .rotation-details-group .suivi-duree-rotation-line {
+    margin-top: 18px !important;
+}
+
+/* Déroutement / GAAR : espaces demandés entre les blocs de données. */
+#deroutement .rotation-details-group .derout-empty-retardant-line,
+#deroutement .rotation-details-group .derout-cs-sur-feu-line,
+#deroutement .rotation-details-group .derout-fuel-mini-base-line {
+    margin-top: 16px !important;
+}
+
+#suivi-rotations .rotation-details-group .result-line:last-child,
+#deroutement .rotation-details-group .result-line:last-child {
+    margin-bottom: 2px !important;
+}
+
+
+/* ========================================================================== 
+   v13.86 — interlignes augmentés dans les fenêtres de droite
+   - Suivi rotations et Dérout. / GAAR uniquement ;
+   - taille de police, calculs, dimensions des contrôles et colonne gauche inchangés ;
+   - les séparations spécifiques de la v13.85 restent conservées.
+   ========================================================================== */
+#suivi-rotations .rotation-details-group .result-line:not(:last-child),
+#deroutement .rotation-details-group .result-line:not(:last-child) {
+    margin-bottom: 10px !important;
+}
+
+
+/* ========================================================================== 
+   v13.88 — RLT départ / Fuel sur feu non modifiable / espacements droits
+   ========================================================================== */
+
+/* BLOC / FUEL : six champs sur la ligne d'en-tête, avec RLT entre Fuel départ et Base. */
+@media (min-width: 761px) {
+    #bloc-fuel > .header-section {
+        grid-template-columns: 1.08fr 1.08fr .78fr .88fr 1.04fr 1.04fr !important;
+        gap: 14px !important;
+    }
+
+    #bloc-fuel .rlt-depart-header-item .input-wrapper {
+        width: 100%;
+        max-width: 132px;
+    }
+}
+
+/* Suivi rotations : même espacement vertical que la fenêtre droite de Prévi. */
+#suivi-rotations .rotation-details-group {
+    padding-top: 10px !important;
+}
+
+#suivi-rotations .rotation-details-group .analyse-col-title {
+    margin-bottom: 8px !important;
+}
+
+#suivi-rotations .rotation-details-group .result-line,
+#suivi-rotations .rotation-details-group .result-line:not(:last-child) {
+    margin-top: 0 !important;
+    margin-bottom: 16px !important;
+}
+
+#suivi-rotations .rotation-details-group .result-line:last-child {
+    margin-bottom: 4px !important;
+}
+
+#suivi-rotations .rotation-details-group .suivi-duree-rotation-line {
+    margin-top: 0 !important;
+}
+
+#suivi-rotations .rotation-details-group .result-line .value {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+}
+
+/*
+ * Dérout. / GAAR : la colonne est étirée sur la hauteur réellement disponible.
+ * space-between augmente automatiquement les interlignes sans provoquer de scroll.
+ */
+@media (min-width: 761px) {
+    #deroutement .analyse-col:nth-child(2) {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+        height: 100%;
+    }
+
+    #deroutement .analyse-col:nth-child(2) > .bingo-group,
+    #deroutement .analyse-col:nth-child(2) > .analyse-separator {
+        flex: 0 0 auto;
+    }
+
+    #deroutement .rotation-details-group {
+        flex: 1 1 auto;
+        min-height: 0;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+        padding-top: 8px !important;
+        padding-bottom: 4px !important;
+    }
+
+    #deroutement .rotation-details-group .analyse-col-title,
+    #deroutement .rotation-details-group .result-line,
+    #deroutement .rotation-details-group .result-line:not(:last-child),
+    #deroutement .rotation-details-group .result-line:last-child,
+    #deroutement .rotation-details-group .derout-empty-retardant-line,
+    #deroutement .rotation-details-group .derout-cs-sur-feu-line,
+    #deroutement .rotation-details-group .derout-fuel-mini-base-line {
+        margin-top: 0 !important;
+        margin-bottom: 0 !important;
+        flex: 0 0 auto;
+    }
+}
+
+
+/* ========================================================================== 
+   v13.89 — correction RLT / Suivi rotations / première alerte post-MAJ
+   ========================================================================== */
+
+/*
+ * BLOC / FUEL — RLT : réserve une zone réelle au bouton ×.
+ * Le premier chiffre d'une valeur à quatre chiffres (ex. 9000) ne peut plus
+ * passer sous la croix, même lorsque la colonne est étroite sur iPad.
+ */
+@media (min-width: 761px) {
+    #bloc-fuel > .header-section {
+        grid-template-columns: 1.06fr 1.06fr .90fr .84fr 1.02fr 1.02fr !important;
+    }
+
+    #bloc-fuel .rlt-depart-header-item .input-wrapper {
+        width: 100% !important;
+        max-width: 145px !important;
+        min-width: 0 !important;
+    }
+}
+
+#bloc-fuel .rlt-depart-header-item .display-input {
+    padding-left: 42px !important;
+    padding-right: 10px !important;
+    text-align: center !important;
+}
+
+#bloc-fuel .rlt-depart-header-item .clear-btn {
+    left: 8px !important;
+    width: 28px !important;
+    text-align: center !important;
+    font-size: 27px !important;
+    line-height: 1 !important;
+}
+
+/*
+ * SUIVI ROTATIONS — fenêtre droite : même rythme que Prévi. nbr rotations.
+ * Le conteneur devient une colonne explicite et l'espace de 16 px est appliqué
+ * entre chaque ligne, indépendamment des anciennes règles et de la largeur écran.
+ */
+#suivi-rotations .rotation-details-group {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    padding: 14px 14px 8px !important;
+}
+
+#suivi-rotations .rotation-details-group .analyse-col-title {
+    display: none !important;
+}
+
+#suivi-rotations .rotation-details-group > .result-line,
+#suivi-rotations .rotation-details-group > .result-line:not(:last-child),
+#suivi-rotations .rotation-details-group > .result-line:last-child,
+#suivi-rotations .rotation-details-group > .suivi-duree-rotation-line {
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+}
+
+#suivi-rotations .rotation-details-group > .result-line + .result-line {
+    margin-top: 16px !important;
+}
+
+#suivi-rotations .rotation-details-group > .result-line .value {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+}
+
+/* v13.90 — cellule RLT : placeholder [kg] et effacement direct gérés dans index/script ; mise en page inchangée. */
+
+/* ========================================================================== 
+   v13.91 — alerte post-MAJ visible / fenêtre FUEL MINI Dérout.-GAAR
+   ========================================================================== */
+
+/* La demande de relance reste au-dessus de l'écran de démarrage. */
+.post-update-restart-modal {
+    z-index: 100000 !important;
+}
+
+/* Dérout. / GAAR : fenêtre FUEL MINI indépendante, au-dessus des rotations. */
+#deroutement .derout-fuel-mini-group {
+    padding: 10px 14px 8px !important;
+    margin-bottom: 12px !important;
+}
+
+#deroutement .derout-fuel-mini-group .analyse-col-title {
+    display: block !important;
+    margin: 0 0 10px !important;
+}
+
+#deroutement .derout-fuel-mini-group .result-line,
+#deroutement .derout-fuel-mini-group .result-line:not(:last-child) {
+    margin-top: 0 !important;
+    margin-bottom: 10px !important;
+}
+
+#deroutement .derout-fuel-mini-group .result-line:last-child {
+    margin-bottom: 0 !important;
+}
+
+#deroutement .derout-fuel-mini-group .value {
+    min-width: 86px;
+    box-sizing: border-box;
+}
+
+@media (min-width: 761px) {
+    #deroutement .analyse-col:first-child {
+        display: flex;
+        flex-direction: column;
+        min-height: 0;
+    }
+
+    #deroutement .analyse-col:first-child > .bingo-group,
+    #deroutement .analyse-col:first-child > .analyse-separator,
+    #deroutement .analyse-col:first-child > .derout-fuel-mini-group,
+    #deroutement .analyse-col:first-child > .derout-gps-status-row {
+        flex: 0 0 auto;
+    }
+
+    #deroutement .analyse-col:first-child > .rotation-count-group {
+        flex: 1 1 auto;
+        min-height: 0;
+        margin-bottom: 10px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.92 — transfert FUEL MINI / fenêtre rotations ajustée au contenu
+   ========================================================================== */
+
+/* Les lignes Fuel mini sont maintenant réellement dans cette fenêtre. */
+#deroutement .derout-fuel-mini-group {
+    height: auto !important;
+    min-height: 0 !important;
+    flex: 0 0 auto !important;
+}
+
+/* La fenêtre Nbr Rotations Possibles ne s'étire plus dans l'espace restant. */
+@media (min-width: 761px) {
+    #deroutement .analyse-col:first-child > .rotation-count-group {
+        flex: 0 0 auto !important;
+        height: auto !important;
+        min-height: 0 !important;
+        align-self: stretch;
+        margin-bottom: 10px !important;
+    }
+}
+
+/* La dernière ligne termine la fenêtre sans marge vide supplémentaire. */
+#deroutement .rotation-count-group .rotation-results-container .result-line:last-child {
+    margin-bottom: 0 !important;
+}
+
+
+/* ==========================================================================
+   v13.93 — netteté des noms de communes, tailles inchangées
+   ========================================================================== */
+
+.leaflet-marker-icon.commune-name-label {
+    background: transparent !important;
+    border: 0 !important;
+    filter: none !important;
+    opacity: 1 !important;
+    will-change: auto !important;
+}
+
+.leaflet-marker-icon.commune-name-label > span {
+    font-synthesis: none !important;
+    text-rendering: optimizeLegibility;
+}
+
+
+/* ==========================================================================
+   v13.94 — Dérout. / GAAR : interlignes identiques à Suivi rotations
+   Fenêtre de droite uniquement. Tailles de police et contrôles inchangés.
+   ========================================================================== */
+
+#deroutement .rotation-details-group {
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: flex-start !important;
+    padding: 14px 14px 8px !important;
+}
+
+#deroutement .rotation-details-group .analyse-col-title {
+    display: none !important;
+}
+
+#deroutement .rotation-details-group > .result-line,
+#deroutement .rotation-details-group > .result-line:not(:last-child),
+#deroutement .rotation-details-group > .result-line:last-child,
+#deroutement .rotation-details-group > .derout-empty-retardant-line,
+#deroutement .rotation-details-group > .derout-cs-sur-feu-line,
+#deroutement .rotation-details-group > .derout-conso-rotation-line {
+    flex: 0 0 auto !important;
+    margin: 0 !important;
+}
+
+#deroutement .rotation-details-group > .result-line + .result-line {
+    margin-top: 16px !important;
+}
+
+#deroutement .rotation-details-group > .result-line .value {
+    padding-top: 6px !important;
+    padding-bottom: 6px !important;
+}
+
+
+/* ==========================================================================
+   v13.95 — Dérout. / GAAR : fenêtre droite ajustée au contenu
+   Les interlignes v13.94 restent strictement inchangés.
+   ========================================================================== */
+
+@media (min-width: 761px) {
+    /*
+     * L'ancienne règle étirait la seconde colonne sur 100 % de la hauteur de la
+     * grille et donnait flex: 1 à la fenêtre. La colonne et la fenêtre reprennent
+     * maintenant leur hauteur naturelle.
+     */
+    #deroutement .analyse-col:nth-child(2) {
+        align-self: start !important;
+        height: auto !important;
+        min-height: 0 !important;
+    }
+
+    #deroutement .rotation-details-group {
+        flex: 0 0 auto !important;
+        align-self: stretch !important;
+        height: auto !important;
+        min-height: 0 !important;
+        max-height: none !important;
+        margin-bottom: 0 !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.96 — SafeSky préparé, activation volontairement différée
+   Le bouton reste masqué jusqu'à validation de la clé Sandbox et du proxy.
+   ========================================================================== */
+
+/*
+ * Ne pas supprimer cette règle avant validation de l'accès SafeSky :
+ * #traffic-layer-button { display: none !important; }
+ */
+
+
+/* ==========================================================================
+   v13.97 — bouton TRAFIC réactivé pour travailler sur les filtres
+   ========================================================================== */
+
+#traffic-layer-button {
+    display: flex !important;
+}
+
+
+/* ==========================================================================
+   v13.98 — icône SafeSky et états de connexion
+   Rouge : déconnecté, arrêté, chargement initial ou erreur.
+   Vert : connexion active et dernière interrogation réussie.
+   ========================================================================== */
+
+#traffic-layer-button {
+    display: flex !important;
+    padding: 3px !important;
+    overflow: visible !important;
+    background: #ffffff !important;
+    border: 4px solid #dc2626 !important;
+    color: inherit !important;
+    box-sizing: border-box !important;
+}
+
+#traffic-layer-button.active,
+#traffic-layer-button.traffic-state-idle,
+#traffic-layer-button.traffic-state-loading,
+#traffic-layer-button.traffic-state-error {
+    background: #ffffff !important;
+    border-color: #dc2626 !important;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,.96),
+        0 2px 9px rgba(220,38,38,.38) !important;
+}
+
+#traffic-layer-button.traffic-state-ok {
+    background: #ffffff !important;
+    border-color: #16a34a !important;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,.96),
+        0 2px 9px rgba(22,163,74,.42) !important;
+}
+
+#traffic-layer-button .traffic-safesky-icon {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover !important;
+    object-position: center !important;
+    border-radius: 14px !important;
+    transform: none !important;
+    font-size: 0 !important;
+    line-height: 0 !important;
+    pointer-events: none !important;
+}
+
+#traffic-layer-button.loading .traffic-safesky-icon {
+    animation: trafficPulse 0.9s ease-in-out infinite alternate !important;
+}
+
+#traffic-layer-button .traffic-label {
+    display: none !important;
+}
+
+#traffic-layer-button .traffic-button-count {
+    top: -8px !important;
+    right: -8px !important;
+    z-index: 5 !important;
+}
+
+@media (max-width: 760px) {
+    #traffic-layer-button {
+        border-width: 3px !important;
+        padding: 2px !important;
+    }
+
+    #traffic-layer-button .traffic-safesky-icon {
+        border-radius: 10px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v13.98 — couleur des trafics selon l'altitude relative
+   Rouge : même altitude ±500 ft.
+   Vert : plus bas de plus de 500 ft.
+   Bleu : plus haut de plus de 500 ft.
+   Gris : altitude propre ou trafic indisponible.
+   ========================================================================== */
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-arrow {
+    background: #dc2626 !important;
+    border-color: #7f1d1d !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,.96),
+        0 2px 8px rgba(220,38,38,.55) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-arrow {
+    background: #16a34a !important;
+    border-color: #14532d !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,.96),
+        0 2px 8px rgba(22,163,74,.5) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-arrow {
+    background: #2563eb !important;
+    border-color: #1e3a8a !important;
+    color: #ffffff !important;
+    box-shadow:
+        0 0 0 2px rgba(255,255,255,.96),
+        0 2px 8px rgba(37,99,235,.5) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown .traffic-aircraft-arrow {
+    background: #64748b !important;
+    border-color: #334155 !important;
+    color: #ffffff !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-dotted-vector {
+    background-image: radial-gradient(circle, #dc2626 0 2px, transparent 2.6px) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-dotted-vector {
+    background-image: radial-gradient(circle, #16a34a 0 2px, transparent 2.6px) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-dotted-vector {
+    background-image: radial-gradient(circle, #2563eb 0 2px, transparent 2.6px) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown .traffic-aircraft-dotted-vector {
+    background-image: radial-gradient(circle, #64748b 0 2px, transparent 2.6px) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-altitude-label {
+    border-color: #dc2626 !important;
+    color: #991b1b !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-altitude-label {
+    border-color: #16a34a !important;
+    color: #166534 !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-altitude-label {
+    border-color: #2563eb !important;
+    color: #1e40af !important;
+}
+
+
+/* ==========================================================================
+   v13.99 — icône SafeSky monochrome et parfaitement stable
+   ========================================================================== */
+
+#traffic-layer-button {
+    color: var(--primary-color) !important;
+}
+
+#traffic-layer-button.active,
+#traffic-layer-button.loading,
+#traffic-layer-button.traffic-state-idle,
+#traffic-layer-button.traffic-state-loading,
+#traffic-layer-button.traffic-state-error,
+#traffic-layer-button.traffic-state-ok {
+    opacity: 1 !important;
+}
+
+#traffic-layer-button .traffic-safesky-icon {
+    display: block !important;
+    width: 62px !important;
+    height: 62px !important;
+    flex: 0 0 62px !important;
+    background-color: currentColor !important;
+    background-image: none !important;
+    border-radius: 0 !important;
+    transform: none !important;
+    filter: none !important;
+    opacity: 1 !important;
+    animation: none !important;
+    transition: none !important;
+    -webkit-mask-image: url('icons/safesky-traffic-monochrome.png?appv=v14.47') !important;
+    mask-image: url('icons/safesky-traffic-monochrome.png?appv=v14.47') !important;
+    -webkit-mask-repeat: no-repeat !important;
+    mask-repeat: no-repeat !important;
+    -webkit-mask-position: center !important;
+    mask-position: center !important;
+    -webkit-mask-size: contain !important;
+    mask-size: contain !important;
+    pointer-events: none !important;
+}
+
+#traffic-layer-button.loading .traffic-safesky-icon,
+#traffic-layer-button.traffic-state-loading .traffic-safesky-icon,
+.traffic-map-button.loading .traffic-icon {
+    animation: none !important;
+    transform: none !important;
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+#traffic-layer-button.traffic-state-idle .traffic-safesky-icon,
+#traffic-layer-button.traffic-state-loading .traffic-safesky-icon,
+#traffic-layer-button.traffic-state-error .traffic-safesky-icon,
+#traffic-layer-button.traffic-state-ok .traffic-safesky-icon {
+    color: var(--primary-color) !important;
+    background-color: currentColor !important;
+}
+
+/*
+ * La bulle du nombre conserve en permanence le même aspect.
+ * Aucun orange, bleu ou animation pendant l'actualisation.
+ */
+#traffic-layer-button .traffic-button-count,
+#traffic-layer-button.loading .traffic-button-count,
+#traffic-layer-button.traffic-state-loading .traffic-button-count,
+#traffic-layer-button.traffic-state-ok .traffic-button-count,
+#traffic-layer-button.traffic-state-error .traffic-button-count {
+    background: #e9002f !important;
+    color: #ffffff !important;
+    border-color: rgba(255,255,255,.92) !important;
+    opacity: 1 !important;
+    animation: none !important;
+    transition: none !important;
+}
+
+@media (max-width: 760px) {
+    #traffic-layer-button .traffic-safesky-icon {
+        width: 36px !important;
+        height: 36px !important;
+        flex-basis: 36px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v14.00 — symboles trafic réduits, zone tactile conservée
+   ========================================================================== */
+
+/*
+ * Le conteneur Leaflet reste à 128 × 128 px pour conserver une sélection
+ * facile sur iPad. Seul le disque/symbole visible passe de 26 à 20 px.
+ */
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    width: 20px !important;
+    height: 20px !important;
+    border-width: 1.5px !important;
+    font-size: 11px !important;
+    line-height: 1 !important;
+}
+
+.traffic-aircraft-altitude-label {
+    left: 76px !important;
+    top: 53px !important;
+}
+
+
+/* ==========================================================================
+   v14.01 — trafics encore réduits et vraie zone tactile 36 × 36 px
+   ========================================================================== */
+
+.traffic-aircraft-icon {
+    width: 36px !important;
+    height: 36px !important;
+    margin-left: 0 !important;
+    margin-top: 0 !important;
+    overflow: visible !important;
+}
+
+.traffic-aircraft-symbol-wrap {
+    display: block !important;
+    position: relative !important;
+    width: 36px !important;
+    height: 36px !important;
+    overflow: visible !important;
+    pointer-events: none !important;
+}
+
+.traffic-aircraft-vector-wrap {
+    left: 18px !important;
+    top: 18px !important;
+    transform-origin: 0 0 !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    left: -1.5px !important;
+    top: -58px !important;
+    width: 3px !important;
+    height: 58px !important;
+    background-size: 3px 8px !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    left: 18px !important;
+    top: 18px !important;
+    width: 15px !important;
+    height: 15px !important;
+    border-width: 1px !important;
+    font-size: 8px !important;
+    line-height: 1 !important;
+}
+
+.traffic-aircraft-altitude-label {
+    left: 27px !important;
+    top: 10px !important;
+    padding: 1px 3px !important;
+    border-radius: 5px !important;
+    font-size: 9px !important;
+    line-height: 1 !important;
+    pointer-events: none !important;
+}
+
+/*
+ * Seul l'élément Leaflet de 36 × 36 px reste cliquable.
+ * Le vecteur, la flèche interne et l'étiquette ne créent aucune surface
+ * interactive supplémentaire au-dessus des trafics voisins.
+ */
+.traffic-aircraft-icon,
+.leaflet-marker-icon.traffic-aircraft-icon {
+    pointer-events: auto !important;
+}
+
+.traffic-aircraft-icon * {
+    pointer-events: none !important;
+}
+
+
+/* ==========================================================================
+   v14.02 — une seule fenêtre trafic, rapprochée, fermeture facilitée
+   ========================================================================== */
+
+/* Sécurité : aucun ancien tooltip trafic ne doit apparaître. */
+.traffic-tooltip,
+.leaflet-tooltip.traffic-tooltip {
+    display: none !important;
+}
+
+/*
+ * Fenêtre rapprochée par le popupAnchor JavaScript (-10 px).
+ * Marges compactes pour que la pointe se situe près du symbole.
+ */
+.traffic-aircraft-popup .leaflet-popup-content-wrapper {
+    border-radius: 10px !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-content {
+    margin: 10px 48px 10px 12px !important;
+    min-width: 190px !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip-container {
+    margin-top: -1px !important;
+}
+
+/*
+ * Croix de fermeture : vraie cible tactile 44 × 44 px, visible et indépendante
+ * du petit caractère « × » Leaflet d'origine.
+ */
+.traffic-aircraft-popup .leaflet-popup-close-button {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 44px !important;
+    height: 44px !important;
+    top: 0 !important;
+    right: 0 !important;
+    padding: 0 !important;
+    border-radius: 0 10px 0 10px !important;
+    background: rgba(238, 242, 246, .98) !important;
+    color: #8b1025 !important;
+    font-size: 34px !important;
+    line-height: 40px !important;
+    font-weight: 900 !important;
+    text-decoration: none !important;
+    z-index: 5 !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-close-button:hover,
+.traffic-aircraft-popup .leaflet-popup-close-button:active {
+    background: #ffe5ea !important;
+    color: #b00020 !important;
+}
+
+
+/* ==========================================================================
+   v14.02 — silhouettes selon la catégorie SafeSky
+   ========================================================================== */
+
+.traffic-aircraft-arrow {
+    overflow: hidden !important;
+}
+
+.traffic-aircraft-arrow svg {
+    display: block !important;
+    width: 10px !important;
+    height: 10px !important;
+    fill: currentColor !important;
+    stroke: none !important;
+    transform-origin: center !important;
+    pointer-events: none !important;
+}
+
+.traffic-type-helicopter .traffic-aircraft-arrow svg,
+.traffic-type-uav .traffic-aircraft-arrow svg,
+.traffic-type-balloon .traffic-aircraft-arrow svg,
+.traffic-type-parachute .traffic-aircraft-arrow svg,
+.traffic-type-paraglider .traffic-aircraft-arrow svg,
+.traffic-type-hangglider .traffic-aircraft-arrow svg,
+.traffic-type-gyrocopter .traffic-aircraft-arrow svg,
+.traffic-type-ultralight .traffic-aircraft-arrow svg,
+.traffic-type-static .traffic-aircraft-arrow svg {
+    width: 11px !important;
+    height: 11px !important;
+}
+
+/* Le cercle reste coloré selon l'altitude relative ; la silhouette reste blanche. */
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    color: #ffffff !important;
+}
+
+
+/* ==========================================================================
+   v14.03 — popup réellement rapproché du trafic
+   ========================================================================== */
+
+/*
+ * La pointe Leaflet standard mesure près de 20 px de haut. Elle est ici
+ * compactée afin que le bas de la fenêtre arrive pratiquement au contact du rond.
+ */
+.traffic-aircraft-popup .leaflet-popup-tip-container {
+    width: 22px !important;
+    height: 9px !important;
+    margin-top: -1px !important;
+    overflow: hidden !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip {
+    width: 12px !important;
+    height: 12px !important;
+    margin: -7px auto 0 !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-content-wrapper {
+    margin-bottom: 0 !important;
+}
+
+
+/* ==========================================================================
+   v14.03 — silhouettes uniformisées et exactement centrées dans le rond
+   ========================================================================== */
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
+    position: absolute !important;
+    left: 18px !important;
+    top: 18px !important;
+    width: 15px !important;
+    height: 15px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    box-sizing: border-box !important;
+    overflow: hidden !important;
+    transform-origin: 50% 50% !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg {
+    display: block !important;
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    overflow: visible !important;
+    fill: currentColor !important;
+    stroke: none !important;
+    transform: none !important;
+    transform-origin: 50% 50% !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg path {
+    transform: none !important;
+    transform-origin: 12px 12px !important;
+}
+
+/* Catégories larges : très légère réduction pour rester dans le rond. */
+.traffic-type-helicopter .traffic-aircraft-arrow svg,
+.traffic-type-uav .traffic-aircraft-arrow svg,
+.traffic-type-airship .traffic-aircraft-arrow svg,
+.traffic-type-parachute .traffic-aircraft-arrow svg,
+.traffic-type-paraglider .traffic-aircraft-arrow svg,
+.traffic-type-hangglider .traffic-aircraft-arrow svg,
+.traffic-type-gyrocopter .traffic-aircraft-arrow svg,
+.traffic-type-ultralight .traffic-aircraft-arrow svg,
+.traffic-type-paramotor .traffic-aircraft-arrow svg {
+    width: 10px !important;
+    height: 10px !important;
+    min-width: 10px !important;
+    min-height: 10px !important;
+}
+
+
+/* ==========================================================================
+   v14.04 — popup au contact du trafic
+   ========================================================================== */
+
+.traffic-aircraft-popup {
+    margin-bottom: 0 !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip-container {
+    width: 18px !important;
+    height: 5px !important;
+    margin-top: -1px !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip {
+    width: 9px !important;
+    height: 9px !important;
+    margin: -6px auto 0 !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-content-wrapper {
+    margin-bottom: 0 !important;
+}
+
+
+/* ==========================================================================
+   v14.04 — altitude toujours opposée au vecteur
+   ========================================================================== */
+
+.traffic-aircraft-altitude-label {
+    position: absolute !important;
+    margin: 0 !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform-origin: center !important;
+    white-space: nowrap !important;
+    z-index: 4 !important;
+}
+
+
+/* ==========================================================================
+   v14.04 — silhouettes centrées et familles d'aéronefs élargies
+   ========================================================================== */
+
+.traffic-type-airplane .traffic-aircraft-arrow svg,
+.traffic-type-jet .traffic-aircraft-arrow svg,
+.traffic-type-turboprop .traffic-aircraft-arrow svg,
+.traffic-type-glider .traffic-aircraft-arrow svg,
+.traffic-type-military .traffic-aircraft-arrow svg {
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+}
+
+.traffic-type-turboprop .traffic-aircraft-arrow svg {
+    width: 10.5px !important;
+    height: 10.5px !important;
+    min-width: 10.5px !important;
+    min-height: 10.5px !important;
+}
+
+
+/* ==========================================================================
+   v14.05 — correction fondamentale de l'ancrage Leaflet
+   ========================================================================== */
+
+/*
+ * La v14.01 imposait margin-left:0 / margin-top:0 et annulait iconAnchor[18,18].
+ * Le rond était dessiné 18 px à droite et 18 px sous sa coordonnée réelle.
+ * Les marges calculées par Leaflet sont rétablies explicitement.
+ */
+.traffic-aircraft-icon,
+.leaflet-marker-icon.traffic-aircraft-icon {
+    margin-left: -18px !important;
+    margin-top: -18px !important;
+}
+
+
+/* ==========================================================================
+   v14.05 — étiquette altitude réellement opposée au vecteur
+   ========================================================================== */
+
+.traffic-aircraft-altitude-label {
+    left: var(--traffic-alt-left, 18px) !important;
+    top: var(--traffic-alt-top, 45px) !important;
+    right: auto !important;
+    bottom: auto !important;
+    transform: translate(-50%, -50%) !important;
+    transform-origin: 50% 50% !important;
+}
+
+
+/* ==========================================================================
+   v14.05 — popup centré, pointe alignée et distance maîtrisée
+   ========================================================================== */
+
+.traffic-aircraft-popup {
+    margin-bottom: 0 !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip-container {
+    position: relative !important;
+    left: 50% !important;
+    width: 18px !important;
+    height: 8px !important;
+    margin-left: -9px !important;
+    margin-top: -1px !important;
+    overflow: hidden !important;
+}
+
+.traffic-aircraft-popup .leaflet-popup-tip {
+    width: 11px !important;
+    height: 11px !important;
+    margin: -6px auto 0 !important;
+}
+
+
+/* ==========================================================================
+   v14.05 — dimensions des nouvelles familles visuelles
+   ========================================================================== */
+
+.traffic-type-widebody-jet .traffic-aircraft-arrow svg {
+    width: 11.5px !important;
+    height: 11.5px !important;
+    min-width: 11.5px !important;
+    min-height: 11.5px !important;
+}
+
+.traffic-type-narrowbody-jet .traffic-aircraft-arrow svg,
+.traffic-type-regional-jet .traffic-aircraft-arrow svg,
+.traffic-type-light-single .traffic-aircraft-arrow svg,
+.traffic-type-light-twin .traffic-aircraft-arrow svg {
+    width: 11px !important;
+    height: 11px !important;
+    min-width: 11px !important;
+    min-height: 11px !important;
+}
+
+
+/* ==========================================================================
+   v14.06 — indicatif / immatriculation ajouté à l'étiquette altitude
+   ========================================================================== */
+
+.traffic-aircraft-altitude-label {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 0 !important;
+    width: max-content !important;
+    min-width: 0 !important;
+    max-width: 118px !important;
+    padding: 2px 5px !important;
+    border-radius: 6px !important;
+    font-size: 9px !important;
+    line-height: 1.05 !important;
+    font-weight: 750 !important;
+    letter-spacing: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+
+.traffic-aircraft-altitude-label .traffic-label-separator {
+    display: inline !important;
+    padding: 0 1px !important;
+    opacity: .72 !important;
+}
+
+
+/* ==========================================================================
+   v14.08 — bouton déplacement simulation sous SafeSky
+   ========================================================================== */
+
+.simulation-motion-map-button {
+    flex-direction: column !important;
+    gap: 3px !important;
+    background: linear-gradient(180deg, #9a3412 0%, #7c2d12 100%) !important;
+    border-color: #6f250f !important;
+    color: #ffffff !important;
+}
+
+.simulation-motion-map-button[hidden] {
+    display: none !important;
+}
+
+.simulation-motion-map-button.active {
+    background: linear-gradient(180deg, #9a3412 0%, #7c2d12 100%) !important;
+    border-color: #ffffff !important;
+    box-shadow: 0 0 0 3px rgba(227, 0, 27, .7), var(--shadow) !important;
+}
+
+.simulation-motion-glyph {
+    display: block;
+    font-size: 31px;
+    line-height: .95;
+    transform: rotate(-45deg);
+    transform-origin: center;
+}
+
+.simulation-motion-button-summary {
+    display: block;
+    max-width: 82px;
+    font-size: 11px;
+    line-height: 1.1;
+    font-weight: 950;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+
+/* ==========================================================================
+   v14.08 — fenêtre vitesse / route de la simulation
+   ========================================================================== */
+
+.simulation-motion-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483500;
+    align-items: center;
+    justify-content: center;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    background: rgba(6, 24, 43, .58);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+
+.simulation-motion-modal-content {
+    position: relative;
+    width: min(92vw, 470px);
+    max-height: 88vh;
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 22px 20px 20px;
+    border: 3px solid #7c2d12;
+    border-radius: 18px;
+    background: #ffffff;
+    box-shadow: 0 18px 48px rgba(0, 0, 0, .36);
+}
+
+.simulation-motion-modal-content h2 {
+    margin: 0 54px 20px 0;
+    color: #7c2d12;
+    font-size: 24px;
+    line-height: 1.12;
+}
+
+.simulation-motion-modal-close {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 50px;
+    height: 50px;
+    padding: 0;
+    border: 0;
+    border-radius: 0 15px 0 14px;
+    background: #fbe8e3;
+    color: #7c2d12;
+    font-size: 37px;
+    line-height: 1;
+    font-weight: 900;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.simulation-motion-fields {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+}
+
+.simulation-motion-field {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    color: #24384d;
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.simulation-motion-input-unit {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 42px;
+    align-items: center;
+    overflow: hidden;
+    border: 2px solid #9eb0c3;
+    border-radius: 12px;
+    background: #f8fafc;
+}
+
+.simulation-motion-input-unit:focus-within {
+    border-color: #0b63a3;
+    box-shadow: 0 0 0 3px rgba(11, 99, 163, .16);
+}
+
+.simulation-motion-input-unit input {
+    width: 100%;
+    min-width: 0;
+    height: 54px;
+    padding: 0 10px;
+    box-sizing: border-box;
+    border: 0;
+    outline: none;
+    background: transparent;
+    color: #102f4c;
+    font-size: 24px;
+    font-weight: 950;
+    text-align: center;
+}
+
+.simulation-motion-input-unit > span {
+    display: flex;
+    height: 100%;
+    align-items: center;
+    justify-content: center;
+    border-left: 1px solid #c6d0db;
+    background: #e9eff5;
+    color: #40576e;
+    font-size: 16px;
+    font-weight: 900;
+}
+
+.simulation-motion-help {
+    margin: 16px 0;
+    padding: 10px 12px;
+    border-radius: 10px;
+    background: #eef6fc;
+    color: #36516b;
+    font-size: 14px;
+    line-height: 1.35;
+}
+
+.simulation-motion-actions {
+    display: grid;
+    gap: 11px;
+}
+
+.simulation-motion-actions button {
+    min-height: 50px;
+    padding: 10px 14px;
+    border: 0;
+    border-radius: 12px;
+    color: #ffffff;
+    font-size: 17px;
+    font-weight: 950;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.simulation-motion-apply-button {
+    background: #0b63a3;
+}
+
+.simulation-motion-quit-button {
+    background: #b42318;
+}
+
+@media (max-width: 540px) {
+    .simulation-motion-fields {
+        grid-template-columns: 1fr;
+    }
+
+    .simulation-motion-modal-content {
+        width: min(94vw, 430px);
+        padding-left: 16px;
+        padding-right: 16px;
+    }
+}
+
+
+/* ==========================================================================
+   v14.09 — clavier immédiat et altitude simulation
+   ========================================================================== */
+
+.simulation-motion-fields {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+}
+
+.simulation-motion-input-unit {
+    grid-template-columns: minmax(0, 1fr) 38px !important;
+}
+
+.simulation-motion-input-unit input {
+    -webkit-user-select: text !important;
+    user-select: text !important;
+    touch-action: manipulation !important;
+}
+
+.simulation-motion-button-summary {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    max-width: 88px !important;
+    white-space: normal !important;
+    overflow: visible !important;
+    text-overflow: clip !important;
+    line-height: 1.05 !important;
+}
+
+.simulation-motion-button-summary > span {
+    display: block !important;
+    white-space: nowrap !important;
+}
+
+.simulation-motion-button-summary > span:last-child {
+    margin-top: 2px !important;
+    font-size: 10px !important;
+    opacity: .92 !important;
+}
+
+@media (max-width: 620px) {
+    .simulation-motion-fields {
+        grid-template-columns: 1fr !important;
+    }
+}
+
+
+/* ==========================================================================
+   v14.10 — badge SIM sous l'avion simulé
+   ========================================================================== */
+
+/*
+ * L'altitude reste au-dessus du symbole.
+ * Le badge SIM est placé sous le rond afin de ne plus masquer l'altitude.
+ */
+.own-gps-simulation-icon .own-gps-sim-badge {
+    top: 49px !important;
+    bottom: auto !important;
+    left: 50% !important;
+    transform: translateX(-50%) !important;
+    z-index: 4 !important;
+    pointer-events: none !important;
+}
+
+
+/* ==========================================================================
+   v14.11 — saisie simulation au doigt uniquement
+   ========================================================================== */
+
+.simulation-finger-only-note {
+    display: block !important;
+    margin-top: 7px !important;
+    color: #7c2d12 !important;
+    font-weight: 900 !important;
+}
+
+.simulation-motion-input-unit input.simulation-stylus-blocked {
+    caret-color: transparent !important;
+    background: #f1f4f7 !important;
+}
+
+
+/* ==========================================================================
+   v14.12 — retour visuel très bref lors d'un appui au stylet
+   ========================================================================== */
+
+.npf-global-stylus-blocked-field {
+    caret-color: transparent !important;
+    background-color: #f1f4f7 !important;
+}
+
+
+/* ==========================================================================
+   v14.13 — choix exclusifs des filtres altitude trafic
+   ========================================================================== */
+
+.traffic-settings-altitude-mode-line {
+    grid-column: 1 / -1 !important;
+    padding-bottom: 2px !important;
+}
+
+.traffic-settings-check-row input[type="radio"] {
+    width: 28px !important;
+    height: 28px !important;
+    flex: 0 0 auto !important;
+    accent-color: var(--primary-color) !important;
+}
+
+.traffic-settings-ground-band-row {
+    display: grid !important;
+    grid-template-columns: auto minmax(90px, 1fr) auto minmax(110px, 150px) minmax(145px, auto) !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 46px !important;
+}
+
+.traffic-settings-ground-band-row input[type="number"] {
+    width: 100% !important;
+    height: 42px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    padding: 0 10px !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 20px !important;
+    font-weight: 900 !important;
+}
+
+.traffic-settings-ground-band-row strong {
+    color: #334155 !important;
+    font-size: 14px !important;
+    font-weight: 950 !important;
+    white-space: nowrap !important;
+}
+
+.traffic-settings-field-disabled input[type="radio"] {
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+.traffic-settings-field-disabled:has(input[type="radio"]:checked) {
+    opacity: 1 !important;
+    filter: none !important;
+}
+
+@media (max-width: 760px) {
+    .traffic-settings-ground-band-row {
+        grid-template-columns: auto 1fr auto minmax(96px, 130px) !important;
+    }
+
+    .traffic-settings-ground-band-row strong {
+        grid-column: 2 / -1 !important;
+        margin-left: 0 !important;
+        white-space: normal !important;
+    }
+}
+
+
+/* ==========================================================================
+   v14.14 — menu filtres trafic compact et homogène
+   ========================================================================== */
+
+.traffic-settings-card {
+    width: min(700px, calc(100vw - 36px)) !important;
+}
+
+.traffic-settings-radius-field,
+#traffic-altitude-absolute-mode-field,
+#traffic-around-altitude-field,
+#traffic-ground-altitude-field {
+    grid-column: 1 / -1 !important;
+}
+
+.traffic-settings-radius-inline-row {
+    display: grid !important;
+    grid-template-columns: minmax(190px, 1fr) 120px 32px !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 46px !important;
+}
+
+.traffic-settings-radius-inline-row input,
+.traffic-settings-altitude-row input[type="number"] {
+    width: 100% !important;
+    height: 44px !important;
+    min-height: 44px !important;
+    border: 1px solid #cbd5e1 !important;
+    border-radius: 12px !important;
+    padding: 0 10px !important;
+    box-sizing: border-box !important;
+    background: #ffffff !important;
+    color: #0f172a !important;
+    font-size: 20px !important;
+    font-weight: 900 !important;
+    line-height: 44px !important;
+}
+
+.traffic-settings-radius-inline-row em,
+.traffic-settings-altitude-row em {
+    min-width: 0 !important;
+    font-style: normal !important;
+    color: #475569 !important;
+    font-size: 14px !important;
+    font-weight: 900 !important;
+    white-space: nowrap !important;
+}
+
+.traffic-settings-radius-inline-row strong,
+.traffic-settings-altitude-row strong,
+.traffic-altitude-separator,
+.traffic-relative-plusminus {
+    color: #334155 !important;
+    font-size: 16px !important;
+    font-weight: 950 !important;
+    white-space: nowrap !important;
+}
+
+.traffic-settings-altitude-row {
+    display: grid !important;
+    align-items: center !important;
+    gap: 10px !important;
+    min-height: 46px !important;
+}
+
+.traffic-settings-absolute-band-row {
+    grid-template-columns:
+        28px
+        minmax(135px, 1fr)
+        minmax(90px, 112px)
+        14px
+        minmax(90px, 112px)
+        24px !important;
+}
+
+.traffic-settings-around-band-row {
+    grid-template-columns:
+        28px
+        minmax(190px, 1fr)
+        20px
+        120px
+        24px !important;
+}
+
+.traffic-settings-ground-band-row {
+    grid-template-columns:
+        28px
+        minmax(190px, 1fr)
+        20px
+        120px
+        minmax(145px, auto) !important;
+}
+
+.traffic-settings-around-band-row input[type="number"],
+.traffic-settings-ground-band-row input[type="number"] {
+    width: 120px !important;
+    min-width: 120px !important;
+    max-width: 120px !important;
+}
+
+.traffic-settings-field-disabled .traffic-settings-altitude-row input[type="number"] {
+    background: #e2e8f0 !important;
+    color: #64748b !important;
+}
+
+@media (max-width: 680px) {
+    .traffic-settings-card {
+        width: min(660px, calc(100vw - 20px)) !important;
+        padding: 14px !important;
+    }
+
+    .traffic-settings-radius-inline-row {
+        grid-template-columns: minmax(145px, 1fr) 100px 28px !important;
+        gap: 7px !important;
+    }
+
+    .traffic-settings-altitude-row {
+        gap: 7px !important;
+    }
+
+    .traffic-settings-absolute-band-row {
+        grid-template-columns:
+            28px
+            minmax(115px, 1fr)
+            minmax(78px, 96px)
+            12px
+            minmax(78px, 96px)
+            22px !important;
+    }
+
+    .traffic-settings-around-band-row {
+        grid-template-columns:
+            28px
+            minmax(150px, 1fr)
+            18px
+            104px
+            22px !important;
+    }
+
+    .traffic-settings-ground-band-row {
+        grid-template-columns:
+            28px
+            minmax(125px, 1fr)
+            18px
+            104px
+            minmax(125px, auto) !important;
+    }
+
+    .traffic-settings-around-band-row input[type="number"],
+    .traffic-settings-ground-band-row input[type="number"] {
+        width: 104px !important;
+        min-width: 104px !important;
+        max-width: 104px !important;
+    }
+
+    .traffic-settings-radius-inline-row em,
+    .traffic-settings-altitude-row em,
+    .traffic-settings-ground-band-row strong {
+        font-size: 13px !important;
+    }
+}
+
+
+/* ==========================================================================
+   v14.49 — calque routier vectoriel offline A / N / D / M
+   ========================================================================== */
+
+#road-overlay-button.active {
+    background: #0b6e4f !important;
+    border-color: #0b6e4f !important;
+    color: #ffffff !important;
+}
+
+#road-overlay-button.loading {
+    opacity: .68 !important;
+    cursor: wait !important;
+}
+
+#road-overlay-button.missing-data {
+    border-color: #d97706 !important;
+}
+
+.road-overlay-map-button .road-overlay-icon,
+.road-overlay-map-button svg {
+    width: 66px !important;
+    height: 66px !important;
+    overflow: visible !important;
+}
+
+.road-overlay-road-casing {
+    fill: none;
+    stroke: #ffffff;
+    stroke-width: 11;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.road-overlay-road-line {
+    fill: none;
+    stroke: #e85d04;
+    stroke-width: 6;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+}
+
+.road-overlay-shield {
+    stroke: rgba(0, 0, 0, .38);
+    stroke-width: 1.5;
+}
+
+.road-overlay-shield-a {
+    fill: #e85d04;
+}
+
+.road-overlay-shield-d {
+    fill: #f0c419;
+}
+
+.road-overlay-shield-text {
+    fill: #ffffff;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 12px;
+    font-weight: 1000;
+    text-anchor: middle;
+}
+
+.road-overlay-shield-text-dark {
+    fill: #17212b;
+    font-size: 10px;
+}
+
+.road-overlay-button-status {
+    position: absolute !important;
+    right: 5px !important;
+    bottom: 4px !important;
+    min-width: 29px !important;
+    height: 18px !important;
+    padding: 0 4px !important;
+    box-sizing: border-box !important;
+    border-radius: 999px !important;
+    background: rgba(255, 255, 255, .95) !important;
+    border: 1px solid rgba(0, 0, 0, .22) !important;
+    color: #0b6e4f !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 9px !important;
+    font-weight: 1000 !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    pointer-events: none !important;
+}
+
+#road-overlay-button.missing-data .road-overlay-button-status {
+    color: #b45309 !important;
+}
+
+.leaflet-pane.roadOverlayCasingPane,
+.leaflet-pane.roadOverlayLinePane,
+.leaflet-pane.roadOverlayLabelPane {
+    pointer-events: none !important;
+}
+
+.road-overlay-label-marker {
+    background: transparent !important;
+    border: 0 !important;
+    pointer-events: none !important;
+}
+
+.road-overlay-ref {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 31px !important;
+    height: 20px !important;
+    padding: 0 6px !important;
+    transform: translate(-50%, -50%) !important;
+    border: 2px solid rgba(255, 255, 255, .98) !important;
+    border-radius: 6px !important;
+    box-shadow:
+        0 1px 4px rgba(0, 0, 0, .58),
+        0 0 0 1px rgba(0, 0, 0, .25) !important;
+    font-family: Arial, Helvetica, sans-serif !important;
+    font-size: 13px !important;
+    font-weight: 1000 !important;
+    line-height: 1 !important;
+    white-space: nowrap !important;
+    box-sizing: border-box !important;
+    pointer-events: none !important;
+}
+
+.road-overlay-ref-a {
+    background: #e85d04 !important;
+    color: #ffffff !important;
+}
+
+.road-overlay-ref-n {
+    background: #d62828 !important;
+    color: #ffffff !important;
+}
+
+.road-overlay-ref-d,
+.road-overlay-ref-m {
+    background: #f0c419 !important;
+    color: #17212b !important;
+}
+
+.road-overlay-import-block {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: stretch !important;
+    gap: 8px !important;
+    width: 100% !important;
+    margin-top: 6px !important;
+    padding-top: 10px !important;
+    border-top: 1px solid rgba(0, 80, 130, .18) !important;
+}
+
+.road-overlay-import-button {
+    background: #0b6e4f !important;
+    border-color: #0b6e4f !important;
+    color: #ffffff !important;
+}
+
+.road-overlay-installed-status {
+    padding: 8px 10px !important;
+    border: 1px solid #bfd6cc !important;
+    border-radius: 10px !important;
+    background: #f1faf6 !important;
+    color: #174b3a !important;
+    font-size: 13px !important;
+    font-weight: 850 !important;
+    line-height: 1.25 !important;
+    text-align: left !important;
+}
+
+.road-overlay-delete-button {
+    align-self: flex-start !important;
+}
+
+
+/* ==========================================================================
+   v14.16 — stabilité du calque routier
+   ========================================================================== */
+
+.leaflet-roadOverlayCasingPane-pane canvas,
+.leaflet-roadOverlayLinePane-pane canvas {
+    pointer-events: none !important;
+    will-change: transform !important;
+}
+
+
+/* ==========================================================================
+   v14.17 — clic court centrage / appui long suivi GPS
+   ========================================================================== */
+
+#center-gps-button {
+    -webkit-touch-callout: none !important;
+    touch-action: manipulation !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+    transition:
+        transform .12s ease,
+        box-shadow .12s ease,
+        background-color .12s ease !important;
+}
+
+#center-gps-button.center-gps-pressing {
+    transform: scale(.94) !important;
+    box-shadow:
+        0 0 0 5px rgba(10, 104, 170, .22),
+        var(--shadow) !important;
+}
+
+#center-gps-button.center-gps-long-press-confirmed {
+    transform: scale(.97) !important;
+    box-shadow:
+        0 0 0 7px rgba(16, 185, 129, .32),
+        var(--shadow) !important;
+}
+
+#center-gps-button.center-follow-active::after {
+    content: "SUIVI" !important;
+}
+
+
+/* ==========================================================================
+   v14.23 — SafeSky Production via proxy NAS
+   ========================================================================== */
+
+/* La connexion SafeSky active conserve le contour vert déjà utilisé. */
+#traffic-layer-button.traffic-state-ok {
+    box-shadow:
+        0 0 0 2px rgba(16, 185, 129, .42),
+        var(--shadow) !important;
+}
+
+
+/* ==========================================================================
+   v14.25 — silhouettes trafic renforcées, inspirées de SafeSky
+   ========================================================================== */
+
+/*
+ * Zone Leaflet portée à 44 × 44 px. Le symbole visible reste contenu dans
+ * environ 28 px et ne recouvre pas excessivement les trafics voisins.
+ */
+.traffic-aircraft-icon,
+.leaflet-marker-icon.traffic-aircraft-icon {
+    width: 44px !important;
+    height: 44px !important;
+    margin-left: -22px !important;
+    margin-top: -22px !important;
+    overflow: visible !important;
+}
+
+.traffic-aircraft-symbol-wrap {
+    width: 44px !important;
+    height: 44px !important;
+    overflow: visible !important;
+}
+
+.traffic-aircraft-vector-wrap {
+    left: 22px !important;
+    top: 22px !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    left: -1.5px !important;
+    top: -66px !important;
+    width: 3px !important;
+    height: 66px !important;
+}
+
+/*
+ * Suppression du petit disque plein coloré. Le trafic est désormais représenté
+ * comme dans SafeSky : silhouette noire épaisse avec halo blanc.
+ */
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown .traffic-aircraft-arrow {
+    position: absolute !important;
+    left: 22px !important;
+    top: 22px !important;
+    width: 30px !important;
+    height: 30px !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    border: 0 !important;
+    border-radius: 0 !important;
+    background: transparent !important;
+    box-shadow: none !important;
+    color: #0f172a !important;
+    overflow: visible !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+/*
+ * Petit témoin d'altitude relative. La silhouette reste noire ; l'information
+ * rouge / verte / bleue / grise reste identifiable sans masquer la catégorie.
+ */
+.traffic-aircraft-symbol-wrap {
+    --traffic-altitude-color: #64748b;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-same {
+    --traffic-altitude-color: #dc2626;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-below {
+    --traffic-altitude-color: #16a34a;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-above {
+    --traffic-altitude-color: #2563eb;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown {
+    --traffic-altitude-color: #64748b;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow::after {
+    content: "" !important;
+    position: absolute !important;
+    right: 0 !important;
+    bottom: 0 !important;
+    width: 8px !important;
+    height: 8px !important;
+    box-sizing: border-box !important;
+    border: 1.5px solid #ffffff !important;
+    border-radius: 50% !important;
+    background: var(--traffic-altitude-color) !important;
+    box-shadow:
+        0 0 0 1px rgba(15, 23, 42, .44),
+        0 1px 3px rgba(15, 23, 42, .35) !important;
+    z-index: 3 !important;
+}
+
+/* Double tracé SVG : contour blanc, puis remplissage noir. */
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg {
+    display: block !important;
+    width: 27px !important;
+    height: 27px !important;
+    min-width: 27px !important;
+    min-height: 27px !important;
+    overflow: visible !important;
+    filter: drop-shadow(0 1px 1px rgba(15, 23, 42, .35)) !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg path {
+    vector-effect: non-scaling-stroke !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg .traffic-symbol-outline {
+    fill: #ffffff !important;
+    stroke: #ffffff !important;
+    stroke-width: 3.4px !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg .traffic-symbol-fill {
+    fill: #0f172a !important;
+    stroke: #0f172a !important;
+    stroke-width: .65px !important;
+}
+
+/* Catégories très larges : taille légèrement contenue. */
+.traffic-type-helicopter .traffic-aircraft-arrow svg,
+.traffic-type-uav .traffic-aircraft-arrow svg,
+.traffic-type-pav .traffic-aircraft-arrow svg,
+.traffic-type-airship .traffic-aircraft-arrow svg,
+.traffic-type-parachute .traffic-aircraft-arrow svg,
+.traffic-type-paraglider .traffic-aircraft-arrow svg,
+.traffic-type-hangglider .traffic-aircraft-arrow svg,
+.traffic-type-gyrocopter .traffic-aircraft-arrow svg,
+.traffic-type-ultralight .traffic-aircraft-arrow svg,
+.traffic-type-pendular .traffic-aircraft-arrow svg,
+.traffic-type-paramotor .traffic-aircraft-arrow svg {
+    width: 26px !important;
+    height: 26px !important;
+    min-width: 26px !important;
+    min-height: 26px !important;
+}
+
+/* Jets et aéronefs militaires : silhouette légèrement plus grande. */
+.traffic-type-jet .traffic-aircraft-arrow svg,
+.traffic-type-widebody-jet .traffic-aircraft-arrow svg,
+.traffic-type-narrowbody-jet .traffic-aircraft-arrow svg,
+.traffic-type-regional-jet .traffic-aircraft-arrow svg,
+.traffic-type-military .traffic-aircraft-arrow svg {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+}
+
+/* Libellé renforcé mais toujours compact. */
+.traffic-aircraft-altitude-label {
+    max-width: 132px !important;
+    padding: 3px 6px !important;
+    border-width: 1.5px !important;
+    border-radius: 7px !important;
+    background: rgba(255, 255, 255, .96) !important;
+    color: #111827 !important;
+    font-size: 10px !important;
+    line-height: 1.05 !important;
+    font-weight: 850 !important;
+    text-shadow: none !important;
+    box-shadow:
+        0 1px 2px rgba(15, 23, 42, .28),
+        0 0 0 1px rgba(255, 255, 255, .7) !important;
+}
+
+/*
+ * Le texte reste noir pour une lecture immédiate ; la bordure conserve la
+ * couleur correspondant à l'altitude relative.
+ */
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-altitude-label,
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-altitude-label,
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-altitude-label,
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown .traffic-aircraft-altitude-label {
+    color: #111827 !important;
+}
+
+
+/* ==========================================================================
+   v14.26 — pictogrammes proches de la référence visuelle SafeSky
+   ========================================================================== */
+
+.traffic-aircraft-icon,
+.leaflet-marker-icon.traffic-aircraft-icon {
+    width: 42px !important;
+    height: 42px !important;
+    margin-left: -21px !important;
+    margin-top: -21px !important;
+}
+
+.traffic-aircraft-symbol-wrap {
+    width: 42px !important;
+    height: 42px !important;
+}
+
+.traffic-aircraft-vector-wrap {
+    left: 21px !important;
+    top: 21px !important;
+}
+
+.traffic-aircraft-dotted-vector {
+    top: -62px !important;
+    height: 62px !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-same .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-below .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-above .traffic-aircraft-arrow,
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown .traffic-aircraft-arrow {
+    left: 21px !important;
+    top: 21px !important;
+    width: 29px !important;
+    height: 29px !important;
+    color: #090d14 !important;
+}
+
+/* Le point coloré de la v14.25 est supprimé pour se rapprocher de SafeSky. */
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow::after {
+    content: none !important;
+    display: none !important;
+}
+
+.traffic-aircraft-symbol-wrap .traffic-aircraft-arrow svg,
+.traffic-type-helicopter .traffic-aircraft-arrow svg,
+.traffic-type-uav .traffic-aircraft-arrow svg,
+.traffic-type-pav .traffic-aircraft-arrow svg,
+.traffic-type-airship .traffic-aircraft-arrow svg,
+.traffic-type-parachute .traffic-aircraft-arrow svg,
+.traffic-type-paraglider .traffic-aircraft-arrow svg,
+.traffic-type-hangglider .traffic-aircraft-arrow svg,
+.traffic-type-gyrocopter .traffic-aircraft-arrow svg,
+.traffic-type-ultralight .traffic-aircraft-arrow svg,
+.traffic-type-pendular .traffic-aircraft-arrow svg,
+.traffic-type-paramotor .traffic-aircraft-arrow svg,
+.traffic-type-jet .traffic-aircraft-arrow svg,
+.traffic-type-widebody-jet .traffic-aircraft-arrow svg,
+.traffic-type-narrowbody-jet .traffic-aircraft-arrow svg,
+.traffic-type-regional-jet .traffic-aircraft-arrow svg,
+.traffic-type-military .traffic-aircraft-arrow svg {
+    width: 28px !important;
+    height: 28px !important;
+    min-width: 28px !important;
+    min-height: 28px !important;
+    overflow: visible !important;
+    filter:
+        drop-shadow(1px 0 0 rgba(255, 255, 255, .98))
+        drop-shadow(-1px 0 0 rgba(255, 255, 255, .98))
+        drop-shadow(0 1px 0 rgba(255, 255, 255, .98))
+        drop-shadow(0 -1px 0 rgba(255, 255, 255, .98))
+        drop-shadow(0 1px 1px rgba(15, 23, 42, .28)) !important;
+}
+
+/*
+ * Grammaire graphique commune :
+ * - traits noirs simples ;
+ * - remplissages noirs ;
+ * - détails blancs internes pour les catégories qui en ont besoin.
+ */
+.traffic-aircraft-arrow svg .ss-line,
+.traffic-aircraft-arrow svg .ss-line * {
+    fill: none !important;
+    stroke: #080c13 !important;
+    stroke-width: 3.2px !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+.traffic-aircraft-arrow svg .ss-fill {
+    fill: #080c13 !important;
+    stroke: #080c13 !important;
+    stroke-width: 1px !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+.traffic-aircraft-arrow svg .ss-ring {
+    fill: #ffffff !important;
+    stroke: #080c13 !important;
+    stroke-width: 3px !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+.traffic-aircraft-arrow svg .ss-cut {
+    fill: none !important;
+    stroke: #ffffff !important;
+    stroke-width: 1.8px !important;
+    stroke-linecap: round !important;
+    stroke-linejoin: round !important;
+    vector-effect: non-scaling-stroke !important;
+}
+
+/* Les libellés restent compacts ; seule l'icône est modifiée. */
+.traffic-aircraft-altitude-label {
+    font-size: 9.5px !important;
+    font-weight: 800 !important;
+    padding: 2px 5px !important;
+}
+
+/*
+ * Le code couleur d'altitude relative reste porté par le vecteur et la bordure
+ * du libellé, sans modifier la silhouette noire.
+ */
+
+
+/* ==========================================================================
+   v14.27 — longueur du vecteur proportionnelle à la vitesse sol
+   ========================================================================== */
+
+.traffic-aircraft-vector-wrap {
+    --traffic-vector-length: 0px;
+}
+
+/*
+ * La longueur est injectée individuellement pour chaque trafic. Les anciennes
+ * valeurs fixes de 62 px sont écrasées ici.
+ */
+.traffic-aircraft-dotted-vector {
+    top: calc(-1 * var(--traffic-vector-length)) !important;
+    height: var(--traffic-vector-length) !important;
+    transition:
+        height .18s linear,
+        top .18s linear !important;
+}
+
+
+/* ==========================================================================
+   v14.29 — base d'icônes SafeSky validée par l'utilisateur
+   ========================================================================== */
+
+/* Toutes les catégories conservent le noir par défaut. */
+.traffic-aircraft-arrow svg .ss-fill {
+    fill: #080c13 !important;
+    stroke: #080c13 !important;
+}
+
+/* Parapente : magenta vif, légèrement plus grand que les autres catégories. */
+.traffic-type-paraglider .traffic-aircraft-arrow svg {
+    width: 31px !important;
+    height: 31px !important;
+    min-width: 31px !important;
+    min-height: 31px !important;
+}
+
+.traffic-type-paraglider .traffic-aircraft-arrow svg .ss-paraglider-color {
+    fill: #FF00A8 !important;
+    stroke: #FF00A8 !important;
+}
+
+.traffic-type-paraglider .traffic-aircraft-arrow svg .ss-paraglider-line {
+    fill: none !important;
+    stroke: #FF00A8 !important;
+    stroke-width: 2.4px !important;
+}
+
+/* Deltaplane : cyan vif, légèrement plus petit que le parapente. */
+.traffic-type-hangglider .traffic-aircraft-arrow svg {
+    width: 29px !important;
+    height: 29px !important;
+    min-width: 29px !important;
+    min-height: 29px !important;
+}
+
+.traffic-type-hangglider .traffic-aircraft-arrow svg .ss-hangglider-color {
+    fill: #00CFFF !important;
+    stroke: #00CFFF !important;
+}
+
+/*
+ * Le halo blanc est volontairement renforcé pour les deux voilures légères,
+ * afin qu'elles restent visibles sur les routes, reliefs et zones urbaines.
+ */
+.traffic-type-paraglider .traffic-aircraft-arrow svg,
+.traffic-type-hangglider .traffic-aircraft-arrow svg {
+    filter:
+        drop-shadow(1.4px 0 0 rgba(255,255,255,.99))
+        drop-shadow(-1.4px 0 0 rgba(255,255,255,.99))
+        drop-shadow(0 1.4px 0 rgba(255,255,255,.99))
+        drop-shadow(0 -1.4px 0 rgba(255,255,255,.99))
+        drop-shadow(0 1px 2px rgba(15,23,42,.32)) !important;
+}
+
+
+/* ==========================================================================
+   v14.30 — familles de couleurs des voilures légères
+   ========================================================================== */
+
+/* Famille parapente : parapente et paramoteur en magenta vif. */
+.traffic-aircraft-arrow svg .ss-paraglider-line,
+.traffic-aircraft-arrow svg .ss-paraglider-line * {
+    fill: none !important;
+    stroke: #FF00A8 !important;
+    stroke-width: 2.4px !important;
+}
+
+.traffic-aircraft-arrow svg .ss-paraglider-ring {
+    fill: #ffffff !important;
+    stroke: #FF00A8 !important;
+    stroke-width: 3px !important;
+}
+
+/* Famille deltaplane : deltaplane, parachutiste et pendulaire en cyan vif. */
+.traffic-aircraft-arrow svg .ss-hangglider-line,
+.traffic-aircraft-arrow svg .ss-hangglider-line * {
+    fill: none !important;
+    stroke: #00CFFF !important;
+    stroke-width: 2.8px !important;
+}
+
+.traffic-aircraft-arrow svg .ss-hangglider-ring {
+    fill: #ffffff !important;
+    stroke: #00CFFF !important;
+    stroke-width: 3px !important;
+}
+
+/* Halo blanc renforcé pour les quatre catégories colorées ajoutées. */
+.traffic-type-paramotor .traffic-aircraft-arrow svg,
+.traffic-type-parachute .traffic-aircraft-arrow svg,
+.traffic-type-pendular .traffic-aircraft-arrow svg {
+    filter:
+        drop-shadow(1.4px 0 0 rgba(255,255,255,.99))
+        drop-shadow(-1.4px 0 0 rgba(255,255,255,.99))
+        drop-shadow(0 1.4px 0 rgba(255,255,255,.99))
+        drop-shadow(0 -1.4px 0 rgba(255,255,255,.99))
+        drop-shadow(0 1px 2px rgba(15,23,42,.32)) !important;
+}
+
+
+/* ==========================================================================
+   v14.31 — couleur des icônes, sol noir et étiquette sur deux lignes
+   ========================================================================== */
+
+.traffic-aircraft-symbol-wrap {
+    --traffic-icon-color: #64748b;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-same {
+    --traffic-icon-color: #dc2626;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-below {
+    --traffic-icon-color: #16a34a;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-above {
+    --traffic-icon-color: #2563eb;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-unknown {
+    --traffic-icon-color: #64748b;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-grounded,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded {
+    --traffic-icon-color: #080c13;
+}
+
+/*
+ * Les aéronefs conventionnels reprennent la couleur de leur étiquette :
+ * rouge, vert, bleu ou gris.
+ */
+.traffic-aircraft-symbol-wrap:not(.traffic-type-paraglider):not(.traffic-type-paramotor):not(.traffic-type-hangglider):not(.traffic-type-parachute):not(.traffic-type-pendular)
+.traffic-aircraft-arrow svg .ss-fill {
+    fill: var(--traffic-icon-color) !important;
+    stroke: var(--traffic-icon-color) !important;
+}
+
+.traffic-aircraft-symbol-wrap:not(.traffic-type-paraglider):not(.traffic-type-paramotor):not(.traffic-type-hangglider):not(.traffic-type-parachute):not(.traffic-type-pendular)
+.traffic-aircraft-arrow svg .ss-line,
+.traffic-aircraft-symbol-wrap:not(.traffic-type-paraglider):not(.traffic-type-paramotor):not(.traffic-type-hangglider):not(.traffic-type-parachute):not(.traffic-type-pendular)
+.traffic-aircraft-arrow svg .ss-line * {
+    stroke: var(--traffic-icon-color) !important;
+}
+
+.traffic-aircraft-symbol-wrap:not(.traffic-type-paraglider):not(.traffic-type-paramotor):not(.traffic-type-hangglider):not(.traffic-type-parachute):not(.traffic-type-pendular)
+.traffic-aircraft-arrow svg .ss-ring {
+    stroke: var(--traffic-icon-color) !important;
+}
+
+/* Au sol, toutes les catégories deviennent noires. */
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-fill,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-paraglider-color,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-hangglider-color {
+    fill: #080c13 !important;
+    stroke: #080c13 !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-line,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-line *,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-paraglider-line,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-paraglider-line *,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-hangglider-line,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-hangglider-line * {
+    stroke: #080c13 !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-ring,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-paraglider-ring,
+.traffic-aircraft-symbol-wrap.traffic-status-grounded
+.traffic-aircraft-arrow svg .ss-hangglider-ring {
+    stroke: #080c13 !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-grounded
+.traffic-aircraft-dotted-vector {
+    background-image:
+        radial-gradient(circle, #080c13 0 2px, transparent 2.6px) !important;
+}
+
+.traffic-aircraft-symbol-wrap.traffic-altitude-grounded
+.traffic-aircraft-altitude-label {
+    border-color: #080c13 !important;
+}
+
+/* Étiquette permanente strictement sur deux lignes. */
+.traffic-aircraft-altitude-label {
+    display: flex !important;
+    flex-direction: column !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 1px !important;
+    min-width: 78px !important;
+    max-width: 158px !important;
+    padding: 3px 6px !important;
+    white-space: nowrap !important;
+}
+
+.traffic-label-line {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    width: 100% !important;
+    min-width: 0 !important;
+}
+
+.traffic-label-line-primary {
+    gap: 4px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    font-size: 9.5px !important;
+    line-height: 1.05 !important;
+    font-weight: 900 !important;
+}
+
+.traffic-label-line-secondary {
+    gap: 5px !important;
+    font-size: 10px !important;
+    line-height: 1 !important;
+    font-weight: 850 !important;
+}
+
+.traffic-label-space {
+    display: inline-block !important;
+    width: 3px !important;
+}
+
+.traffic-vertical-trend {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    font-size: 15px !important;
+    line-height: .8 !important;
+    font-weight: 1000 !important;
+}
+
+.traffic-trend-climb {
+    color: #15803d !important;
+}
+
+.traffic-trend-descent {
+    color: #dc2626 !important;
+}
+
+
+/* ==========================================================================
+   v14.32 — flèches montée/descente diagonales et renforcées
+   ========================================================================== */
+
+/*
+ * Un peu plus d'espace sur la deuxième ligne pour séparer nettement
+ * l'altitude de la tendance verticale.
+ */
+.traffic-aircraft-altitude-label {
+    min-width: 86px !important;
+    max-width: 168px !important;
+    padding-left: 7px !important;
+    padding-right: 7px !important;
+}
+
+.traffic-label-line-secondary {
+    gap: 8px !important;
+    min-height: 18px !important;
+    font-size: 10.5px !important;
+}
+
+/*
+ * Flèche diagonale plus grosse et plus épaisse.
+ * ↗ = montée ; ↘ = descente.
+ */
+.traffic-vertical-trend {
+    flex: 0 0 22px !important;
+    width: 22px !important;
+    min-width: 22px !important;
+    height: 18px !important;
+    font-family:
+        "Arial Unicode MS",
+        "Helvetica Neue",
+        Arial,
+        sans-serif !important;
+    font-size: 22px !important;
+    line-height: 18px !important;
+    font-weight: 1000 !important;
+    letter-spacing: 0 !important;
+    transform: translateY(-1px) !important;
+    -webkit-text-stroke: .45px currentColor !important;
+    text-shadow:
+        0 0 1px currentColor,
+        0 1px 0 rgba(255,255,255,.88) !important;
+}
+
+
+/* ==========================================================================
+   v14.33 — flèches compactes et étiquette jamais superposée à l'icône
+   ========================================================================== */
+
+/*
+ * La transformation centrale historique est neutralisée par huit ancrages.
+ * Le bord ou le coin le plus proche du trafic est placé sur le point calculé.
+ */
+.traffic-aircraft-altitude-label.traffic-label-anchor-top {
+    transform: translate(-50%, 0) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-top-right {
+    transform: translate(-100%, 0) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-right {
+    transform: translate(-100%, -50%) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-bottom-right {
+    transform: translate(-100%, -100%) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-bottom {
+    transform: translate(-50%, -100%) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-bottom-left {
+    transform: translate(0, -100%) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-left {
+    transform: translate(0, -50%) !important;
+}
+
+.traffic-aircraft-altitude-label.traffic-label-anchor-top-left {
+    transform: translate(0, 0) !important;
+}
+
+/*
+ * Flèche moins longue verticalement, mais plus épaisse.
+ * Elle reste centrée dans la deuxième ligne sans toucher la première.
+ */
+.traffic-label-line-secondary {
+    gap: 7px !important;
+    min-height: 15px !important;
+    line-height: 15px !important;
+}
+
+.traffic-vertical-trend {
+    flex: 0 0 19px !important;
+    width: 19px !important;
+    min-width: 19px !important;
+    height: 14px !important;
+    font-size: 18px !important;
+    line-height: 13px !important;
+    font-weight: 1000 !important;
+    transform: translateY(0) scaleX(1.08) !important;
+    -webkit-text-stroke: .85px currentColor !important;
+    text-shadow:
+        .35px 0 currentColor,
+        -.35px 0 currentColor,
+        0 .35px currentColor,
+        0 -.35px currentColor,
+        0 1px 0 rgba(255,255,255,.9) !important;
+}
+
+
+/* ==========================================================================
+   v14.35 — recherche, suivi, ADVISORY, vecteur courbe et publication
+   ========================================================================== */
+
+.traffic-tools-section {
+    margin-top: 12px;
+    padding: 12px;
+    border: 1px solid #cbd5e1;
+    border-radius: 14px;
+    background: #f8fafc;
+}
+
+.traffic-tools-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 8px;
+    color: #0f172a;
+    font-size: 16px;
+    font-weight: 950;
+}
+
+.traffic-tools-note {
+    margin-top: 7px;
+    color: #475569;
+    font-size: 12px;
+    line-height: 1.3;
+    font-weight: 650;
+}
+
+.traffic-search-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto auto;
+    gap: 8px;
+}
+
+.traffic-search-row input,
+#traffic-publication-callsign-input,
+#traffic-publication-type-input {
+    width: 100%;
+    min-height: 42px;
+    box-sizing: border-box;
+    border: 1px solid #94a3b8;
+    border-radius: 11px;
+    padding: 0 10px;
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 15px;
+    font-weight: 850;
+}
+
+.traffic-tool-button,
+.traffic-popup-track-button {
+    min-height: 38px;
+    border: 1px solid #64748b;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #ffffff;
+    color: #0f172a;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+.traffic-tool-button-primary {
+    border-color: #1d4ed8;
+    background: #2563eb;
+    color: #ffffff;
+}
+
+.traffic-tool-button-danger {
+    border-color: #dc2626;
+    color: #b91c1c;
+}
+
+.traffic-tool-button:disabled,
+.traffic-popup-track-button:disabled {
+    opacity: .52;
+    cursor: default;
+}
+
+.traffic-search-results,
+.traffic-tracked-list {
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+    margin-top: 9px;
+}
+
+.traffic-search-result-row,
+.traffic-tracked-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 8px;
+    padding: 8px;
+    border: 1px solid #dbe3ec;
+    border-radius: 10px;
+    background: #ffffff;
+}
+
+.traffic-search-result-description,
+.traffic-tracked-label {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+}
+
+.traffic-search-result-description strong,
+.traffic-tracked-label strong {
+    overflow: hidden;
+    color: #111827;
+    font-size: 14px;
+    font-weight: 950;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.traffic-search-result-description span,
+.traffic-tracked-label span {
+    overflow: hidden;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.traffic-search-result-actions {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 5px;
+}
+
+.traffic-search-message,
+.traffic-tool-empty {
+    padding: 8px;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 750;
+    text-align: center;
+}
+
+.traffic-tracked-count {
+    color: #2563eb;
+    font-size: 12px;
+}
+
+.traffic-publication-status {
+    margin-top: 10px;
+    padding: 8px 10px;
+    border-radius: 10px;
+    font-size: 12px;
+    font-weight: 800;
+}
+
+.traffic-publication-idle,
+.traffic-publication-waiting {
+    background: #e2e8f0;
+    color: #334155;
+}
+
+.traffic-publication-ok {
+    background: #dcfce7;
+    color: #166534;
+}
+
+.traffic-publication-error {
+    background: #fee2e2;
+    color: #991b1b;
+}
+
+.traffic-popup-track-button {
+    width: 100%;
+    margin-top: 8px;
+    border-color: #2563eb;
+    background: #eff6ff;
+    color: #1d4ed8;
+}
+
+/* Vecteur vitesse SVG, courbé selon le taux de virage SafeSky. */
+.traffic-aircraft-vector-wrap {
+    overflow: visible !important;
+}
+
+.traffic-speed-vector-svg {
+    position: absolute;
+    left: -280px;
+    top: -280px;
+    width: 560px;
+    height: 560px;
+    overflow: visible;
+    pointer-events: none;
+}
+
+.traffic-speed-vector-path {
+    fill: none;
+    stroke: #64748b;
+    stroke-width: 4px;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-dasharray: 8 5;
+    vector-effect: non-scaling-stroke;
+    filter:
+        drop-shadow(1px 0 0 rgba(255,255,255,.98))
+        drop-shadow(-1px 0 0 rgba(255,255,255,.98))
+        drop-shadow(0 1px 0 rgba(255,255,255,.98))
+        drop-shadow(0 -1px 0 rgba(255,255,255,.98));
+}
+
+.traffic-altitude-same .traffic-speed-vector-path {
+    stroke: #dc2626;
+}
+
+.traffic-altitude-below .traffic-speed-vector-path {
+    stroke: #16a34a;
+}
+
+.traffic-altitude-above .traffic-speed-vector-path {
+    stroke: #2563eb;
+}
+
+.traffic-altitude-unknown .traffic-speed-vector-path {
+    stroke: #64748b;
+}
+
+.traffic-altitude-grounded .traffic-speed-vector-path,
+.traffic-status-grounded .traffic-speed-vector-path {
+    stroke: #080c13;
+}
+
+/* Zones déclarées d'activité drone. */
+.leaflet-trafficAdvisoryPane-pane {
+    pointer-events: auto;
+}
+
+.traffic-advisory-popup .traffic-popup-subtitle {
+    color: #6d28d9;
+    font-weight: 950;
+}
+
+@media (max-width: 760px) {
+    .traffic-search-row,
+    .traffic-search-result-row,
+    .traffic-tracked-row {
+        grid-template-columns: 1fr;
+    }
+
+    .traffic-search-result-actions {
+        justify-content: stretch;
+    }
+
+    .traffic-search-result-actions .traffic-tool-button {
+        flex: 1 1 120px;
+    }
+}
+
+
+/* ==========================================================================
+   v14.38 — résultats villages, hameaux et lieux nommés
+   ========================================================================== */
+
+#results-list li.search-result-locality {
+    position: relative;
+    padding-left: 29px;
+}
+
+#results-list li.search-result-locality::before {
+    content: "⌖";
+    position: absolute;
+    left: 9px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: #7c3aed;
+    font-size: 16px;
+    font-weight: 950;
+}
+
+#results-list li.search-result-locality::after {
+    content: "Lieu nommé offline";
+    display: inline-block;
+    margin-left: 7px;
+    padding: 1px 5px;
+    border-radius: 7px;
+    background: #ede9fe;
+    color: #5b21b6;
+    font-size: 9px;
+    font-weight: 900;
+    vertical-align: middle;
+}
+
+
+/* v14.40 — état discret de la base nationale de localités offline. */
+#named-places-offline-status {
+    position: fixed;
+    left: max(12px, env(safe-area-inset-left));
+    bottom: max(12px, env(safe-area-inset-bottom));
+    z-index: 12000;
+    max-width: min(520px, calc(100vw - 24px));
+    padding: 9px 12px;
+    border-radius: 10px;
+    background: rgba(8, 47, 73, 0.94);
+    color: #ffffff;
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.25;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.28);
+    pointer-events: none;
+    opacity: 0;
+    transform: translateY(8px);
+    transition: opacity .18s ease, transform .18s ease;
+}
+#named-places-offline-status.visible {
+    opacity: 1;
+    transform: translateY(0);
+}
+#named-places-offline-status.error {
+    background: rgba(127, 29, 29, 0.96);
+}
+
+
+/* v14.41 — aucune modification du rendu ni du fonctionnement de la carte. */
+
+
+/* v14.44 — filtres SafeSky uniquement ; rendu de la carte inchangé. */
+
+
+/* ==========================================================================
+   v14.44 — déplacement fluide continu des trafics
+   ========================================================================== */
+
+/*
+ * Leaflet pilote la translation géographique. Les éléments internes restent
+ * préparés pour les rotations fréquentes, sans transition CSS susceptible de
+ * créer un retard pendant un déplacement ou un zoom manuel de la carte.
+ */
+.traffic-aircraft-icon,
+.traffic-aircraft-arrow,
+.traffic-aircraft-vector-wrap {
+    will-change: transform;
+}
+
+
+/* ==========================================================================
+   v14.45 — curseur tactile et recherche phonétique
+   ========================================================================== */
+
+/* Aucun changement visuel : le positionnement du curseur reste géré nativement
+   par Safari/iPadOS dans le champ de recherche des communes. */
+
+
+/* ==========================================================================
+   v14.46 — heure sur feu et forfait plein retardant
+   ========================================================================== */
+
+/* Aucun changement visuel : la correction porte uniquement sur les calculs
+   temporels des onglets Prévi et Suivi rotations. */
+
+
+/* ==========================================================================
+   v14.47 — correction de la source RLT du premier transit
+   ========================================================================== */
+
+/* Aucun changement visuel : la condition d’exemption des 10 minutes lit
+   désormais uniquement le champ RLT Départ de l’en-tête BLOC/FUEL. */
+
+
+/* ==========================================================================
+   v14.48 — masquage temporaire du propre avion SafeSky
+   ========================================================================== */
+
+.traffic-own-aircraft-row {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: center;
+    gap: 10px;
+}
+
+.traffic-own-aircraft-status {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: 9px 10px;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    background: #ffffff;
+    color: #475569;
+    font-size: 12px;
+    font-weight: 750;
+}
+
+.traffic-own-aircraft-status strong {
+    overflow: hidden;
+    color: #0f172a;
+    font-size: 14px;
+    font-weight: 950;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.traffic-own-aircraft-status span {
+    overflow: hidden;
+    margin-top: 2px;
+    color: #64748b;
+    font-size: 11px;
+    font-weight: 750;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.traffic-own-aircraft-status.traffic-own-aircraft-active {
+    border-color: #f59e0b;
+    background: #fffbeb;
+}
+
+.traffic-own-aircraft-select-button {
+    border-color: #d97706;
+    background: #fffbeb;
+    color: #92400e;
+}
+
+.traffic-popup-own-button {
+    width: 100%;
+    min-height: 38px;
+    margin-top: 8px;
+    border: 1px solid #d97706;
+    border-radius: 10px;
+    padding: 6px 10px;
+    background: #fffbeb;
+    color: #92400e;
+    font-size: 13px;
+    font-weight: 900;
+    cursor: pointer;
+}
+
+@media (max-width: 560px) {
+    .traffic-own-aircraft-row {
+        grid-template-columns: 1fr;
+    }
+
+    #traffic-own-aircraft-reset {
+        width: 100%;
+    }
+}
+
+
+/* v14.49 — les cartouches M utilisent le style des routes départementales. */
+
+
+/* ========================================================================== 
+   v14.55 — recherche OACI et destination aéroport temporaire
+   ========================================================================== */
+
+#results-list li.search-result-airport {
+    display: flex !important;
+    align-items: center;
+    gap: 10px;
+    border-left: 5px solid #005a9c;
+    background: linear-gradient(90deg, #eaf6ff 0%, #ffffff 72%);
+    color: #17324d;
+    font-weight: 800;
+}
+
+#results-list li.search-result-airport::before {
+    content: '✈';
+    flex: 0 0 auto;
+    color: #005a9c;
+    font-size: 18px;
+}
+
+.search-result-airport-oaci {
+    flex: 0 0 auto;
+    min-width: 50px;
+    color: #005a9c;
+    font-size: 17px;
+    font-weight: 950;
+    letter-spacing: .06em;
+}
+
+.search-result-airport-name {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 750;
+}
+
+#commune-info-display.airport-destination-active {
+    border-color: rgba(0, 90, 156, .42) !important;
+    background: linear-gradient(180deg, #ffffff 0%, #edf7ff 100%) !important;
+}
+
+#commune-info-display.airport-destination-active > .airport-destination-name {
+    flex: 0 0 auto !important;
+    min-width: auto !important;
+    color: #005a9c !important;
+    font-weight: 950 !important;
+    letter-spacing: .06em;
+    overflow: visible !important;
+    text-overflow: clip !important;
+}
+
+#commune-info-display.airport-destination-active .gps-feu-route-info {
+    background: #e6f3ff !important;
+    border-color: #9bc9ec !important;
+    color: #004f89 !important;
+}
+
+/* ==========================================================================
+   v14.55 — croix aéroport tactile et bandeau haut sans feu
+   ========================================================================== */
+
+#clear-airport-destination-btn {
+    -webkit-appearance: none !important;
+    appearance: none !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    min-width: 42px !important;
+    min-height: 42px !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    background: transparent !important;
+    font-family: inherit !important;
+    line-height: 1 !important;
+    touch-action: manipulation !important;
+    -webkit-user-select: none !important;
+    user-select: none !important;
+}
+
+#clear-airport-destination-btn:active {
+    background: rgba(0, 90, 156, .12) !important;
+    color: #003d6b !important;
+}
+
+/* En l'absence de feu, le bandeau aéroport prend exactement la rangée haute
+   normalement occupée par les BINGO. */
+#commune-info-display.airport-destination-active.airport-destination-no-fire {
+    top: calc(var(--safe-area-top) + 4px) !important;
+    min-height: 56px !important;
+    height: auto !important;
+    padding: 8px 14px 8px 22px !important;
+    border-radius: 18px !important;
+}
+
+@media (min-width: 761px) and (max-width: 1180px) {
+    #commune-info-display.airport-destination-active.airport-destination-no-fire {
+        top: calc(var(--safe-area-top) + 4px) !important;
+        min-height: 54px !important;
+        padding: 7px 12px 7px 18px !important;
+    }
+}
+
+@media (max-width: 760px) {
+    #commune-info-display.airport-destination-active.airport-destination-no-fire {
+        top: calc(var(--safe-area-top) + 4px) !important;
+        left: 8px !important;
+        right: 74px !important;
+        min-height: 36px !important;
+        height: 36px !important;
+        padding: 0 5px 0 10px !important;
+        border-radius: 10px !important;
+    }
+
+    #clear-airport-destination-btn {
+        min-width: 34px !important;
+        min-height: 34px !important;
+    }
+}
+
+/* ========================================================================== 
+   v14.55 — Go To, suivi détecté vert et commandes SafeSky dupliquées
+   ========================================================================== */
+
+.airport-popup .popup-goto-buttons {
+    display: flex;
+    margin-top: 8px;
+}
+
+.airport-popup .goto-btn {
+    width: 100%;
+    min-height: 42px;
+    border: 1px solid #075985 !important;
+    border-radius: 8px !important;
+    background: #0284c7 !important;
+    color: #ffffff !important;
+    font-size: 15px;
+    font-weight: 950;
+    touch-action: manipulation;
+}
+
+.airport-popup .goto-btn:active {
+    background: #0369a1 !important;
+}
+
+.traffic-tracked-row.traffic-tracked-detected {
+    border-color: #16a34a !important;
+    background: #dcfce7 !important;
+    box-shadow: inset 5px 0 0 #16a34a;
+}
+
+.traffic-tracked-row.traffic-tracked-detected .traffic-tracked-label strong {
+    color: #14532d;
+}
+
+.traffic-tracked-row.traffic-tracked-detected .traffic-tracked-label > span {
+    color: #166534;
+}
+
+.traffic-tracked-live-state {
+    margin-top: 2px;
+    color: #166534 !important;
+    font-size: 11px !important;
+    font-weight: 950 !important;
+}
+
+.traffic-settings-actions-duplicate {
+    margin-top: 10px;
+    margin-bottom: 14px;
+    padding: 10px 0 2px;
+    border-top: 1px solid #dbe3ec;
+}
+
+@media (max-width: 760px) {
+    .traffic-settings-actions-duplicate {
+        margin-bottom: 12px;
+    }
+}
+
+/* ========================================================================== 
+   v14.55 — clic sur trafic suivi et affichage forcé individuel
+   ========================================================================== */
+
+.traffic-tracked-row.traffic-tracked-detected {
+    cursor: pointer;
+    touch-action: manipulation;
+    -webkit-tap-highlight-color: rgba(22, 163, 74, .18);
+}
+
+.traffic-tracked-row.traffic-tracked-detected:active,
+.traffic-tracked-row.traffic-tracked-detected.traffic-tracked-opening {
+    background: #bbf7d0 !important;
+    transform: scale(.995);
+}
+
+.traffic-tracked-row.traffic-tracked-detected:focus-visible {
+    outline: 3px solid rgba(22, 163, 74, .35);
+    outline-offset: 2px;
+}
+
+/* ========================================================================== 
+   v14.55 — ajout manuel d'un indicatif à la liste suivie
+   ========================================================================== */
+
+.traffic-tool-button-add {
+    border-color: #475569;
+    background: #f1f5f9;
+    color: #0f172a;
+}
+
+.traffic-tool-button-add:active {
+    background: #dbe3ec;
+}
+
+@media (max-width: 760px) {
+    .traffic-search-row {
+        grid-template-columns: minmax(0, 1fr) auto auto;
+        gap: 5px;
+    }
+
+    .traffic-search-row .traffic-tool-button {
+        padding-left: 7px;
+        padding-right: 7px;
+        font-size: 12px;
+    }
+}
+
+/* ========================================================================== 
+   v14.55 — indicatifs en attente et tri alphabétique
+   ========================================================================== */
+
+.traffic-tracked-row:not(.traffic-tracked-detected)
+.traffic-tracked-label span {
+    overflow-wrap: anywhere;
+}
+
+
+
+/* ========================================================================== 
+   v14.56 — défilement tactile de la liste suivie
+   ========================================================================== */
+
+.traffic-settings-card,
+.traffic-tracked-list {
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-y pinch-zoom;
+}
+
+.traffic-tracked-row.traffic-tracked-detected {
+    touch-action: pan-y !important;
+}
+
+/* Ne pas appliquer d'effet d'appui pendant un geste de défilement. */
+.traffic-tracked-row.traffic-tracked-detected:active {
+    transform: none;
+}
+
+.traffic-tracked-row.traffic-tracked-detected.traffic-tracked-opening {
+    background: #bbf7d0 !important;
+    transform: scale(.995);
+}
+
+
+/* =========================================================================
+   v14.57 — liste suivie sans plafond et fermeture de la fiche trafic
+   Aucun changement visuel : les comportements sont gérés en JavaScript.
+   ========================================================================= */
+
+
+/* ==========================================================================
+   v14.76 — pistes cartographiques et étiquettes jaunes conservées
+   ========================================================================== */
+
+/*
+ * Les pistes sont rendues par le Canvas Leaflet dédié `npfRunwaysPane`.
+ * Aucun style DOM supplémentaire n'est nécessaire pour cette couche.
+ * Seuls les aéronefs présents dans la liste suivie reçoivent ce fond jaune.
+ * La bordure continue d'indiquer l'écart d'altitude relatif.
+ */
+.traffic-aircraft-symbol-wrap.traffic-aircraft-tracked
+.traffic-aircraft-altitude-label {
+    background: #ffeb3b !important;
+    color: #111827 !important;
+    box-shadow:
+        0 1px 3px rgba(15, 23, 42, .38),
+        0 0 0 1px rgba(255, 255, 255, .78) !important;
+}
+
+
+/* ==========================================================================
+   v14.79 — vecteur vitesse segmenté par tranches de 50 kt
+   ========================================================================== */
+/* La géométrie et le nombre exact de traits sont calculés dans script.js. */
