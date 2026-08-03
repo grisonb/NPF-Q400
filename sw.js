@@ -1,17 +1,30 @@
-const SW_VERSION = 'sw-v2026-56-sans-3d';
+const SW_VERSION = 'sw-v2026-58_permanent';
+const APP_VERSION = 'v2026.58';
 
-const DB_NAME = 'OfflineTilesDB_v12_21';
+const DB_NAME = 'OfflineTilesDB_v13_70_clean';
+const LEGACY_TILE_DB_NAME = DB_NAME;
 const DB_VERSION = 3;
 
 const OFFLINE_TILES_ENABLED_KEY = 'offlineTilesEnabled';
 const OFFLINE_ONLINE_FALLBACK_KEY = 'offlineOnlineFallback';
 const OFFLINE_ACTIVE_PACKS_KEY = 'offlineActivePacks';
+const OFFLINE_ACTIVE_PACK_DATABASES_KEY = 'offlineActivePackDatabases';
+const OFFLINE_ACTIVE_PACK_ALIASES_KEY = 'offlineActivePackAliases';
+const OFFLINE_MAP_DATABASE_PREFIX = 'OfflineMap_';
 
 const APP_SHELL_CACHE = `npf-q400-app-shell-${SW_VERSION}`;
+const APP_DATA_CACHE = 'npf-q400-app-data-v1';
+const APP_SHELL_CACHE_PREFIX = 'npf-q400-app-shell-';
 const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
 const HIGH_VOLTAGE_LINES_GEOJSON_URL = './lignes_ht_rte_simplifiees.geojson';
-const APP_SHELL_URLS = [
-    './',
+
+/*
+ * v14.64 — app-shell minimal et atomique.
+ * Seules les ressources indispensables à l'ouverture de l'interface bloquent
+ * l'installation. Les bases volumineuses et ressources métier sont mises en
+ * cache séparément, à la demande, et ne peuvent plus faire échouer le SW.
+ */
+const CORE_APP_SHELL_URLS = [
     './index.html',
     './style.css',
     './script.js',
@@ -19,34 +32,28 @@ const APP_SHELL_URLS = [
     './leaflet.css',
     './leaflet.min.js',
     './suncalc.js',
-    './jszip.min.js',
-    './communes.json',
-    './communes_aliases.json',
-    HIGH_VOLTAGE_LINES_GEOJSON_URL,
-    DEPARTMENTS_GEOJSON_URL,
-    './icons/icon-192x192.png',
-    './icons/icon-512x512.png'
-,
-    './icons/apple-touch-icon.png',
-    './icons/maskable-icon-512x512.png',
-    './icons/bloc-fuel-shortcut-icon.png'    , './icons/calculator-fms-icon.png'
-    , './icons/search-commune-icon.png'
-    , './icons/center-gps-icon.png'
+    './jszip.min.js'
 ];
 
-const CORE_APP_SHELL_URLS = [
-    './',
-    './index.html',
-    './style.css',
-    './script.js',
-    './manifest.json',
-    './leaflet.css',
-    './leaflet.min.js',
-    './suncalc.js',
-    './jszip.min.js',
+const APP_DATA_URLS = [
     './communes.json',
-    './communes_aliases.json'
+    './communes_aliases.json',
+    './data/localites/localites-france-v14.56.zip',
+    HIGH_VOLTAGE_LINES_GEOJSON_URL,
+    DEPARTMENTS_GEOJSON_URL,
+    './icons/safesky-traffic-monochrome.png',
+    './icons/icon-192x192.png',
+    './icons/icon-512x512.png',
+    './icons/apple-touch-icon.png',
+    './icons/maskable-icon-512x512.png',
+    './icons/bloc-fuel-shortcut-icon.png',
+    './icons/calculator-fms-icon.png',
+    './icons/search-commune-icon.png',
+    './icons/center-gps-icon.png'
 ];
+
+const APP_SHELL_URLS = [...CORE_APP_SHELL_URLS, ...APP_DATA_URLS];
+
 
 
 /*
@@ -60,49 +67,123 @@ const CORE_APP_SHELL_URLS = [
 let offlineTilesEnabled = false;
 let offlineOnlineFallback = false;
 let activeOfflinePacks = [];
+let activeOfflinePackDatabases = [];
+let activeOfflinePackAliases = [];
+let offlineConfigurationMessageAt = 0;
 
 let dbPromise = null;
+const tileDbPromises = new Map();
 let offlineSettingsLoadedAt = 0;
 
 const SETTINGS_REFRESH_INTERVAL_MS = 5000;
+const OFFLINE_MESSAGE_AUTHORITY_MS = 120000;
 const MEMORY_TILE_CACHE_MAX = 160;
 const memoryTileCache = new Map();
 
+const VERSION_SENSITIVE_CORE_FILES = new Set([
+    'index.html',
+    'script.js',
+    'manifest.json'
+]);
+
+function getAppShellFilename(url) {
+    try {
+        return new URL(url, self.location.href).pathname.split('/').pop() || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildVersionedAppShellUrl(url) {
+    const parsed = new URL(url, self.location.href);
+    parsed.searchParams.set('appv', APP_VERSION);
+    parsed.searchParams.set('swinstall', SW_VERSION);
+    return parsed.toString();
+}
+
+async function fetchForAppShell(url, timeoutMs = 12000) {
+    const request = new Request(buildVersionedAppShellUrl(url), {
+        cache: 'reload',
+        mode: url === DEPARTMENTS_GEOJSON_URL ? 'cors' : 'same-origin'
+    });
+    return await swFetchWithTimeout(request, {}, timeoutMs);
+}
+
+async function validateVersionSensitiveCoreResponse(url, response) {
+    const filename = getAppShellFilename(url);
+    if (!VERSION_SENSITIVE_CORE_FILES.has(filename)) return true;
+    if (!response || !response.ok) return false;
+
+    try {
+        const text = await response.clone().text();
+        if (filename === 'index.html') {
+            return text.includes(`const APP_VERSION = '${APP_VERSION}'`)
+                && text.includes(`script.js?appv=${APP_VERSION}`)
+                && text.includes(`style.css?appv=${APP_VERSION}`);
+        }
+        if (filename === 'script.js') {
+            return text.includes(`const NPF_SCRIPT_BUILD_VERSION = '${APP_VERSION}'`);
+        }
+        if (filename === 'manifest.json') {
+            const manifest = JSON.parse(text);
+            return String(manifest.start_url || '').includes(`appv=${APP_VERSION}`);
+        }
+    } catch (_) {
+        return false;
+    }
+    return false;
+}
+
+async function copyExistingCachedAsset(url, targetCache) {
+    try {
+        const filename = getAppShellFilename(url);
+        if (VERSION_SENSITIVE_CORE_FILES.has(filename)) return false;
+        const existing = await caches.match(url, { ignoreSearch: true });
+        if (!existing) return false;
+        await targetCache.put(url, existing.clone());
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
 self.addEventListener('install', event => {
     event.waitUntil((async () => {
+        await caches.delete(APP_SHELL_CACHE).catch(() => false);
         const cache = await caches.open(APP_SHELL_CACHE);
         const failedCoreUrls = [];
 
-        await Promise.all(APP_SHELL_URLS.map(async (url) => {
+        for (const url of CORE_APP_SHELL_URLS) {
+            let stored = false;
             try {
-                const request = new Request(url, { cache: 'reload', mode: url === DEPARTMENTS_GEOJSON_URL ? 'cors' : 'same-origin' });
-                const response = await fetch(request);
-
-                /*
-                 * v12.38 :
-                 * - les fichiers cœur doivent obligatoirement être cachés ;
-                 * - les ressources optionnelles peuvent échouer sans casser l'installation ;
-                 * - cela évite d'activer un nouveau SW incomplet qui casserait le lancement hors ligne.
-                 */
-                if (response && (response.ok || response.type === 'opaque')) {
+                const response = await fetchForAppShell(url, 15000);
+                const valid = response && response.ok
+                    && await validateVersionSensitiveCoreResponse(url, response);
+                if (valid) {
                     await cache.put(url, response.clone());
-                    return;
+                    stored = true;
                 }
+            } catch (_) {}
 
-                if (CORE_APP_SHELL_URLS.includes(url)) {
-                    failedCoreUrls.push(url);
-                }
-            } catch (error) {
-                console.warn('[SW] Cache app shell ignoré pour', url, error);
-                if (CORE_APP_SHELL_URLS.includes(url)) {
-                    failedCoreUrls.push(url);
-                }
-            }
-        }));
+            if (!stored) stored = await copyExistingCachedAsset(url, cache);
+            if (!stored) failedCoreUrls.push(url);
+        }
 
         if (failedCoreUrls.length) {
-            throw new Error(`[SW] Installation refusée, fichiers cœur absents: ${failedCoreUrls.join(', ')}`);
+            await caches.delete(APP_SHELL_CACHE).catch(() => false);
+            throw new Error(
+                `[SW ${APP_VERSION}] Installation atomique refusée, app-shell `
+                + `incomplet ou incohérent: ${failedCoreUrls.join(', ')}`
+            );
         }
+
+        try {
+            const dataCache = await caches.open(APP_DATA_CACHE);
+            await Promise.allSettled(APP_DATA_URLS.map(async url => {
+                const existing = await caches.match(url, { ignoreSearch: true });
+                if (existing) await dataCache.put(url, existing.clone());
+            }));
+        } catch (_) {}
 
         await self.skipWaiting();
     })());
@@ -111,36 +192,35 @@ self.addEventListener('install', event => {
 self.addEventListener('activate', event => {
     event.waitUntil((async () => {
         const cacheNames = await caches.keys();
-        await Promise.all(
-            cacheNames
-                .filter(name => name.startsWith('npf-q400-app-shell-') && name !== APP_SHELL_CACHE)
-                .map(name => caches.delete(name))
+        const previousShells = cacheNames.filter(
+            name => name.startsWith(APP_SHELL_CACHE_PREFIX)
+                && name !== APP_SHELL_CACHE
         );
 
-        await refreshOfflineSettingsFromDB({ force: true });
+        /*
+         * Conserver le shell précédent comme secours. Les shells plus anciens
+         * sont supprimés ; le cache stable des données n'est jamais touché.
+         */
+        const shellsToDelete = previousShells.slice(0, Math.max(0, previousShells.length - 1));
+        await Promise.all(shellsToDelete.map(name => caches.delete(name)));
+
+        /*
+         * L'ouverture de la grande base IndexedDB ne doit jamais retenir le
+         * service worker dans l'état « activating ». Safari peut conserver une
+         * transaction de cartes ouverte plusieurs secondes après fermeture.
+         */
+        await Promise.race([
+            refreshOfflineSettingsFromDB({ force: true }).catch(() => null),
+            swDelay(1500, null)
+        ]);
         await self.clients.claim();
 
         /*
-         * v12.63 — transition PWA plus propre conservée.
-         * Après activation d'un nouveau service worker, on force une navigation
-         * des fenêtres ouvertes vers la même URL avec un paramètre de rafraîchissement.
-         * Objectif : éviter une page servie par l'ancien app-shell avec des scripts
-         * ou styles d'une autre version. Les bases IndexedDB des tuiles offline ne
-         * sont pas supprimées.
+         * v14.65 — aucune navigation forcée depuis le service worker.
+         * clients.claim() provoque controllerchange dans la page, qui effectue
+         * au maximum un rechargement protégé par session. La double navigation
+         * npfupdate de la v14.64 pouvait réarmer indéfiniment l'alerte de MAJ.
          */
-        try {
-            const windowClients = await self.clients.matchAll({ type: 'window', includeUncontrolled: true });
-            await Promise.all(windowClients.map(async (client) => {
-                try {
-                    if (!client || typeof client.navigate !== 'function') return;
-                    const url = new URL(client.url);
-                    if (url.origin !== self.location.origin) return;
-                    if (url.searchParams.get('swrefresh') === SW_VERSION) return;
-                    url.searchParams.set('swrefresh', SW_VERSION);
-                    await client.navigate(url.toString());
-                } catch (_) {}
-            }));
-        } catch (_) {}
     })());
 });
 
@@ -162,10 +242,43 @@ async function closeOfflineDBForHeavyWrite() {
     } catch (_) {}
 
     dbPromise = null;
+
+    try {
+        for (const promise of tileDbPromises.values()) {
+            const tileDb = await promise.catch(() => null);
+            if (tileDb && typeof tileDb.close === 'function') tileDb.close();
+        }
+    } catch (_) {}
+    tileDbPromises.clear();
 }
+
 
 self.addEventListener('message', event => {
     const data = event.data || {};
+
+    if (data.type === 'VERIFY_APP_SHELL') {
+        const verify = async () => {
+            const missing = [];
+            const currentShellCache = await caches.open(APP_SHELL_CACHE);
+            for (const url of CORE_APP_SHELL_URLS) {
+                const response = await currentShellCache.match(url, { ignoreSearch: true });
+                if (!response) missing.push(url);
+            }
+            try {
+                if (event.ports && event.ports[0]) {
+                    event.ports[0].postMessage({
+                        type: 'APP_SHELL_STATUS',
+                        ok: missing.length === 0,
+                        version: APP_VERSION,
+                        missing
+                    });
+                }
+            } catch (_) {}
+        };
+        if (event.waitUntil) event.waitUntil(verify());
+        else verify();
+        return;
+    }
 
     if (data.type === 'SKIP_WAITING') {
         self.skipWaiting();
@@ -174,12 +287,30 @@ self.addEventListener('message', event => {
 
     if (data.type === 'OFFLINE_IMPORT_START' || data.type === 'OFFLINE_MASS_DELETE_START' || data.type === 'OFFLINE_FACTORY_RESET') {
         activeOfflinePacks = [];
+        activeOfflinePackDatabases = [];
+        activeOfflinePackAliases = [];
         offlineTilesEnabled = false;
         offlineSettingsLoadedAt = Date.now();
+
+        const acknowledgeHeavyWriteReady = async () => {
+            /*
+             * v13.72 — import ZIP iPad : accusé de réception réel.
+             * La page attend cette réponse avant de commencer à écrire dans IndexedDB.
+             * Cela évite que le service worker garde encore une connexion/lecture active
+             * au moment du premier lot d'écriture, blocage constaté vers 171/22387.
+             */
+            await closeOfflineDBForHeavyWrite();
+            try {
+                if (event.ports && event.ports[0]) {
+                    event.ports[0].postMessage({ type: 'OFFLINE_IMPORT_READY' });
+                }
+            } catch (_) {}
+        };
+
         if (event.waitUntil) {
-            event.waitUntil(closeOfflineDBForHeavyWrite());
+            event.waitUntil(acknowledgeHeavyWriteReady());
         } else {
-            closeOfflineDBForHeavyWrite();
+            acknowledgeHeavyWriteReady();
         }
         return;
     }
@@ -197,9 +328,31 @@ self.addEventListener('message', event => {
     }
 
     if (data.type === 'OFFLINE_ACTIVE_PACKS_CHANGED') {
-        activeOfflinePacks = Array.isArray(data.value) ? data.value.filter(Boolean) : [];
+        activeOfflinePacks = Array.isArray(data.value)
+            ? data.value.filter(Boolean)
+            : [];
+        activeOfflinePackDatabases =
+            Array.isArray(data.dbNames)
+                ? data.dbNames.filter(Boolean)
+                : [];
+        activeOfflinePackAliases =
+            Array.isArray(data.aliases)
+                ? data.aliases.filter(Boolean)
+                : [];
+
         offlineSettingsLoadedAt = Date.now();
+        offlineConfigurationMessageAt = Date.now();
         memoryTileCache.clear();
+
+        try {
+            if (event.ports && event.ports[0]) {
+                event.ports[0].postMessage({
+                    type:
+                        'OFFLINE_ACTIVE_PACKS_READY'
+                });
+            }
+        } catch (_) {}
+        return;
     }
 });
 
@@ -241,8 +394,8 @@ self.addEventListener('fetch', event => {
         return;
     }
 
-    if (request.url === DEPARTMENTS_GEOJSON_URL) {
-        event.respondWith(handleCachedExternalRequest(request));
+    if (isAppDataRequest(request)) {
+        event.respondWith(handleAppDataRequest(request));
         return;
     }
 
@@ -269,15 +422,43 @@ function isTrafficApiRequest(url) {
     }
 }
 
+function getRequestFilename(request) {
+    try {
+        const parsed = new URL(request.url);
+        return parsed.pathname.split('/').pop() || '';
+    } catch (_) {
+        return '';
+    }
+}
+
+function isAppDataRequest(request) {
+    try {
+        const parsed = new URL(request.url);
+        if (
+            parsed.origin !== self.location.origin
+            && request.url !== DEPARTMENTS_GEOJSON_URL
+        ) return false;
+
+        const filename = parsed.pathname.split('/').pop() || '';
+        return [
+            'communes.json',
+            'communes_aliases.json',
+            'localites-france-v14.56.zip',
+            'lignes_ht_rte_simplifiees.geojson'
+        ].includes(filename)
+            || parsed.pathname.includes('/icons/')
+            || request.url === DEPARTMENTS_GEOJSON_URL;
+    } catch (_) {
+        return false;
+    }
+}
+
 function isAppShellRequest(request) {
     try {
         const parsed = new URL(request.url);
         if (parsed.origin !== self.location.origin) return false;
         if (request.mode === 'navigate') return true;
-
-        const filename = parsed.pathname.split('/').pop() || '';
         return [
-            '',
             'index.html',
             'style.css',
             'script.js',
@@ -285,11 +466,8 @@ function isAppShellRequest(request) {
             'leaflet.css',
             'leaflet.min.js',
             'suncalc.js',
-            'jszip.min.js',
-            'communes.json',
-            'communes_aliases.json',
-            'lignes_ht_rte_simplifiees.geojson'
-        ].includes(filename) || parsed.pathname.includes('/icons/');
+            'jszip.min.js'
+        ].includes(getRequestFilename(request));
     } catch (_) {
         return false;
     }
@@ -298,98 +476,108 @@ function isAppShellRequest(request) {
 function isCriticalAppShellRequest(request) {
     try {
         if (request.mode === 'navigate') return true;
-        const parsed = new URL(request.url);
-        const filename = parsed.pathname.split('/').pop() || '';
-        return ['index.html', 'script.js', 'style.css', 'manifest.json'].includes(filename);
+        return [
+            'index.html',
+            'script.js',
+            'style.css',
+            'manifest.json',
+            'leaflet.css',
+            'leaflet.min.js',
+            'suncalc.js',
+            'jszip.min.js'
+        ].includes(getRequestFilename(request));
     } catch (_) {
         return false;
     }
 }
 
 async function handleAppShellRequest(request) {
-    const cached = await caches.match(request, { ignoreSearch: true });
     const cache = await caches.open(APP_SHELL_CACHE);
+    const isNavigation = request.mode === 'navigate';
+    const cacheKey = isNavigation ? './index.html' : request;
+    /*
+     * v14.70 — ne jamais rechercher l'app-shell dans tous les caches.
+     * caches.match() pouvait renvoyer le cache v14.68 conservé en secours avant
+     * le cache courant v14.70. La version active lit exclusivement son cache.
+     */
+    const cached = await cache.match(cacheKey, { ignoreSearch: true })
+        || await cache.match(request, { ignoreSearch: true });
+    const requestUrl = new URL(request.url);
+    const forcedTransition = isNavigation
+        && (requestUrl.searchParams.has('swrefresh')
+            || requestUrl.searchParams.has('ts'));
+
+    const refreshFromNetwork = async (timeoutMs = 4500) => {
+        try {
+            const freshRequest = new Request(request, { cache: 'reload' });
+            const fresh = await swFetchWithTimeout(freshRequest, {}, timeoutMs);
+            if (fresh && fresh.ok) {
+                const valid = await validateVersionSensitiveCoreResponse(
+                    request.url,
+                    fresh
+                );
+                /*
+                 * Une réponse réseau ancienne ne doit jamais écraser le cache
+                 * atomique courant. Ceci protège aussi contre la propagation
+                 * différée de GitHub Pages après activation de la v14.70.
+                 */
+                if (!valid) return null;
+                await cache.put(cacheKey, fresh.clone());
+                return fresh;
+            }
+        } catch (_) {}
+        return null;
+    };
 
     /*
-     * v12.55 — fichiers critiques en réseau d'abord.
-     * Ancien comportement : index/script/style servis d'abord depuis l'ancien
-     * cache, ce qui pouvait bloquer une transition pérenne et laisser la carte
-     * blanche avec boutons inactifs. Nouveau comportement : si le réseau est
-     * disponible, index.html, script.js, style.css et manifest.json viennent du
-     * serveur ; le cache reste le secours hors ligne.
+     * Démarrage ordinaire : cache d'abord. Le réseau ne doit jamais retarder
+     * l'ouverture hors ligne. Une mise à jour explicite peut attendre le réseau,
+     * mais conserve toujours le shell mis en cache en secours.
      */
-    if (isCriticalAppShellRequest(request)) {
-        const cacheKey = request.mode === 'navigate' ? './index.html' : request;
-        const fallbackCached = cached || (request.mode === 'navigate' ? await caches.match('./index.html', { ignoreSearch: true }) : null);
-
-        const freshPromise = (async () => {
-            try {
-                const freshRequest = new Request(request, { cache: 'reload' });
-                const fresh = await swFetchWithTimeout(freshRequest, {}, 2200);
-                if (fresh && fresh.ok) {
-                    await cache.put(cacheKey, fresh.clone());
-                    return fresh;
-                }
-            } catch (_) {}
-            return null;
-        })();
-
-        /*
-         * v13.20 — réseau dégradé / perte 4G : ne pas laisser l'écran blanc
-         * pendant que Safari attend un réseau qui répond mal. Si un app-shell
-         * existe en cache, on le sert très vite et la mise à jour réseau continue
-         * en arrière-plan. En bon réseau, la réponse fraîche arrive avant le délai.
-         */
-        if (fallbackCached) {
-            const freshOrTimeout = await Promise.race([freshPromise, swDelay(900, null)]);
-            return freshOrTimeout || fallbackCached;
-        }
-
-        return await freshPromise || new Response('', { status: 504, statusText: 'Offline critical asset unavailable' });
-    }
-
-    if (cached) {
-        fetch(request).then(async (fresh) => {
-            if (fresh && fresh.ok) {
-                await cache.put(request, fresh.clone());
-            }
-        }).catch(() => {});
+    if (cached && !forcedTransition) {
+        refreshFromNetwork(4500).catch(() => {});
         return cached;
     }
 
-    try {
-        const fresh = await fetch(request);
-        if (fresh && fresh.ok) {
-            await cache.put(request, fresh.clone());
-        }
-        return fresh;
-    } catch (_) {
-        return cached || new Response('', { status: 504, statusText: 'Offline asset unavailable' });
+    const fresh = await refreshFromNetwork(forcedTransition ? 6000 : 4500);
+    if (fresh) return fresh;
+    if (cached) return cached;
+
+    if (isNavigation) {
+        const fallbackIndex = await caches.match('./index.html', { ignoreSearch: true });
+        if (fallbackIndex) return fallbackIndex;
     }
+
+    return new Response('', {
+        status: 504,
+        statusText: 'Offline app shell unavailable'
+    });
 }
 
-async function handleCachedExternalRequest(request) {
+async function handleAppDataRequest(request) {
+    const dataCache = await caches.open(APP_DATA_CACHE);
     const cached = await caches.match(request, { ignoreSearch: true });
 
     if (cached) {
-        fetch(request).then(async (fresh) => {
+        fetch(request).then(async fresh => {
             if (fresh && (fresh.ok || fresh.type === 'opaque')) {
-                const cache = await caches.open(APP_SHELL_CACHE);
-                await cache.put(request, fresh.clone());
+                await dataCache.put(request, fresh.clone());
             }
         }).catch(() => {});
         return cached;
     }
 
     try {
-        const fresh = await fetch(request);
+        const fresh = await swFetchWithTimeout(request, {}, 12000);
         if (fresh && (fresh.ok || fresh.type === 'opaque')) {
-            const cache = await caches.open(APP_SHELL_CACHE);
-            await cache.put(request, fresh.clone());
+            await dataCache.put(request, fresh.clone());
         }
         return fresh;
     } catch (_) {
-        return new Response('', { status: 504, statusText: 'Offline external asset unavailable' });
+        return new Response('', {
+            status: 504,
+            statusText: 'Offline data unavailable'
+        });
     }
 }
 
@@ -437,8 +625,214 @@ function isOpenStreetMapTileRequest(url) {
     }
 }
 
+function sanitizeOfflineDatabaseTokenForSw(value) {
+    const base = String(value || 'Carte')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-zA-Z0-9]+/g, '_')
+        .replace(/^_+|_+$/g, '')
+        .slice(0, 72);
+    return base || 'Carte';
+}
+
+function normalizeOfflinePackNameForSw(packName) {
+    const rawName = String(packName || '')
+        .split(/[\\/]/)
+        .pop()
+        .replace(/\.zip$/i, '')
+        .trim();
+
+    const cleaned = rawName
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+
+    const versionedMatch = cleaned.match(
+        /^(.*?)[\s_-]+v(?:ersion)?[\s_-]*\d+(?:\.\d+)*(?:[\s_-]+(?:part|partie|zip)?[\s_-]*(\d{1,3}))$/i
+    );
+
+    if (!versionedMatch) return cleaned;
+
+    const prefix = versionedMatch[1]
+        .replace(/[\s_-]+$/g, '')
+        .trim();
+    const partNumber = Number.parseInt(
+        versionedMatch[2],
+        10
+    );
+
+    if (
+        !prefix
+        || !Number.isFinite(partNumber)
+    ) {
+        return cleaned;
+    }
+
+    return `${prefix}_${String(partNumber).padStart(
+        Math.max(
+            2,
+            String(versionedMatch[2]).length
+        ),
+        '0'
+    )}`;
+}
+
+function getOfflinePackLegacyGroupNameForSw(packName) {
+    const name = String(packName || '')
+        .replace(/\.zip$/i, '')
+        .trim();
+    const cleaned = name
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+
+    const match = cleaned.match(
+        /^(.+?)(?:[\s_-]*(?:part|partie|zip)?[\s_-]*)(\d{1,3})$/i
+    );
+
+    if (
+        match
+        && match[1].trim().length >= 2
+    ) {
+        return match[1]
+            .replace(/[\s_-]+$/g, '')
+            .trim();
+    }
+
+    return cleaned;
+}
+
+function normalizeOfflineTileHostPrefixForSw(
+    packName,
+    { legacy = false } = {}
+) {
+    const groupName = legacy
+        ? getOfflinePackLegacyGroupNameForSw(
+            packName
+        )
+        : getOfflinePackGroupNameForSw(
+            packName
+        );
+
+    const simplified = String(
+        groupName || packName || ''
+    )
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '');
+
+    if (
+        !simplified
+        || /open\s*street|openstreet|\bosm\b/.test(
+            simplified
+        )
+    ) {
+        return 'a';
+    }
+
+    if (
+        /\bign\b|scan25|scan\s*25|oaci\s*ign/.test(
+            simplified
+        )
+    ) {
+        return 'ign';
+    }
+
+    if (
+        /oaci|carte\s*oaci/.test(simplified)
+    ) {
+        return 'oaci';
+    }
+
+    return (
+        simplified
+            .replace(/[^a-z0-9]+/g, '')
+            .slice(0, 20)
+        || 'pack'
+    );
+}
+
+function getOfflineTileUrlCandidates(tileUrl) {
+    const candidates = [];
+    const addCandidate = value => {
+        const clean = String(value || '').trim();
+        if (clean && !candidates.includes(clean)) {
+            candidates.push(clean);
+        }
+    };
+
+    addCandidate(tileUrl);
+
+    let parsed;
+    try {
+        parsed = new URL(tileUrl);
+    } catch (_) {
+        return candidates;
+    }
+
+    const aliases = [
+        ...(activeOfflinePacks || []),
+        ...(activeOfflinePackAliases || [])
+    ];
+
+    aliases.forEach(alias => {
+        [
+            normalizeOfflineTileHostPrefixForSw(
+                alias
+            ),
+            normalizeOfflineTileHostPrefixForSw(
+                alias,
+                { legacy: true }
+            )
+        ].forEach(prefix => {
+            addCandidate(
+                `${parsed.protocol}//${prefix}.tile.openstreetmap.org${parsed.pathname}${parsed.search}`
+            );
+        });
+    });
+
+    return candidates;
+}
+
+function getOfflineDatabaseCandidatesForSw() {
+    const candidates = [];
+    const addCandidate = value => {
+        const clean = String(value || '').trim();
+        if (clean && !candidates.includes(clean)) {
+            candidates.push(clean);
+        }
+    };
+
+    (activeOfflinePackDatabases || [])
+        .forEach(addCandidate);
+
+    [
+        ...(activeOfflinePacks || []),
+        ...(activeOfflinePackAliases || [])
+    ].forEach(alias => {
+        const canonicalGroup =
+            getOfflinePackGroupNameForSw(alias);
+        const legacyGroup =
+            getOfflinePackLegacyGroupNameForSw(alias);
+
+        addCandidate(
+            `${OFFLINE_MAP_DATABASE_PREFIX}${sanitizeOfflineDatabaseTokenForSw(canonicalGroup)}`
+        );
+        addCandidate(
+            `${OFFLINE_MAP_DATABASE_PREFIX}${sanitizeOfflineDatabaseTokenForSw(legacyGroup)}`
+        );
+    });
+
+    addCandidate(LEGACY_TILE_DB_NAME);
+    return candidates;
+}
+
 async function findOfflineTileResponse(tileUrl) {
-    const cacheKey = `${tileUrl}::${(activeOfflinePacks || []).join('|')}`;
+    const cacheKey = [
+        tileUrl,
+        (activeOfflinePacks || []).join('|'),
+        (activeOfflinePackAliases || []).join('|')
+    ].join('::');
 
     const cached = memoryTileCache.get(cacheKey);
     if (cached) {
@@ -446,27 +840,130 @@ async function findOfflineTileResponse(tileUrl) {
         return cached.clone();
     }
 
+    const tileUrlCandidates =
+        getOfflineTileUrlCandidates(tileUrl);
+    const dbNames =
+        getOfflineDatabaseCandidatesForSw();
+
     try {
-        const db = await openOfflineDB();
-        const record = await findTileRecordInDB(db, tileUrl);
+        for (const dbName of dbNames) {
+            let tileDb;
 
-        if (!record || !record.tile) return null;
-
-        const contentType = record.tile.type || guessTileContentType(tileUrl);
-        const response = new Response(record.tile, {
-            headers: {
-                'Content-Type': contentType,
-                'X-Offline-Tile': 'indexeddb'
+            try {
+                tileDb = (
+                    dbName === LEGACY_TILE_DB_NAME
+                )
+                    ? await openOfflineDB()
+                    : await openOfflineDBByName(
+                        dbName
+                    );
+            } catch (dbOpenError) {
+                console.warn(
+                    '[SW] Base offline ignorée:',
+                    dbName,
+                    dbOpenError
+                );
+                continue;
             }
-        });
 
-        rememberMemoryTile(cacheKey, response.clone());
-        return response;
+            for (
+                const candidateUrl
+                of tileUrlCandidates
+            ) {
+                try {
+                    const record =
+                        await findTileRecordInDB(
+                            tileDb,
+                            candidateUrl
+                        );
+
+                    if (!record?.tile) continue;
+
+                    const contentType =
+                        record.tile.type
+                        || guessTileContentType(
+                            candidateUrl
+                        );
+                    const response = new Response(
+                        record.tile,
+                        {
+                            headers: {
+                                'Content-Type':
+                                    contentType,
+                                'X-Offline-Tile':
+                                    `indexeddb:${dbName}`,
+                                'X-Offline-Tile-Key':
+                                    candidateUrl
+                            }
+                        }
+                    );
+
+                    rememberMemoryTile(
+                        cacheKey,
+                        response.clone()
+                    );
+                    return response;
+                } catch (readError) {
+                    if (
+                        isIndexedDbClosingErrorForSw(
+                            readError
+                        )
+                    ) {
+                        closeOfflineDatabasePromise(
+                            dbName
+                        );
+                    }
+                }
+            }
+        }
+
+        return null;
     } catch (error) {
-        console.warn('[SW] Lecture tuile offline impossible:', error);
+        console.warn(
+            '[SW] Lecture tuile offline impossible:',
+            error
+        );
         return null;
     }
 }
+
+function isIndexedDbClosingErrorForSw(error) {
+    const name = String(error?.name || '')
+        .toLowerCase();
+    const message = String(
+        error?.message || error || ''
+    ).toLowerCase();
+
+    return (
+        name === 'invalidstateerror'
+        || name === 'transactioninactiveerror'
+        || message.includes('connection is closing')
+        || message.includes('connection is closed')
+    );
+}
+
+async function closeOfflineDatabasePromise(dbName) {
+    const safeName = String(
+        dbName || LEGACY_TILE_DB_NAME
+    );
+
+    try {
+        const promise = (
+            safeName === LEGACY_TILE_DB_NAME
+                ? dbPromise
+                : tileDbPromises.get(safeName)
+        );
+        const connection =
+            await promise?.catch?.(() => null);
+        connection?.close?.();
+    } catch (_) {}
+
+    tileDbPromises.delete(safeName);
+    if (safeName === LEGACY_TILE_DB_NAME) {
+        dbPromise = null;
+    }
+}
+
 
 function rememberMemoryTile(key, response) {
     memoryTileCache.set(key, response);
@@ -484,24 +981,57 @@ function touchMemoryTile(key, response) {
 
 function openOfflineDB() {
     if (dbPromise) return dbPromise;
+    dbPromise = openOfflineDBByName(DB_NAME);
+    return dbPromise;
+}
 
-    dbPromise = new Promise((resolve, reject) => {
+function openOfflineDBByName(dbName = DB_NAME) {
+    const safeName = String(dbName || DB_NAME);
+    if (tileDbPromises.has(safeName)) return tileDbPromises.get(safeName);
+
+    const promise = new Promise((resolve, reject) => {
         if (typeof indexedDB === 'undefined') {
             reject(new Error('IndexedDB indisponible dans le service worker'));
             return;
         }
 
-        const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-        request.onsuccess = event => resolve(event.target.result);
-        request.onerror = event => reject(event.target.error || new Error('Erreur ouverture IndexedDB'));
-        request.onblocked = () => reject(new Error('IndexedDB bloquée'));
+        const request = indexedDB.open(safeName, DB_VERSION);
+        request.onupgradeneeded = event => {
+            const dbInstance = event.target.result;
+            if (!dbInstance.objectStoreNames.contains('tiles')) {
+                const store = dbInstance.createObjectStore('tiles', { keyPath: 'url' });
+                store.createIndex('packName', 'packName', { unique: false });
+                store.createIndex('tileUrl', 'tileUrl', { unique: false });
+            } else {
+                const store = event.target.transaction.objectStore('tiles');
+                if (!store.indexNames.contains('packName')) store.createIndex('packName', 'packName', { unique: false });
+                if (!store.indexNames.contains('tileUrl')) store.createIndex('tileUrl', 'tileUrl', { unique: false });
+            }
+            if (!dbInstance.objectStoreNames.contains('settings')) {
+                dbInstance.createObjectStore('settings', { keyPath: 'key' });
+            }
+        };
+        request.onsuccess = event => {
+            const openedDb = event.target.result;
+            try {
+                openedDb.onversionchange = () => {
+                    try { openedDb.close(); } catch (_) {}
+                    tileDbPromises.delete(safeName);
+                    if (safeName === DB_NAME) dbPromise = null;
+                };
+            } catch (_) {}
+            resolve(openedDb);
+        };
+        request.onerror = event => reject(event.target.error || new Error(`Erreur ouverture IndexedDB ${safeName}`));
+        request.onblocked = () => reject(new Error(`IndexedDB bloquée : ${safeName}`));
     }).catch(error => {
-        dbPromise = null;
+        tileDbPromises.delete(safeName);
+        if (safeName === DB_NAME) dbPromise = null;
         throw error;
     });
 
-    return dbPromise;
+    tileDbPromises.set(safeName, promise);
+    return promise;
 }
 
 function findTileRecordInDB(db, tileUrl) {
@@ -548,9 +1078,76 @@ function findTileRecordInDB(db, tileUrl) {
     });
 }
 
+function getOfflinePackGroupNameForSw(packName) {
+    const name =
+        normalizeOfflinePackNameForSw(packName);
+    const cleaned = name
+        .replace(/\s*\(\d+\)\s*$/i, '')
+        .replace(/\s+(copy|copie)\s*$/i, '')
+        .trim();
+
+    const match = cleaned.match(
+        /^(.+?)(?:[\s_-]*(?:part|partie|zip)?[\s_-]*)(\d{1,3})$/i
+    );
+
+    if (
+        match
+        && match[1].trim().length >= 2
+    ) {
+        return match[1]
+            .replace(/[\s_-]+$/g, '')
+            .trim();
+    }
+
+    return cleaned;
+}
+
 function isTileRecordAllowed(record, activeSet) {
-    if (!activeSet || activeSet.size === 0) return true;
-    return activeSet.has(record && record.packName);
+    if (!activeSet || activeSet.size === 0) {
+        return true;
+    }
+
+    const recordPack = record?.packName
+        ? String(record.packName)
+        : '';
+
+    if (activeSet.has(recordPack)) {
+        return true;
+    }
+
+    const recordCanonical =
+        normalizeOfflinePackNameForSw(
+            recordPack
+        );
+    const recordGroup =
+        getOfflinePackGroupNameForSw(
+            recordPack
+        );
+
+    const allowedNames = new Set([
+        ...activeSet,
+        ...(activeOfflinePackAliases || [])
+    ]);
+
+    for (const activePack of allowedNames) {
+        if (
+            normalizeOfflinePackNameForSw(
+                activePack
+            ) === recordCanonical
+        ) {
+            return true;
+        }
+
+        if (
+            getOfflinePackGroupNameForSw(
+                activePack
+            ) === recordGroup
+        ) {
+            return true;
+        }
+    }
+
+    return false;
 }
 
 function getTileUrlFromStoredKey(storedUrl) {
@@ -563,6 +1160,16 @@ function guessTileContentType(tileUrl) {
 
 async function refreshOfflineSettingsFromDB({ force = false } = {}) {
     const now = Date.now();
+
+    if (
+        !force
+        && offlineConfigurationMessageAt > 0
+        && (
+            now - offlineConfigurationMessageAt
+        ) < OFFLINE_MESSAGE_AUTHORITY_MS
+    ) {
+        return;
+    }
 
     if (!force && (now - offlineSettingsLoadedAt) < SETTINGS_REFRESH_INTERVAL_MS) {
         return;
@@ -584,6 +1191,14 @@ async function refreshOfflineSettingsFromDB({ force = false } = {}) {
             activeOfflinePacks = settings[OFFLINE_ACTIVE_PACKS_KEY].filter(Boolean);
         }
 
+        if (Array.isArray(settings[OFFLINE_ACTIVE_PACK_DATABASES_KEY])) {
+            activeOfflinePackDatabases = settings[OFFLINE_ACTIVE_PACK_DATABASES_KEY].filter(Boolean);
+        }
+
+        if (Array.isArray(settings[OFFLINE_ACTIVE_PACK_ALIASES_KEY])) {
+            activeOfflinePackAliases = settings[OFFLINE_ACTIVE_PACK_ALIASES_KEY].filter(Boolean);
+        }
+
         offlineSettingsLoadedAt = now;
     } catch (error) {
         /*
@@ -598,7 +1213,9 @@ function readOfflineSettings(db) {
         const keys = [
             OFFLINE_TILES_ENABLED_KEY,
             OFFLINE_ONLINE_FALLBACK_KEY,
-            OFFLINE_ACTIVE_PACKS_KEY
+            OFFLINE_ACTIVE_PACKS_KEY,
+            OFFLINE_ACTIVE_PACK_DATABASES_KEY,
+            OFFLINE_ACTIVE_PACK_ALIASES_KEY
         ];
 
         const tx = db.transaction('settings', 'readonly');
