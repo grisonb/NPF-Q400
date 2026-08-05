@@ -1,6 +1,8 @@
-/* v2026.58 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
+/* v2026.59 — style conservé depuis v14.83 ; stabilisation offline portée par script.js. */
+/* v14.83 — nettoyage des références techniques et limitation des cartouches routiers. */
+/* v14.81 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
 /* v14.80 — Brive conservé uniquement sous LFSL. */
-/* NPF-Q400  v13.58 — fluidité carte iPad : CSS inchangé depuis v13.54. */
+/* NPF-Q400 v13.58 — fluidité carte iPad : CSS inchangé depuis v13.54. */
  :root {
     --primary-color: #005a9c;
     --secondary-color: #e3001b;
@@ -5923,7 +5925,7 @@ body {
     }
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v12.64 — Popup simulation avion / feu par appui long
    ========================================================================== */
 .simulation-action-popup .leaflet-popup-content-wrapper {
@@ -5974,7 +5976,7 @@ body {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v12.66 — Simulation GPS, bordure rouge, boutons centrés, onglets renforcés
    ========================================================================== */
 body.simulation-mode-active #map::after {
@@ -6043,7 +6045,7 @@ body.simulation-mode-active #map::after {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v12.68 — Onglets calculateur + popup simulation persistante
    ========================================================================== */
 .onglets-navigation {
@@ -6613,7 +6615,7 @@ body {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v12.99 — commune survolée restaurée + trafic ADS-B erreur lisible
    ========================================================================== */
 #nearest-commune-display {
@@ -6686,7 +6688,7 @@ body {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v12.99 — commune survolée visible en permanence + trafic ADS-B fallback
    ========================================================================== */
 #nearest-commune-display {
@@ -6720,7 +6722,7 @@ body {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.00 — HUD commune survolée auto-réparant
    Objectif : ne plus dépendre d'un ancien display:none, d'un parent Leaflet,
    d'un écran de reprise iPad ou d'un ordre CSS antérieur.
@@ -7499,7 +7501,7 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.11 — aperçu export BLOC/FUEL intégré à l'application
    ========================================================================== */
 #bloc-fuel-export-overlay {
@@ -7589,7 +7591,7 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.12 — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
    ========================================================================== */
 .bloc-fuel-export-toolbar .print-primary {
@@ -7788,7 +7790,7 @@ body:not(.app-ready) #nearest-commune-display {
     background: transparent;
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.34 — Suivi GPS, historique et commune survolée longue
    ========================================================================== */
 
@@ -7866,7 +7868,7 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.34 — Bandeau feu : ETA GPS + durée rotation / exports dans historique
    ========================================================================== */
 
@@ -7983,7 +7985,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.41 — Retour v13.34 : bandeau feu sur une ligne / suivi GPS sans refresh
    ========================================================================== */
 
@@ -8051,7 +8053,7 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.41 — Historique exports décalés / ligne Réfracto. retardant
    ========================================================================== */
 
@@ -8549,7 +8551,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.64 — GAAR : X d'effacement dans recherche point + renommage sans déplacement
    ========================================================================== */
 .gaar-point-search-field-wrapper {
@@ -8663,7 +8665,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     font-size: 16px !important;
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.79 — bandeaux carte remontés / hauteur optimisée / icônes épurées
    ========================================================================== */
 
@@ -8762,7 +8764,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     font-size: 15px !important;
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.81 — pélicandromes réellement réduits
    Taille visuelle 16 px ; halo affiné ; zone tactile invisible JS conservée à 40 px.
    ========================================================================== */
@@ -8800,7 +8802,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.83 — BINGO compacts dans Suivi/Déroutement + données rotation en lecture seule
    Les tailles de police sont conservées. Seuls les hauteurs, marges et espacements
    verticaux sont réduits afin d'éviter le défilement sur iPad.
@@ -8871,7 +8873,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.84 — espacements ciblés et harmonisation des fenêtres rotations
    - les fenêtres « nombre de rotations » de Suivi et Dérout/GAAR reprennent
      la mise en page et les espacements verticaux de Prévi. nbr rotations ;
@@ -8926,7 +8928,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.85 — application effective des espacements demandés
    Les sélecteurs reposent maintenant sur des classes explicites et ne sont plus
    limités par la largeur du viewport. Les tailles de police restent inchangées.
@@ -8980,7 +8982,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.86 — interlignes augmentés dans les fenêtres de droite
    - Suivi rotations et Dérout. / GAAR uniquement ;
    - taille de police, calculs, dimensions des contrôles et colonne gauche inchangés ;
@@ -8992,7 +8994,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.88 — RLT départ / Fuel sur feu non modifiable / espacements droits
    ========================================================================== */
 
@@ -9078,7 +9080,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.89 — correction RLT / Suivi rotations / première alerte post-MAJ
    ========================================================================== */
 
@@ -9148,7 +9150,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 /* v13.90 — cellule RLT : placeholder [kg] et effacement direct gérés dans index/script ; mise en page inchangée. */
 
-/* ========================================================================== 
+/* ==========================================================================
    v13.91 — alerte post-MAJ visible / fenêtre FUEL MINI Dérout.-GAAR
    ========================================================================== */
 
@@ -10532,7 +10534,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.49 — calque routier vectoriel offline A / N / D / M
+   v14.49 — calque routier vectoriel offline A / N / D / M / T
    ========================================================================== */
 
 #road-overlay-button.active {
@@ -10664,7 +10666,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     color: #ffffff !important;
 }
 
-.road-overlay-ref-n {
+.road-overlay-ref-n,
+.road-overlay-ref-t {
     background: #d62828 !important;
     color: #ffffff !important;
 }
@@ -11933,7 +11936,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 /* v14.49 — les cartouches M utilisent le style des routes départementales. */
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.55 — recherche OACI et destination aéroport temporaire
    ========================================================================== */
 
@@ -12054,7 +12057,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.55 — Go To, suivi détecté vert et commandes SafeSky dupliquées
    ========================================================================== */
 
@@ -12113,7 +12116,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.55 — clic sur trafic suivi et affichage forcé individuel
    ========================================================================== */
 
@@ -12134,7 +12137,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     outline-offset: 2px;
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.55 — ajout manuel d'un indicatif à la liste suivie
    ========================================================================== */
 
@@ -12161,7 +12164,7 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.55 — indicatifs en attente et tri alphabétique
    ========================================================================== */
 
@@ -12172,7 +12175,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 
-/* ========================================================================== 
+/* ==========================================================================
    v14.56 — défilement tactile de la liste suivie
    ========================================================================== */
 
