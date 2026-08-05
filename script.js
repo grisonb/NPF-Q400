@@ -1,4 +1,4 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.58';
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.59';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
 //  =========================================================================
@@ -179,7 +179,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // =========================================================================
-// v2026.52 — version pérenne issue de v12.95 
+// v2026.52 — version pérenne issue de v12.95
 // Corrige le grand bandeau bas : Safari peut donner une hauteur CSS trop courte
 // avec -webkit-fill-available. On force une variable de hauteur réelle et on
 // redemande à Leaflet de recalculer sa taille.
@@ -569,10 +569,10 @@ let communesByCodeInsee = new Map();
  * reste disponible en mode avion sans charger 20 Mo de JSON en mémoire.
  */
 const NAMED_PLACES_OFFLINE_ARCHIVE_URL =
-    './data/localites/localites-france-v14.56.zip?appv=v2026.58';
+    './data/localites/localites-france-v14.56.zip?appv=v2026.59';
 const NAMED_PLACES_OFFLINE_RESULT_LIMIT = 5;
 const NAMED_PLACES_OFFLINE_SHARD_PREFIX_LENGTH = 3;
-// v2026.58 — la recherche phonétique charge tous les fragments partageant
+// v14.81 — la recherche phonétique charge tous les fragments partageant
 // les deux premières lettres, puis applique Soundex et Levenshtein.
 const NAMED_PLACES_OFFLINE_PHONETIC_PREFIX_LENGTH = 2;
 const NAMED_PLACES_OFFLINE_SHARD_CACHE_MAX = 64;
@@ -616,7 +616,7 @@ let departmentsLayerLoadPromise = null;
 let highVoltageLinesLayer = null;
 let highVoltageLinesRenderer = null;
 
-/* v14.49 — calque routier vectoriel offline A / N / D / M. */
+/* v14.49 — calque routier vectoriel offline A / N / D / M / T. */
 let roadOverlayLayer = null;
 let roadOverlayCasingLayer = null;
 let roadOverlayLineLayer = null;
@@ -627,6 +627,22 @@ let roadOverlayRefreshTimer = null;
 let roadOverlayRefreshToken = 0;
 let roadOverlayLoadedZoomTier = -1;
 const loadedRoadOverlayParts = new Map();
+
+/*
+ * v2026.59 — état de rafraîchissement du calque routier.
+ * En suivi GPS, Leaflet déclenche un moveend à chaque recentrage. Les routes
+ * déjà chargées se déplacent naturellement avec la carte : il est donc inutile
+ * de reparcourir les GeoJSON, de réappliquer tous les styles et de reconstruire
+ * tous les cartouches à chaque position reçue.
+ */
+let roadOverlayLastVisiblePartSignature = '';
+let roadOverlayLastStyleBand = -1;
+let roadOverlayLastLabelCenter = null;
+let roadOverlayLastLabelZoom = -1;
+let roadOverlayLastLabelRefreshAt = 0;
+const ROAD_OVERLAY_LABEL_REFRESH_MAX_INTERVAL_MS = 60000;
+const ROAD_OVERLAY_LABEL_REFRESH_VIEWPORT_RATIO = 0.24;
+
 let areDepartmentsVisible = false;
 let hasLoadedDepartments = false;
 let communesLayerGroup = null;
@@ -4048,7 +4064,7 @@ async function loadNamedPlacesOfflineDatabase({
     };
 
     /*
-     * v2026.58 — un fragment unique sur trois lettres empêchait la recherche
+     * v14.81 — un fragment unique sur trois lettres empêchait la recherche
      * phonétique lorsqu'une faute modifiait la troisième lettre :
      * « Abartelo » chargeait `aba`, jamais `abb` ; « Baye Argent » chargeait
      * `bay`, jamais `bai`. Tous les fragments partageant les deux premières
@@ -5546,6 +5562,20 @@ let directOfflineTileHitCount = 0;
 let directOfflineTileMissCount = 0;
 
 /*
+ * v2026.59 — récupération automatique après panne temporaire d'IndexedDB.
+ * Safari peut invalider une connexion pendant un usage long ou sous pression
+ * mémoire. Les erreurs techniques ne doivent plus être assimilées à des tuiles
+ * réellement absentes.
+ */
+const DIRECT_OFFLINE_READ_ERROR_THRESHOLD = 4;
+const DIRECT_OFFLINE_RECOVERY_COOLDOWN_MS = 12000;
+let directOfflineConsecutiveReadErrors = 0;
+let directOfflineRecoveryInProgress = false;
+let directOfflineLastRecoveryAt = 0;
+let directOfflineRecoveryCount = 0;
+let directOfflineLastRecoveryReason = '';
+
+/*
  * v14.69 — lecture NPF à froid stabilisée.
  *
  * La carte NPF est nettement plus volumineuse que la carte OACI. Safari peut
@@ -5876,6 +5906,165 @@ function rememberDirectOfflineTileBlob(cacheKey, blob) {
     }
 }
 
+function isPrimaryDirectOfflineDatabaseCandidate(dbName) {
+    const activeNames = Array.isArray(activeOfflinePackDatabases)
+        ? activeOfflinePackDatabases.filter(Boolean).map(String)
+        : [];
+
+    if (activeNames.length) {
+        return activeNames.includes(String(dbName || ''));
+    }
+
+    return String(dbName || '') === String(OFFLINE_DB_NAME || '');
+}
+
+function isRecoverableDirectOfflineReadError(error) {
+    const message = String(error?.message || error || '');
+    if (!message) return false;
+
+    /*
+     * Une base candidate inexistante est normale pour certaines anciennes
+     * configurations. Elle ne doit pas déclencher de récupération.
+     */
+    if (
+        /Base de tuiles absente/i.test(message)
+        || /object store.*absent/i.test(message)
+        || /NotFoundError/i.test(message)
+    ) {
+        return false;
+    }
+
+    return /timeout|bloqu|blocked|transaction|annul|abort|InvalidState|DatabaseClosed|closing|inactive|unknownerror|operationerror/i.test(
+        message
+    );
+}
+
+function resetDirectOfflineReadErrorCounter() {
+    directOfflineConsecutiveReadErrors = 0;
+}
+
+async function recoverDirectOfflineTileReader(reason = 'read-error') {
+    if (
+        directOfflineRecoveryInProgress
+        || mapSourceMode !== 'offline'
+        || !Array.isArray(activeOfflinePacks)
+        || !activeOfflinePacks.length
+    ) {
+        return false;
+    }
+
+    const now = Date.now();
+    if (
+        now - directOfflineLastRecoveryAt
+        < DIRECT_OFFLINE_RECOVERY_COOLDOWN_MS
+    ) {
+        return false;
+    }
+
+    directOfflineRecoveryInProgress = true;
+    directOfflineLastRecoveryAt = now;
+    directOfflineLastRecoveryReason = String(reason || 'read-error');
+    directOfflineRecoveryCount += 1;
+
+    try {
+        setOfflineMapSwitchBusy(
+            'Mode OFFLINE — réouverture automatique du stockage local…'
+        );
+
+        resetPendingDirectOfflineNpfReads();
+        closeDirectOfflineDatabaseConnectionsForStartupRetry();
+        directOfflineTileBlobCache.clear();
+        directOfflineTileMissCount = 0;
+
+        await new Promise(resolve => setTimeout(resolve, 180));
+
+        reconcileRememberedOfflinePacksWithInstalledMetadata();
+        refreshRememberedOfflinePackRuntimeMetadata();
+
+        const readyDatabase =
+            await waitForRememberedOfflineTileDatabaseReady();
+
+        if (readyDatabase) {
+            const rebuilt = rebuildRememberedOfflineMapAfterDatabaseReady(
+                `automatic-read-recovery:${directOfflineLastRecoveryReason}`,
+                readyDatabase
+            );
+            if (rebuilt) {
+                setOfflineMapSwitchBusy(
+                    'Mode OFFLINE — accès aux cartes locales rétabli.'
+                );
+                return true;
+            }
+        }
+
+        /*
+         * Chemin de secours : reconstruire quand même la couche ; les tentatives
+         * de réveil déjà présentes poursuivront l'ouverture de la base.
+         */
+        if (map && mapSourceMode === 'offline') {
+            setupBaseTileLayer();
+            scheduleOfflineTileWake('automatic-read-recovery-fallback');
+            scheduleRememberedOfflineMapStartupRecovery(
+                'automatic-read-recovery-fallback'
+            );
+        }
+        return false;
+    } catch (error) {
+        console.warn(
+            '[Offline] Récupération automatique IndexedDB impossible:',
+            error
+        );
+        return false;
+    } finally {
+        directOfflineConsecutiveReadErrors = 0;
+        directOfflineRecoveryInProgress = false;
+    }
+}
+
+function registerDirectOfflineReadError(error, context = '') {
+    if (
+        mapSourceMode !== 'offline'
+        || !isRecoverableDirectOfflineReadError(error)
+    ) {
+        return false;
+    }
+
+    directOfflineConsecutiveReadErrors += 1;
+    console.warn(
+        '[Offline] Erreur lecture tuile locale:',
+        context,
+        error
+    );
+
+    if (
+        directOfflineConsecutiveReadErrors
+        >= DIRECT_OFFLINE_READ_ERROR_THRESHOLD
+        && !directOfflineRecoveryInProgress
+    ) {
+        /*
+         * Décaler la fermeture des connexions pour laisser la transaction
+         * courante sortir proprement de sa pile d'exécution.
+         */
+        setTimeout(() => {
+            recoverDirectOfflineTileReader(
+                context || 'consecutive-read-errors'
+            ).catch(() => {});
+        }, 120);
+    }
+
+    return true;
+}
+
+window.getNpfOfflineRecoveryStatus = function getNpfOfflineRecoveryStatus() {
+    return {
+        consecutiveReadErrors: directOfflineConsecutiveReadErrors,
+        recoveryInProgress: directOfflineRecoveryInProgress,
+        recoveryCount: directOfflineRecoveryCount,
+        lastRecoveryAt: directOfflineLastRecoveryAt,
+        lastRecoveryReason: directOfflineLastRecoveryReason
+    };
+};
+
 async function findDirectOfflineTileBlobUnqueued(coords) {
     const cacheKey = [
         coords.z,
@@ -5883,15 +6072,19 @@ async function findDirectOfflineTileBlobUnqueued(coords) {
         coords.y,
         ...(Array.isArray(activeOfflinePacks) ? activeOfflinePacks : [])
     ].join('|');
+
     if (directOfflineTileBlobCache.has(cacheKey)) {
         const cachedBlob = directOfflineTileBlobCache.get(cacheKey);
         directOfflineTileBlobCache.delete(cacheKey);
         directOfflineTileBlobCache.set(cacheKey, cachedBlob);
+        resetDirectOfflineReadErrorCounter();
         return cachedBlob;
     }
 
     const dbNames = getDirectOfflineDatabaseCandidates();
     const tileUrls = getDirectOfflineTileUrlCandidates(coords);
+    let hadRecoverableTechnicalError = false;
+
     for (const dbName of dbNames) {
         let tileDb;
         try {
@@ -5901,9 +6094,19 @@ async function findDirectOfflineTileBlobUnqueued(coords) {
                 openTimeoutMs,
                 `Timeout ouverture ${dbName}`
             );
-        } catch (_) {
+        } catch (error) {
+            if (
+                isPrimaryDirectOfflineDatabaseCandidate(dbName)
+                && registerDirectOfflineReadError(
+                    error,
+                    `ouverture ${dbName}`
+                )
+            ) {
+                hadRecoverableTechnicalError = true;
+            }
             continue;
         }
+
         for (const tileUrl of tileUrls) {
             try {
                 const readTimeoutMs = isNpfOfflinePackSelection() ? 5200 : 1800;
@@ -5913,6 +6116,7 @@ async function findDirectOfflineTileBlobUnqueued(coords) {
                     'Timeout lecture tuile'
                 );
                 if (!record?.tile) continue;
+
                 const blob = record.tile instanceof Blob
                     ? record.tile
                     : new Blob([record.tile], {
@@ -5920,17 +6124,44 @@ async function findDirectOfflineTileBlobUnqueued(coords) {
                             ? 'image/jpeg'
                             : 'image/png'
                     });
+
                 rememberDirectOfflineTileBlob(cacheKey, blob);
+                resetDirectOfflineReadErrorCounter();
                 directOfflineTileHitCount += 1;
+
                 if (directOfflineTileHitCount === 1) {
-                    setOfflineMapSwitchBusy('Mode OFFLINE — tuiles locales chargées.');
+                    setOfflineMapSwitchBusy(
+                        'Mode OFFLINE — tuiles locales chargées.'
+                    );
                 }
                 return blob;
-            } catch (_) {}
+            } catch (error) {
+                if (
+                    isPrimaryDirectOfflineDatabaseCandidate(dbName)
+                    && registerDirectOfflineReadError(
+                        error,
+                        `lecture ${dbName}`
+                    )
+                ) {
+                    hadRecoverableTechnicalError = true;
+                }
+            }
         }
     }
+
+    /*
+     * Ne pas annoncer une tuile absente lorsque la lecture a échoué pour une
+     * raison technique : la récupération automatique est déjà en cours.
+     */
+    if (hadRecoverableTechnicalError) {
+        return null;
+    }
+
     directOfflineTileMissCount += 1;
-    if (directOfflineTileHitCount === 0 && directOfflineTileMissCount === 6) {
+    if (
+        directOfflineTileHitCount === 0
+        && directOfflineTileMissCount === 6
+    ) {
         setOfflineMapSwitchBusy(
             'Mode OFFLINE actif — aucune tuile trouvée ici à ce niveau de zoom.'
         );
@@ -6160,7 +6391,7 @@ function setupEventListeners() {
     const simulationSpeedInput = document.getElementById('simulation-speed-input');
     const simulationRouteInput = document.getElementById('simulation-route-input');
     const simulationAltitudeInput = document.getElementById('simulation-altitude-input');
-    
+
     if (mainActionButtons) {
         const versionDisplay = document.getElementById('app-version-display');
         if (versionDisplay) {
@@ -6571,7 +6802,7 @@ function setupEventListeners() {
 
     if (deleteRoadOverlayButton) {
         deleteRoadOverlayButton.addEventListener('click', async () => {
-            if (!confirm('Supprimer le calque routier offline A / N / D / M de cet appareil ?')) {
+            if (!confirm('Supprimer le calque routier offline A / N / D / M / T de cet appareil ?')) {
                 return;
             }
             await deleteRoadOverlayData();
@@ -7509,6 +7740,30 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 
 
 // =========================================================================
+// v2026.59 — stabilité cartes offline pendant un vol prolongé
+// - le calque routier ne reconstruit plus toutes ses couches à chaque recentrage GPS ;
+// - les cartouches ne sont recalculés qu'après un déplacement significatif ;
+// - les connexions IndexedDB sont rouvertes automatiquement après plusieurs erreurs ;
+// - la couche de tuiles locale est reconstruite sans relancer la PWA.
+// =========================================================================
+
+// =========================================================================
+// v14.83 — cartouches routiers lisibles
+// - suppression à l'affichage des suffixes techniques girondins U / Uxxxx ;
+// - un seul cartouche par référence dans l'emprise visible ;
+// - priorité aux axes principaux et rejet des cartouches qui se chevauchent ;
+// - limitation automatique du nombre de cartouches selon le zoom et la taille de l'écran.
+// =========================================================================
+
+// =========================================================================
+// v14.82 — routes territoriales T / RT et cartouches sur la portion visible
+// - import et affichage des références T10, RT10 et « Route territoriale 10 » ;
+// - classe T affichée comme une route nationale à partir du niveau 1 NM ;
+// - cartouches calculés sur les segments réellement visibles dans la fenêtre ;
+// - conservation intégrale des classes A, N, D et M.
+// =========================================================================
+
+// =========================================================================
 // v14.49 — routes métropolitaines M
 // - import des références M613, M185, M5E14, RM613 et « Route métropolitaine » ;
 // - classe M affichée comme une route départementale, dès le niveau 1 NM ;
@@ -7516,7 +7771,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.49 — calque routier vectoriel offline A / N / D / M
+// v14.49 — calque routier vectoriel offline A / N / D / M / T
 // =========================================================================
 
 function getRoadOverlayManifest() {
@@ -7566,6 +7821,8 @@ function normalizeRoadOverlayReferenceValue(value) {
         .replace(/\bDEPARTEMENTALE\b/g, 'D')
         .replace(/\bROUTE\s*METROPOLITAINE\b/g, 'M')
         .replace(/\bMETROPOLITAINE\b/g, 'M')
+        .replace(/\bROUTE\s*TERRITORIALE\b/g, 'T')
+        .replace(/\bTERRITORIALE\b/g, 'T')
         .replace(/[\s._/]+/g, '');
 
     if (!normalized) return '';
@@ -7593,6 +7850,14 @@ function normalizeRoadOverlayReferenceValue(value) {
     if (match) return `M${match[1]}`;
 
     /*
+     * Formes territoriales corses administratives : RT10, RT 10.
+     * Elles sont normalisées en T10 pour utiliser une classe unique dans NPF.
+     */
+    match = normalized.match(/(?:^|[^A-Z0-9])RT(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/RT(\d+[A-Z0-9-]*)/);
+    if (match) return `T${match[1]}`;
+
+    /*
      * Formes nationales administratives : RN7, RN 7.
      */
     match = normalized.match(/(?:^|[^A-Z0-9])RN(\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
@@ -7600,11 +7865,35 @@ function normalizeRoadOverlayReferenceValue(value) {
     if (match) return `N${match[1]}`;
 
     /*
-     * Formes directement exploitables : A8, N7, D559, M613, D7N, D2007.
+     * Formes directement exploitables : A8, N7, D559, M613, T10,
+     * D7N et D2007.
      */
-    match = normalized.match(/(?:^|[^A-Z0-9])([ANDM]\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
-    if (!match) match = normalized.match(/([ANDM]\d+[A-Z0-9-]*)/);
+    match = normalized.match(/(?:^|[^A-Z0-9])([ANDMT]\d+[A-Z0-9-]*)(?:$|[^A-Z0-9])/);
+    if (!match) match = normalized.match(/([ANDMT]\d+[A-Z0-9-]*)/);
     return match ? match[1] : '';
+}
+
+function normalizeRoadOverlayDisplayReference(value) {
+    let ref = String(value || '').trim().toUpperCase();
+    if (!ref) return '';
+
+    /*
+     * Le complément routier girondin utilise U, U1, U002, U451, etc. comme
+     * identifiants techniques d'unités routières. Ils ne font pas partie du
+     * numéro opérationnel affiché sur la carte.
+     *
+     * Exemples :
+     * D211U451       -> D211
+     * D1215E1U002    -> D1215E1
+     * D211E3U951     -> D211E3
+     *
+     * Les suffixes routiers officiels E1, E2, E3, N, etc. sont conservés.
+     */
+    if (/^D\d/.test(ref)) {
+        ref = ref.replace(/U\d*$/i, '');
+    }
+
+    return ref;
 }
 
 function getRoadOverlayFeatureReference(feature) {
@@ -7630,7 +7919,9 @@ function getRoadOverlayFeatureReference(feature) {
     ];
 
     for (const value of candidates) {
-        const ref = normalizeRoadOverlayReferenceValue(value);
+        const ref = normalizeRoadOverlayDisplayReference(
+            normalizeRoadOverlayReferenceValue(value)
+        );
         if (ref) return ref;
     }
 
@@ -7639,7 +7930,11 @@ function getRoadOverlayFeatureReference(feature) {
 
 function getRoadOverlayClassFromRef(ref) {
     const prefix = String(ref || '').trim().toUpperCase().charAt(0);
-    return prefix === 'A' || prefix === 'N' || prefix === 'D' || prefix === 'M'
+    return prefix === 'A'
+        || prefix === 'N'
+        || prefix === 'D'
+        || prefix === 'M'
+        || prefix === 'T'
         ? prefix
         : '';
 }
@@ -7725,7 +8020,7 @@ function normalizeRoadOverlayGeojson(rawGeojson) {
         .filter(Boolean);
 
     if (!features.length) {
-        throw new Error('Aucune route A, N, D ou M avec une référence exploitable n’a été trouvée.');
+        throw new Error('Aucune route A, N, D, M ou T avec une référence exploitable n’a été trouvée.');
     }
 
     const normalized = {
@@ -7958,14 +8253,14 @@ function refreshRoadOverlayButtonState() {
     button.disabled = isRoadOverlayLoading;
 
     if (status) {
-        status.textContent = hasData ? 'A/N/D/M' : '!';
+        status.textContent = hasData ? 'A/N/D/M/T' : '!';
     }
 
     button.title = isRoadOverlayLoading
         ? 'Chargement du calque routier…'
         : (
             hasData
-                ? 'Afficher/Masquer le calque routier A / N / D / M'
+                ? 'Afficher/Masquer le calque routier A / N / D / M / T'
                 : 'Aucun calque routier installé — ouvrir Gestion des Cartes'
         );
 }
@@ -7989,7 +8284,7 @@ function getRoadOverlayZoomTier() {
     /*
      * Niveau 0 : rien avant 2 NM.
      * Niveau 1 : autoroutes uniquement à partir de 2 NM.
-     * Niveau 2 : A + N + D + M à partir de 1 NM.
+     * Niveau 2 : A + N + D + M + T à partir de 1 NM.
      */
     if (zoom >= 12) return 2;
     if (zoom >= 11) return 1;
@@ -8002,7 +8297,11 @@ function shouldLoadRoadOverlayFeatureForTier(feature, tier) {
     ).toUpperCase();
 
     if (tier >= 2) {
-        return roadClass === 'A' || roadClass === 'N' || roadClass === 'D' || roadClass === 'M';
+        return roadClass === 'A'
+            || roadClass === 'N'
+            || roadClass === 'D'
+            || roadClass === 'M'
+            || roadClass === 'T';
     }
 
     if (tier === 1) {
@@ -8040,6 +8339,11 @@ function getRoadOverlayLineStyle(feature, casing = false) {
             casingWeight: zoom >= 12 ? 8.2 : 7.2
         },
         N: {
+            color: '#d62828',
+            weight: zoom >= 12 ? 4.5 : 3.7,
+            casingWeight: zoom >= 12 ? 7.4 : 6.4
+        },
+        T: {
             color: '#d62828',
             weight: zoom >= 12 ? 4.5 : 3.7,
             casingWeight: zoom >= 12 ? 7.4 : 6.4
@@ -8092,117 +8396,461 @@ function shouldDisplayRoadOverlayFeature(feature) {
      * v14.20 — nationales et départementales à partir de l'échelle 1 NM
      * environ, correspondant au niveau de zoom 12.
      */
-    if (roadClass === 'N') return zoom >= 12;
+    if (roadClass === 'N' || roadClass === 'T') return zoom >= 12;
     if (roadClass === 'D' || roadClass === 'M') return zoom >= 12;
     return false;
 }
 
-function getRoadOverlayLongestLineCoordinates(feature) {
+function getRoadOverlayGeometryLines(feature) {
     const geometry = feature?.geometry;
-    if (!geometry) return null;
+    if (!geometry) return [];
 
     if (geometry.type === 'LineString') {
-        return Array.isArray(geometry.coordinates) ? geometry.coordinates : null;
+        return Array.isArray(geometry.coordinates)
+            ? [geometry.coordinates]
+            : [];
     }
 
     if (geometry.type === 'MultiLineString' && Array.isArray(geometry.coordinates)) {
-        return geometry.coordinates.reduce((longest, line) => (
-            Array.isArray(line) && line.length > (longest?.length || 0)
-                ? line
-                : longest
-        ), null);
+        return geometry.coordinates.filter(Array.isArray);
+    }
+
+    return [];
+}
+
+function getRoadOverlayLongestLineCoordinates(feature) {
+    return getRoadOverlayGeometryLines(feature).reduce((longest, line) => (
+        Array.isArray(line) && line.length > (longest?.length || 0)
+            ? line
+            : longest
+    ), null);
+}
+
+function getRoadOverlayLabelBounds() {
+    if (!map) return null;
+
+    try {
+        const size = map.getSize();
+        const margin = Math.max(
+            18,
+            Math.min(42, Math.round(Math.min(size.x, size.y) * 0.045))
+        );
+
+        if (size.x > margin * 2 + 20 && size.y > margin * 2 + 20) {
+            const northWest = map.containerPointToLatLng([margin, margin]);
+            const southEast = map.containerPointToLatLng([
+                size.x - margin,
+                size.y - margin
+            ]);
+            return L.latLngBounds(
+                [southEast.lat, northWest.lng],
+                [northWest.lat, southEast.lng]
+            );
+        }
+    } catch (_) {}
+
+    return map.getBounds();
+}
+
+function clipRoadOverlaySegmentToBounds(start, end, bounds) {
+    if (!Array.isArray(start) || !Array.isArray(end) || !bounds) return null;
+
+    const x0 = Number(start[0]);
+    const y0 = Number(start[1]);
+    const x1 = Number(end[0]);
+    const y1 = Number(end[1]);
+
+    if (![x0, y0, x1, y1].every(Number.isFinite)) return null;
+
+    const west = Number(bounds.getWest());
+    const east = Number(bounds.getEast());
+    const south = Number(bounds.getSouth());
+    const north = Number(bounds.getNorth());
+
+    if (![west, east, south, north].every(Number.isFinite)) return null;
+
+    const dx = x1 - x0;
+    const dy = y1 - y0;
+    const p = [-dx, dx, -dy, dy];
+    const q = [x0 - west, east - x0, y0 - south, north - y0];
+
+    let uStart = 0;
+    let uEnd = 1;
+
+    for (let index = 0; index < 4; index += 1) {
+        if (Math.abs(p[index]) < 1e-12) {
+            if (q[index] < 0) return null;
+            continue;
+        }
+
+        const ratio = q[index] / p[index];
+        if (p[index] < 0) {
+            uStart = Math.max(uStart, ratio);
+        } else {
+            uEnd = Math.min(uEnd, ratio);
+        }
+
+        if (uStart > uEnd) return null;
+    }
+
+    return [
+        [x0 + uStart * dx, y0 + uStart * dy],
+        [x0 + uEnd * dx, y0 + uEnd * dy]
+    ];
+}
+
+function getRoadOverlayVisibleSegments(feature, bounds) {
+    const segments = [];
+
+    getRoadOverlayGeometryLines(feature).forEach(line => {
+        if (!Array.isArray(line) || line.length < 2) return;
+
+        for (let index = 1; index < line.length; index += 1) {
+            const clipped = clipRoadOverlaySegmentToBounds(
+                line[index - 1],
+                line[index],
+                bounds
+            );
+            if (!clipped) continue;
+
+            const start = L.latLng(Number(clipped[0][1]), Number(clipped[0][0]));
+            const end = L.latLng(Number(clipped[1][1]), Number(clipped[1][0]));
+            const length = start.distanceTo(end);
+
+            if (!Number.isFinite(length) || length <= 0) continue;
+            segments.push({ start, end, length });
+        }
+    });
+
+    return segments;
+}
+
+function getRoadOverlayMidpointOnSegments(segments) {
+    if (!Array.isArray(segments) || !segments.length) return null;
+
+    const totalLength = segments.reduce(
+        (sum, segment) => sum + (Number(segment?.length) || 0),
+        0
+    );
+    if (!Number.isFinite(totalLength) || totalLength <= 0) return null;
+
+    const target = totalLength / 2;
+    let walked = 0;
+
+    for (const segment of segments) {
+        const length = Number(segment?.length) || 0;
+        if (walked + length >= target) {
+            const ratio = length > 0 ? (target - walked) / length : 0;
+            return L.latLng(
+                segment.start.lat + (segment.end.lat - segment.start.lat) * ratio,
+                segment.start.lng + (segment.end.lng - segment.start.lng) * ratio
+            );
+        }
+        walked += length;
+    }
+
+    return segments[segments.length - 1]?.end || null;
+}
+
+function getRoadOverlayFeatureLabelPoint(feature, bounds = null) {
+    /*
+     * v14.82 — placer le cartouche sur la portion de route réellement visible.
+     * Une marge intérieure en pixels évite qu'il soit coupé par le bord de la
+     * carte. Si aucune portion n'entre dans cette zone, on réessaie sur toute
+     * l'emprise visible avant d'abandonner.
+     */
+    const preferredBounds = bounds || getRoadOverlayLabelBounds();
+    const preferredSegments = preferredBounds
+        ? getRoadOverlayVisibleSegments(feature, preferredBounds)
+        : [];
+    const preferredPoint = getRoadOverlayMidpointOnSegments(preferredSegments);
+    if (preferredPoint) return preferredPoint;
+
+    const fullBounds = map?.getBounds?.();
+    if (fullBounds && fullBounds !== preferredBounds) {
+        const fullSegments = getRoadOverlayVisibleSegments(feature, fullBounds);
+        const fullPoint = getRoadOverlayMidpointOnSegments(fullSegments);
+        if (fullPoint) return fullPoint;
     }
 
     return null;
 }
 
-function getRoadOverlayFeatureLabelPoint(feature) {
-    const coordinates = getRoadOverlayLongestLineCoordinates(feature);
-    if (!Array.isArray(coordinates) || !coordinates.length) return null;
-
-    if (coordinates.length === 1) {
-        const coord = coordinates[0];
-        return L.latLng(Number(coord[1]), Number(coord[0]));
-    }
-
-    let totalLength = 0;
-    const segmentLengths = [];
-
-    for (let index = 1; index < coordinates.length; index += 1) {
-        const previous = coordinates[index - 1];
-        const current = coordinates[index];
-        const previousLatLng = L.latLng(Number(previous[1]), Number(previous[0]));
-        const currentLatLng = L.latLng(Number(current[1]), Number(current[0]));
-        const length = previousLatLng.distanceTo(currentLatLng);
-        segmentLengths.push(length);
-        totalLength += length;
-    }
-
-    if (!Number.isFinite(totalLength) || totalLength <= 0) {
-        const middle = coordinates[Math.floor(coordinates.length / 2)];
-        return L.latLng(Number(middle[1]), Number(middle[0]));
-    }
-
-    const target = totalLength / 2;
-    let walked = 0;
-
-    for (let index = 1; index < coordinates.length; index += 1) {
-        const segmentLength = segmentLengths[index - 1];
-        if (walked + segmentLength >= target) {
-            const ratio = segmentLength > 0
-                ? (target - walked) / segmentLength
-                : 0;
-            const start = coordinates[index - 1];
-            const end = coordinates[index];
-            const lon = Number(start[0]) + (Number(end[0]) - Number(start[0])) * ratio;
-            const lat = Number(start[1]) + (Number(end[1]) - Number(start[1])) * ratio;
-            return L.latLng(lat, lon);
-        }
-        walked += segmentLength;
-    }
-
-    const last = coordinates[coordinates.length - 1];
-    return L.latLng(Number(last[1]), Number(last[0]));
+function getRoadOverlayLabelClassPriority(roadClass) {
+    const priorities = {
+        A: 0,
+        N: 1,
+        T: 1,
+        M: 2,
+        D: 3
+    };
+    return priorities[String(roadClass || '').toUpperCase()] ?? 4;
 }
 
-function addRoadOverlayLabelsForGeojson(geojson, partKey) {
-    if (!roadOverlayLabelsLayer || !map) return;
+function getRoadOverlayLabelBranchPriority(ref) {
+    /*
+     * À classe identique, afficher d'abord les axes principaux D211, D1215,
+     * M35, etc., avant leurs branches D211E1, D1215E1 ou autres suffixes.
+     */
+    return /^[ANDMT]\d+$/.test(String(ref || '').toUpperCase()) ? 0 : 1;
+}
+
+function getRoadOverlayMinimumLabelLength(roadClass, zoom) {
+    if (roadClass === 'A' || roadClass === 'N' || roadClass === 'T') {
+        return zoom >= 13 ? 90 : 180;
+    }
+    if (roadClass === 'M') {
+        return zoom >= 13 ? 120 : 260;
+    }
+    return zoom >= 14 ? 120 : (zoom >= 13 ? 260 : 520);
+}
+
+function getRoadOverlayMaximumLabelCount() {
+    if (!map) return 0;
+
     const zoom = map.getZoom();
-    const bounds = map.getBounds().pad(0.18);
-    const seenGridKeys = new Set();
-    const gridSize = zoom >= 13 ? 0.035 : (zoom >= 12 ? 0.075 : 0.18);
+    const size = map.getSize();
+    const area = Math.max(1, Number(size.x) * Number(size.y));
+
+    const absoluteLimit = zoom >= 14 ? 30 : (zoom >= 13 ? 22 : 14);
+    const areaPerLabel = zoom >= 14 ? 39000 : (zoom >= 13 ? 52000 : 76000);
+    const areaLimit = Math.max(8, Math.floor(area / areaPerLabel));
+
+    return Math.max(8, Math.min(absoluteLimit, areaLimit));
+}
+
+function getRoadOverlayLabelCollisionBox(point, ref) {
+    const screenPoint = map.latLngToContainerPoint(point);
+    const width = Math.max(36, Math.min(106, 18 + String(ref || '').length * 8));
+    const height = 24;
+    const padding = 8;
+
+    return {
+        left: screenPoint.x - width / 2 - padding,
+        right: screenPoint.x + width / 2 + padding,
+        top: screenPoint.y - height / 2 - padding,
+        bottom: screenPoint.y + height / 2 + padding
+    };
+}
+
+function roadOverlayLabelBoxesIntersect(first, second) {
+    return !(
+        first.right < second.left
+        || first.left > second.right
+        || first.bottom < second.top
+        || first.top > second.bottom
+    );
+}
+
+function addRoadOverlayLabelsForGeojson(geojson, partKey, candidatesByRef = new Map()) {
+    if (!map) return candidatesByRef;
+
+    const zoom = map.getZoom();
+    const bounds = getRoadOverlayLabelBounds() || map.getBounds();
 
     (geojson?.features || []).forEach(feature => {
         if (!shouldDisplayRoadOverlayFeature(feature)) return;
 
         const roadClass = String(feature?.properties?.roadClass || '').toUpperCase();
-        if ((roadClass === 'D' || roadClass === 'M') && zoom < 12) return;
+        if (
+            (roadClass === 'D' || roadClass === 'M' || roadClass === 'T')
+            && zoom < 12
+        ) return;
 
-        const ref = String(feature?.properties?.ref || '').trim();
+        const ref = normalizeRoadOverlayDisplayReference(
+            feature?.properties?.ref
+        );
         if (!ref) return;
 
-        const point = getRoadOverlayFeatureLabelPoint(feature);
-        if (!point || !bounds.contains(point)) return;
+        const segments = getRoadOverlayVisibleSegments(feature, bounds);
+        const visibleLength = segments.reduce(
+            (sum, segment) => sum + (Number(segment?.length) || 0),
+            0
+        );
 
-        const gridX = Math.round(point.lng / gridSize);
-        const gridY = Math.round(point.lat / gridSize);
-        const key = `${ref}:${gridX}:${gridY}`;
-        if (seenGridKeys.has(key)) return;
-        seenGridKeys.add(key);
+        if (
+            !Number.isFinite(visibleLength)
+            || visibleLength < getRoadOverlayMinimumLabelLength(roadClass, zoom)
+        ) {
+            return;
+        }
 
-        const marker = L.marker(point, {
+        const point = getRoadOverlayMidpointOnSegments(segments)
+            || getRoadOverlayFeatureLabelPoint(feature, bounds);
+        if (!point || !map.getBounds().contains(point)) return;
+
+        const candidate = {
+            ref,
+            roadClass,
+            point,
+            visibleLength,
+            partKey,
+            classPriority: getRoadOverlayLabelClassPriority(roadClass),
+            branchPriority: getRoadOverlayLabelBranchPriority(ref)
+        };
+
+        const existing = candidatesByRef.get(ref);
+        if (
+            !existing
+            || candidate.classPriority < existing.classPriority
+            || (
+                candidate.classPriority === existing.classPriority
+                && candidate.branchPriority < existing.branchPriority
+            )
+            || (
+                candidate.classPriority === existing.classPriority
+                && candidate.branchPriority === existing.branchPriority
+                && candidate.visibleLength > existing.visibleLength
+            )
+        ) {
+            candidatesByRef.set(ref, candidate);
+        }
+    });
+
+    return candidatesByRef;
+}
+
+function renderRoadOverlayLabelCandidates(candidatesByRef) {
+    if (!roadOverlayLabelsLayer || !map || !(candidatesByRef instanceof Map)) return;
+
+    const maximumLabels = getRoadOverlayMaximumLabelCount();
+    if (maximumLabels <= 0) return;
+
+    const candidates = Array.from(candidatesByRef.values()).sort((first, second) => (
+        first.classPriority - second.classPriority
+        || first.branchPriority - second.branchPriority
+        || second.visibleLength - first.visibleLength
+        || String(first.ref).localeCompare(String(second.ref), 'fr', {
+            numeric: true,
+            sensitivity: 'base'
+        })
+    ));
+
+    const occupiedBoxes = [];
+    let displayed = 0;
+
+    for (const candidate of candidates) {
+        if (displayed >= maximumLabels) break;
+
+        const box = getRoadOverlayLabelCollisionBox(
+            candidate.point,
+            candidate.ref
+        );
+        if (occupiedBoxes.some(existing => (
+            roadOverlayLabelBoxesIntersect(box, existing)
+        ))) {
+            continue;
+        }
+
+        occupiedBoxes.push(box);
+
+        const marker = L.marker(candidate.point, {
             pane: 'roadOverlayLabelPane',
             interactive: false,
             keyboard: false,
             icon: L.divIcon({
                 className: 'road-overlay-label-marker',
-                html: `<span class="road-overlay-ref road-overlay-ref-${roadClass.toLowerCase()}">${escapeHtml(ref)}</span>`,
+                html: `<span class="road-overlay-ref road-overlay-ref-${candidate.roadClass.toLowerCase()}">${escapeHtml(candidate.ref)}</span>`,
                 iconSize: null
             })
         });
-        marker.__npfRoadPartKey = partKey;
+        marker.__npfRoadPartKey = candidate.partKey;
+        marker.__npfRoadRef = candidate.ref;
         marker.addTo(roadOverlayLabelsLayer);
+        displayed += 1;
+    }
+}
+
+function getRoadOverlayStyleBand() {
+    const zoom = map?.getZoom?.() ?? 0;
+    if (zoom >= 13) return 3;
+    if (zoom >= 12) return 2;
+    if (zoom >= 11) return 1;
+    return 0;
+}
+
+function getRoadOverlayPartSignature(parts, tier) {
+    const keys = (Array.isArray(parts) ? parts : [])
+        .map(part => String(part?.key || ''))
+        .filter(Boolean)
+        .sort((left, right) => left.localeCompare(
+            right,
+            'fr',
+            { numeric: true, sensitivity: 'base' }
+        ));
+    return `${Number(tier) || 0}|${keys.join('|')}`;
+}
+
+function getLoadedRoadOverlayPartSignature(tier) {
+    const keys = [];
+    loadedRoadOverlayParts.forEach((record, key) => {
+        if (record?.tier === tier) keys.push(String(key || ''));
     });
+    keys.sort((left, right) => left.localeCompare(
+        right,
+        'fr',
+        { numeric: true, sensitivity: 'base' }
+    ));
+    return `${Number(tier) || 0}|${keys.join('|')}`;
+}
+
+function shouldRefreshRoadOverlayLabelsForView({ force = false } = {}) {
+    if (!map) return false;
+    if (force) return true;
+
+    const center = map.getCenter?.();
+    const zoom = Number(map.getZoom?.());
+    const now = Date.now();
+
+    if (
+        !center
+        || !roadOverlayLastLabelCenter
+        || !Number.isFinite(roadOverlayLastLabelZoom)
+        || zoom !== roadOverlayLastLabelZoom
+    ) {
+        return true;
+    }
+
+    if (
+        now - roadOverlayLastLabelRefreshAt
+        >= ROAD_OVERLAY_LABEL_REFRESH_MAX_INTERVAL_MS
+    ) {
+        return true;
+    }
+
+    try {
+        const bounds = map.getBounds();
+        const westPoint = L.latLng(center.lat, bounds.getWest());
+        const eastPoint = L.latLng(center.lat, bounds.getEast());
+        const viewportWidthMeters = westPoint.distanceTo(eastPoint);
+        const minimumShiftMeters = Math.max(
+            1200,
+            viewportWidthMeters * ROAD_OVERLAY_LABEL_REFRESH_VIEWPORT_RATIO
+        );
+        return center.distanceTo(roadOverlayLastLabelCenter) >= minimumShiftMeters;
+    } catch (_) {
+        return false;
+    }
+}
+
+function rememberRoadOverlayLabelView() {
+    if (!map) return;
+    try {
+        const center = map.getCenter();
+        roadOverlayLastLabelCenter = L.latLng(center.lat, center.lng);
+    } catch (_) {
+        roadOverlayLastLabelCenter = null;
+    }
+    roadOverlayLastLabelZoom = Number(map.getZoom?.());
+    roadOverlayLastLabelRefreshAt = Date.now();
+}
+
+function resetRoadOverlayRefreshState() {
+    roadOverlayLastVisiblePartSignature = '';
+    roadOverlayLastStyleBand = -1;
+    roadOverlayLastLabelCenter = null;
+    roadOverlayLastLabelZoom = -1;
+    roadOverlayLastLabelRefreshAt = 0;
 }
 
 function clearRoadOverlayRenderedParts(options = {}) {
@@ -8219,6 +8867,8 @@ function clearRoadOverlayRenderedParts(options = {}) {
      */
     try { roadOverlayCasingRenderer?._redraw?.(); } catch (_) {}
     try { roadOverlayLineRenderer?._redraw?.(); } catch (_) {}
+
+    resetRoadOverlayRefreshState();
 
     if (options.resetTier !== false) {
         roadOverlayLoadedZoomTier = -1;
@@ -8244,7 +8894,7 @@ async function loadRoadOverlayPart(part, token, tier) {
     /*
      * Ne créer dans Leaflet que les classes utiles au niveau courant :
      * - niveau 1 : A seulement ;
-     * - niveau 2 : A, N, D et M.
+     * - niveau 2 : A, N, D, M et T.
      * Le changement de niveau détruit puis reconstruit entièrement les couches,
      * ce qui évite à la fois les étiquettes seules et les géométries invisibles
      * conservées en mémoire.
@@ -8277,7 +8927,6 @@ async function loadRoadOverlayPart(part, token, tier) {
 
     casing.addTo(roadOverlayCasingLayer);
     lines.addTo(roadOverlayLineLayer);
-    addRoadOverlayLabelsForGeojson(geojson, part.key);
 
     const record = { casing, lines, geojson, tier };
     loadedRoadOverlayParts.set(part.key, record);
@@ -8288,6 +8937,13 @@ function rebuildRoadOverlayLabels() {
     if (!roadOverlayLabelsLayer) return;
     roadOverlayLabelsLayer.clearLayers();
 
+    /*
+     * v2026.59 — préparer d'abord tous les candidats des parties visibles.
+     * Le meilleur tronçon de chaque référence est retenu, puis les cartouches
+     * sont triés et filtrés globalement pour éviter les amas illisibles.
+     */
+    const candidatesByRef = new Map();
+
     loadedRoadOverlayParts.forEach((record, partKey) => {
         if (
             record?.tier !== roadOverlayLoadedZoomTier
@@ -8295,8 +8951,15 @@ function rebuildRoadOverlayLabels() {
         ) {
             return;
         }
-        addRoadOverlayLabelsForGeojson(record.geojson, partKey);
+
+        addRoadOverlayLabelsForGeojson(
+            record.geojson,
+            partKey,
+            candidatesByRef
+        );
     });
+
+    renderRoadOverlayLabelCandidates(candidatesByRef);
 }
 
 async function refreshRoadOverlayVisibleParts(source = 'refresh') {
@@ -8310,6 +8973,8 @@ async function refreshRoadOverlayVisibleParts(source = 'refresh') {
 
     const token = ++roadOverlayRefreshToken;
     const currentTier = getRoadOverlayZoomTier();
+    const currentStyleBand = getRoadOverlayStyleBand();
+    const forceRefresh = source !== 'map-change';
 
     isRoadOverlayLoading = true;
     refreshRoadOverlayButtonState();
@@ -8320,17 +8985,19 @@ async function refreshRoadOverlayVisibleParts(source = 'refresh') {
          * GeoJSON, ne conserver aucune géométrie et ne solliciter aucun Canvas.
          */
         if (currentTier === 0) {
-            clearRoadOverlayRenderedParts({ resetTier: false });
+            if (
+                roadOverlayLoadedZoomTier !== 0
+                || loadedRoadOverlayParts.size
+            ) {
+                clearRoadOverlayRenderedParts({ resetTier: false });
+            }
             roadOverlayLoadedZoomTier = 0;
+            roadOverlayLastStyleBand = currentStyleBand;
             return;
         }
 
-        /*
-         * Lors du passage 2 NM ↔ 1 NM, détruire réellement les anciennes
-         * couches. On évite ainsi de conserver N/D invisibles à 2 NM ou de
-         * réutiliser une partie chargée avec une autre sélection de classes.
-         */
-        if (roadOverlayLoadedZoomTier !== currentTier) {
+        const tierChanged = roadOverlayLoadedZoomTier !== currentTier;
+        if (tierChanged) {
             clearRoadOverlayRenderedParts({ resetTier: false });
             roadOverlayLoadedZoomTier = currentTier;
         }
@@ -8340,51 +9007,86 @@ async function refreshRoadOverlayVisibleParts(source = 'refresh') {
             roadOverlayBboxIntersectsBounds(part.bbox, bounds)
         ));
         const visibleKeys = new Set(visibleParts.map(part => part.key));
+        const visibleSignature = getRoadOverlayPartSignature(
+            visibleParts,
+            currentTier
+        );
+        const loadedSignature = getLoadedRoadOverlayPartSignature(currentTier);
 
-        loadedRoadOverlayParts.forEach((record, key) => {
-            if (
-                visibleKeys.has(key)
-                && record?.tier === currentTier
-            ) {
-                return;
-            }
-
-            try {
-                if (record?.casing) {
-                    roadOverlayCasingLayer.removeLayer(record.casing);
-                }
-            } catch (_) {}
-
-            try {
-                if (record?.lines) {
-                    roadOverlayLineLayer.removeLayer(record.lines);
-                }
-            } catch (_) {}
-
-            loadedRoadOverlayParts.delete(key);
+        const partSelectionChanged = (
+            tierChanged
+            || visibleSignature !== roadOverlayLastVisiblePartSignature
+            || visibleSignature !== loadedSignature
+        );
+        const styleChanged = (
+            currentStyleBand !== roadOverlayLastStyleBand
+        );
+        const labelsNeedRefresh = shouldRefreshRoadOverlayLabelsForView({
+            force: forceRefresh || partSelectionChanged || styleChanged
         });
 
-        for (const part of visibleParts) {
-            if (
-                token !== roadOverlayRefreshToken
-                || !showRoadOverlayLayer
-                || currentTier !== roadOverlayLoadedZoomTier
-            ) {
-                return;
+        /*
+         * Cas normal en suivi GPS : la même sélection de fichiers est déjà
+         * chargée et le seuil de déplacement des cartouches n'est pas atteint.
+         * Leaflet translate les Canvas et les marqueurs sans aucune reconstruction.
+         */
+        if (
+            !partSelectionChanged
+            && !styleChanged
+            && !labelsNeedRefresh
+        ) {
+            return;
+        }
+
+        if (partSelectionChanged) {
+            loadedRoadOverlayParts.forEach((record, key) => {
+                if (
+                    visibleKeys.has(key)
+                    && record?.tier === currentTier
+                ) {
+                    return;
+                }
+
+                try {
+                    if (record?.casing) {
+                        roadOverlayCasingLayer.removeLayer(record.casing);
+                    }
+                } catch (_) {}
+
+                try {
+                    if (record?.lines) {
+                        roadOverlayLineLayer.removeLayer(record.lines);
+                    }
+                } catch (_) {}
+
+                loadedRoadOverlayParts.delete(key);
+            });
+
+            for (const part of visibleParts) {
+                if (
+                    token !== roadOverlayRefreshToken
+                    || !showRoadOverlayLayer
+                    || currentTier !== roadOverlayLoadedZoomTier
+                ) {
+                    return;
+                }
+
+                const existing = loadedRoadOverlayParts.get(part.key);
+                if (existing?.tier === currentTier) continue;
+
+                try {
+                    await loadRoadOverlayPart(part, token, currentTier);
+                } catch (error) {
+                    console.warn(
+                        'Partie du calque routier ignorée:',
+                        part.name,
+                        error
+                    );
+                }
             }
 
-            const existing = loadedRoadOverlayParts.get(part.key);
-            if (existing?.tier === currentTier) continue;
-
-            try {
-                await loadRoadOverlayPart(part, token, currentTier);
-            } catch (error) {
-                console.warn(
-                    'Partie du calque routier ignorée:',
-                    part.name,
-                    error
-                );
-            }
+            roadOverlayLastVisiblePartSignature =
+                getLoadedRoadOverlayPartSignature(currentTier);
         }
 
         if (
@@ -8395,23 +9097,34 @@ async function refreshRoadOverlayVisibleParts(source = 'refresh') {
             return;
         }
 
-        loadedRoadOverlayParts.forEach(record => {
-            if (record?.tier !== currentTier) return;
+        /*
+         * Les poids changent seulement aux seuils utiles (11, 12 et 13).
+         * Ne pas réappliquer les styles à chaque recentrage GPS.
+         */
+        if (styleChanged || tierChanged) {
+            loadedRoadOverlayParts.forEach(record => {
+                if (record?.tier !== currentTier) return;
 
-            try {
-                record.casing?.setStyle(
-                    feature => getRoadOverlayLineStyle(feature, true)
-                );
-                record.lines?.setStyle(
-                    feature => getRoadOverlayLineStyle(feature, false)
-                );
-            } catch (_) {}
-        });
+                try {
+                    record.casing?.setStyle(
+                        feature => getRoadOverlayLineStyle(feature, true)
+                    );
+                    record.lines?.setStyle(
+                        feature => getRoadOverlayLineStyle(feature, false)
+                    );
+                } catch (_) {}
+            });
 
-        try { roadOverlayCasingRenderer?._redraw?.(); } catch (_) {}
-        try { roadOverlayLineRenderer?._redraw?.(); } catch (_) {}
+            try { roadOverlayCasingRenderer?._redraw?.(); } catch (_) {}
+            try { roadOverlayLineRenderer?._redraw?.(); } catch (_) {}
+        }
 
-        rebuildRoadOverlayLabels();
+        roadOverlayLastStyleBand = currentStyleBand;
+
+        if (labelsNeedRefresh || partSelectionChanged) {
+            rebuildRoadOverlayLabels();
+            rememberRoadOverlayLabelView();
+        }
     } finally {
         if (token === roadOverlayRefreshToken) {
             isRoadOverlayLoading = false;
@@ -8426,7 +9139,7 @@ function scheduleRoadOverlayRefresh(source = 'scheduled') {
         refreshRoadOverlayVisibleParts(source).catch(error => {
             console.warn('Actualisation du calque routier impossible:', source, error);
         });
-    }, 220);
+    }, source === 'map-change' ? 650 : 220);
 }
 
 async function toggleRoadOverlayLayer(forceState = null, options = {}) {
@@ -8446,7 +9159,7 @@ async function toggleRoadOverlayLayer(forceState = null, options = {}) {
                 modal.style.display = 'flex';
                 refreshRoadOverlayInstalledStatus();
             }
-            alert('Aucun calque routier n’est installé. Importe le pack A / N / D / M dans Gestion des Cartes.');
+            alert('Aucun calque routier n’est installé. Importe le pack A / N / D / M / T dans Gestion des Cartes.');
         }
         return;
     }
