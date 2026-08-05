@@ -1,4 +1,4 @@
-      
+
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -7,9 +7,9 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.58" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.58">
-    <link rel="manifest" href="manifest.json?appv=v2026.58">
+    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.59" as="fetch" crossorigin="anonymous">
+    <link rel="stylesheet" href="style.css?appv=v2026.59">
+    <link rel="manifest" href="manifest.json?appv=v2026.59">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v13.92">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v13.92">
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v13.92">
@@ -57,7 +57,7 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.58';
+        const APP_VERSION = 'v2026.59';
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
         const POST_UPDATE_NOTICE_VERSION_KEY = 'npfPostUpdateRestartNoticeVersion';
@@ -383,8 +383,8 @@
             </span>
         </button>
         <button id="road-overlay-button" class="left-map-action-button road-overlay-map-button"
-                title="Afficher/Masquer le calque routier A / N / D / M"
-                aria-label="Afficher/Masquer le calque routier autoroutes, nationales, départementales et métropolitaines">
+                title="Afficher/Masquer le calque routier A / N / D / M / T"
+                aria-label="Afficher/Masquer le calque routier autoroutes, nationales, départementales, métropolitaines et territoriales">
             <span class="road-overlay-icon" aria-hidden="true">
                 <svg viewBox="0 0 72 72" focusable="false" role="img">
                     <path class="road-overlay-road-casing" d="M12 63 C20 50 20 35 31 23 C39 14 48 12 60 8"/>
@@ -540,7 +540,7 @@
                 </div>
             </div>
             <ul id="results-list" style="display: none;"></ul>
-               
+
 <div class="extra-controls extra-controls-grid">
                 <button id="gaar-mode-button" class="toggle-button" title="Afficher/Masquer les circuits GAAR">Circuits<br>GAAR</button>
                 <button id="departments-layer-button" class="toggle-button" title="Afficher/Masquer les contours de départements">Départements</button>
@@ -549,8 +549,8 @@
                 <button id="offline-maps-button" class="toggle-button" title="Gérer les cartes hors-ligne">Cartes</button>
             </div>
 
-  
-                
+
+
 <div id="gaar-controls" style="display: none;">
                 <button id="edit-circuits-button" class="gaar-action-button gaar-edit-button">Créer/Modifier</button>
                 <button id="delete-circuits-btn" class="gaar-action-button gaar-delete-button">Supprimer Circuits</button>
@@ -563,8 +563,8 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.58"></script>
-    
+    <script src="script.js?appv=v2026.59"></script>
+
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
             <button id="fuel-split-close-btn" class="fuel-split-close-btn" type="button" title="Fermer">&times;</button>
@@ -640,7 +640,7 @@
                         </div>
                     </div>
                 </div>
-                  
+
 <div class="onglet-panneau" id="bloc-fuel">
                     <div class="header-section">
                         <div class="header-item"><label id="bloc-depart-label">BLOC DÉPART</label><div id="bloc-depart" class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
@@ -661,14 +661,14 @@
                     </div>
                     <div class="table-wrapper"><table class="table-section"><thead><tr><th>BLOC Arrivée</th><th>FUEL Pélic.</th><th>OACI</th><th>Masse<br>Rlt</th><th>Durée<br>Rotations</th><th>Fuel<br>Rotations</th><th>Tps de Vol</th><th>Tps de Vol Restant</th></tr></thead><tbody></tbody></table></div>
                 </div>
-                  
+
 <div class="onglet-panneau" id="suivi-rotations">
                     <div class="analyse-grid">
                         <div class="analyse-col">
                             <div class="bingo-group"><div class="result-line"><span class="label base-bingo-label">BINGO BASE</span><span class="value" id="suivi-bingo-base">-- kg</span></div></div><hr class="analyse-separator">
                             <div class="rotations-group rotation-count-group">
                                 <h3 class="analyse-col-title">Nbr Rotations Restantes</h3>
-                                    
+
 <div id="suivi-rotation-results-container" class="rotation-results-container">
                                     <div class="result-line" data-rotation-type="base"><span class="label">FUEL RETOUR BASE :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                     <div class="result-line" data-rotation-type="pelic"><span class="label">FUEL RETOUR PELIC :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
@@ -676,7 +676,7 @@
                                     <div class="result-line" data-rotation-type="tmd"><span class="label">TMD :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                     <div class="result-line" data-rotation-type="hdv"><span class="label">HDV RESTANTES :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                 </div>
-                                  
+
                             </div>
                         </div>
                         <div class="analyse-col">
@@ -695,7 +695,7 @@
                     </div>
                     <div class="placeholder-message" style="display: none;">Veuillez saisir au moins une ligne dans l'onglet "BLOC / FUEL" pour activer le suivi.</div>
                 </div>
-                  
+
 <div class="onglet-panneau" id="deroutement">
                     <div class="analyse-grid">
                          <div class="analyse-col">
@@ -731,18 +731,18 @@
                                 <div class="result-line"><span class="label">Heure sur Feu :<span id="derout-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="derout-heure-sur-feu">--:--</span></div>
                                 <div class="result-line derout-readonly-rotation-line"><span class="label">Durée Rotation :<span id="derout-duree-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="derout-duree-rotation">--:--</span></div>
                                 <div class="result-line derout-readonly-rotation-line derout-conso-rotation-line"><span class="label">Conso Rotation :<span id="derout-conso-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="derout-conso-rotation">-- kg</span></div>
-                                
+
                             </div>
                         </div>
                     </div>
                 </div>
 
-  
+
             </div>
             <button id="reset-all-btn" title="Réinitialiser le tableau">🗑️</button>
         </div>
     </div>
-          
+
 <div id="rlt-mass-modal" class="rlt-mass-modal" style="display: none;" aria-hidden="true">
         <div class="rlt-mass-modal-content">
             <h3>Volume/Masse retardant</h3>
@@ -794,7 +794,7 @@
         <div class="main-container">
             <button id="close-offline-map-btn">&times;</button>
             <h2>Gestion des Cartes</h2>
-            
+
             <div class="modal-content">
                 <div class="import-section">
                     <button id="simulation-mode-button" type="button" class="simulation-mode-button">Mode simulation avion</button>
@@ -803,7 +803,7 @@
 
                     <div class="road-overlay-import-block">
                         <label for="road-overlay-importer-input" class="import-button road-overlay-import-button">
-                            Importer le calque routier A / N / D / M
+                            Importer le calque routier A / N / D / M / T
                         </label>
                         <input type="file" id="road-overlay-importer-input"
                                accept=".zip,.geojson,.json,application/geo+json,application/json"
