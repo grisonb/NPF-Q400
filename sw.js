@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-58_permanent';
-const APP_VERSION = 'v2026.58';
+const SW_VERSION = 'sw-v2026-59_permanent';
+const APP_VERSION = 'v2026.59';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
