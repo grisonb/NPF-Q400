@@ -1,8 +1,8 @@
-/* v2026.59 — style conservé depuis v14.83 ; stabilisation offline portée par script.js. */
-/* v14.83 — nettoyage des références techniques et limitation des cartouches routiers. */
-/* v14.81 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
-/* v14.80 — Brive conservé uniquement sous LFSL. */
-/* NPF-Q400 v13.58 — fluidité carte iPad : CSS inchangé depuis v13.54. */
+/* v2026.60 — styles conservés depuis la base v14.95 ; corrections de stabilité et de performance portées par script.js. */
+/* v14.83  — nettoyage des références techniques et limitation des cartouches routiers. */
+/* v14.81  — recherche phonétique nationale élargie aux fragments sur deux lettres. */
+/* v14.80  — Brive conservé uniquement sous LFSL. */
+/* NPF-Q400  v13.58 — fluidité carte iPad : CSS inchangé depuis v13.54. */
  :root {
     --primary-color: #005a9c;
     --secondary-color: #e3001b;
@@ -5517,7 +5517,7 @@ body {
 
 
 
-/* v12.96 — calque trafic ADS-B indicatif */
+/* v12.96  — calque trafic ADS-B indicatif */
 .traffic-map-button {
     font-size: 34px;
     overflow: hidden;
@@ -5925,7 +5925,7 @@ body {
     }
 }
 
-/* ==========================================================================
+/* ========================================================================== 
    v12.64 — Popup simulation avion / feu par appui long
    ========================================================================== */
 .simulation-action-popup .leaflet-popup-content-wrapper {
@@ -5976,7 +5976,7 @@ body {
 }
 
 
-/* ==========================================================================
+/* ========================================================================== 
    v12.66 — Simulation GPS, bordure rouge, boutons centrés, onglets renforcés
    ========================================================================== */
 body.simulation-mode-active #map::after {
@@ -6045,7 +6045,7 @@ body.simulation-mode-active #map::after {
 }
 
 
-/* ==========================================================================
+/* ========================================================================== 
    v12.68 — Onglets calculateur + popup simulation persistante
    ========================================================================== */
 .onglets-navigation {
@@ -6615,7 +6615,7 @@ body {
 }
 
 
-/* ==========================================================================
+/* ========================================================================== 
    v12.99 — commune survolée restaurée + trafic ADS-B erreur lisible
    ========================================================================== */
 #nearest-commune-display {
@@ -6688,7 +6688,7 @@ body {
 }
 
 
-/* ==========================================================================
+/* ========================================================================== 
    v12.99 — commune survolée visible en permanence + trafic ADS-B fallback
    ========================================================================== */
 #nearest-commune-display {
@@ -6722,7 +6722,7 @@ body {
 }
 
 
-/* ==========================================================================
+/* ========================================================================== 
    v13.00 — HUD commune survolée auto-réparant
    Objectif : ne plus dépendre d'un ancien display:none, d'un parent Leaflet,
    d'un écran de reprise iPad ou d'un ordre CSS antérieur.
@@ -6817,7 +6817,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.01 — bandeau commune à gauche + état trafic par couleur
+   v13.01  — bandeau commune à gauche + état trafic par couleur
    ========================================================================== */
 #nearest-commune-display {
     left: 14px !important;
@@ -6908,7 +6908,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.02 — bandeau commune bas droit décalé + fenêtre filtres ADS-B
+   v13.02  — bandeau commune bas droit décalé + fenêtre filtres ADS-B
    ========================================================================== */
 #nearest-commune-display {
     left: auto !important;
@@ -7127,7 +7127,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.03 — ADS-B sans bandeau, étiquette altitude et refresh 15 s
+   v13.03  — ADS-B sans bandeau, étiquette altitude et refresh 15 s
    ========================================================================== */
 .traffic-status-display {
     display: none !important;
@@ -7199,7 +7199,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.04 — meilleure visibilité de la position propre
+   v13.04  — meilleure visibilité de la position propre
    ========================================================================== */
 .own-gps-vector-time-marker {
     pointer-events: none !important;
@@ -7218,7 +7218,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.05 — étiquette pélicandrome cliquable
+   v13.05  — étiquette pélicandrome cliquable
    ========================================================================== */
 .leaflet-tooltip.route-tooltip-clickable {
     cursor: pointer !important;
@@ -7234,7 +7234,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.06 — priorités affichage commune + filtres trafic enrichis
+   v13.06  — priorités affichage commune + filtres trafic enrichis
    ========================================================================== */
 #nearest-commune-display {
     z-index: 980 !important;
@@ -7296,7 +7296,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.07 — MAJ PWA, modal trafic et vecteurs trafic corrigés
+   v13.07  — MAJ PWA, modal trafic et vecteurs trafic corrigés
    ========================================================================== */
 .traffic-settings-relative-line {
     grid-column: 1 / -1;
@@ -7394,11 +7394,11 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* v13.08 — fenêtre post-MAJ rétablie côté index.html ; styles existants conservés. */
+/* v13.08  — fenêtre post-MAJ rétablie côté index.html ; styles existants conservés. */
 
 
 /* ==========================================================================
-   v13.09 — export BLOC/FUEL PDF + centrage vecteur trafic
+   v13.09  — export BLOC/FUEL PDF + centrage vecteur trafic
    ========================================================================== */
 #export-bloc-fuel-pdf-btn {
     background: #005a9c !important;
@@ -7435,7 +7435,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.11 — vecteur trafic centré + partage BLOC/FUEL
+   v13.11  — vecteur trafic centré + partage BLOC/FUEL
    ========================================================================== */
 #export-bloc-fuel-pdf-btn {
     background: #005a9c !important;
@@ -7501,8 +7501,8 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ==========================================================================
-   v13.11 — aperçu export BLOC/FUEL intégré à l'application
+/* ========================================================================== 
+   v13.11  — aperçu export BLOC/FUEL intégré à l'application
    ========================================================================== */
 #bloc-fuel-export-overlay {
     position: fixed;
@@ -7591,8 +7591,8 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ==========================================================================
-   v13.12 — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
+/* ========================================================================== 
+   v13.12  — export BLOC/FUEL : aperçu imprimable stylé, sans PDF texte
    ========================================================================== */
 .bloc-fuel-export-toolbar .print-primary {
     background: #005a9c !important;
@@ -7616,7 +7616,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.14 — ajustements UI, export, position et trafic masqué
+   v13.14  — ajustements UI, export, position et trafic masqué
    ========================================================================== */
 #traffic-layer-button {
     display: none !important;
@@ -7684,7 +7684,7 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 /* ==========================================================================
-   v13.27 — suivi automatique position GPS depuis le bouton centrage
+   v13.27  — suivi automatique position GPS depuis le bouton centrage
    ========================================================================== */
 #center-gps-button.center-follow-active {
     background: rgba(210, 245, 222, 0.96) !important;
@@ -7790,8 +7790,8 @@ body:not(.app-ready) #nearest-commune-display {
     background: transparent;
 }
 
-/* ==========================================================================
-   v13.34 — Suivi GPS, historique et commune survolée longue
+/* ========================================================================== 
+   v13.34  — Suivi GPS, historique et commune survolée longue
    ========================================================================== */
 
 /* Historique ouvert : la flèche est replacée dans la zone du titre,
@@ -7868,8 +7868,8 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ==========================================================================
-   v13.34 — Bandeau feu : ETA GPS + durée rotation / exports dans historique
+/* ========================================================================== 
+   v13.34  — Bandeau feu : ETA GPS + durée rotation / exports dans historique
    ========================================================================== */
 
 #commune-info-display {
@@ -7985,8 +7985,8 @@ body:not(.app-ready) #nearest-commune-display {
 
 
 
-/* ==========================================================================
-   v13.41 — Retour v13.34 : bandeau feu sur une ligne / suivi GPS sans refresh
+/* ========================================================================== 
+   v13.41  — Retour v13.34 : bandeau feu sur une ligne / suivi GPS sans refresh
    ========================================================================== */
 
 /* Bandeau du feu sélectionné : nom + CS + route/distance/temps + Rot. sur une seule ligne. */
@@ -8053,8 +8053,8 @@ body:not(.app-ready) #nearest-commune-display {
 }
 
 
-/* ==========================================================================
-   v13.41 — Historique exports décalés / ligne Réfracto. retardant
+/* ========================================================================== 
+   v13.41  — Historique exports décalés / ligne Réfracto. retardant
    ========================================================================== */
 
 /* Historique des feux : éloigner ForeFlight / SDVFR du X sans changer la logique JS. */
@@ -8551,8 +8551,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.64 — GAAR : X d'effacement dans recherche point + renommage sans déplacement
+/* ========================================================================== 
+   v13.64  — GAAR : X d'effacement dans recherche point + renommage sans déplacement
    ========================================================================== */
 .gaar-point-search-field-wrapper {
     position: relative;
@@ -8665,8 +8665,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     font-size: 16px !important;
 }
 
-/* ==========================================================================
-   v13.79 — bandeaux carte remontés / hauteur optimisée / icônes épurées
+/* ========================================================================== 
+   v13.79  — bandeaux carte remontés / hauteur optimisée / icônes épurées
    ========================================================================== */
 
 /* Icônes latérales : suppression des libellés texte HT / OPS pour ne garder
@@ -8744,7 +8744,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 /* ==========================================================================
-   v13.80 — pélicandromes légèrement plus compacts
+   v13.80  — pélicandromes légèrement plus compacts
    Taille visuelle 20 px ; la zone tactile invisible JS reste à 40 px.
    ========================================================================== */
 .leaflet-marker-icon.custom-marker-icon.airport-marker-base,
@@ -8764,8 +8764,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     font-size: 15px !important;
 }
 
-/* ==========================================================================
-   v13.81 — pélicandromes réellement réduits
+/* ========================================================================== 
+   v13.81  — pélicandromes réellement réduits
    Taille visuelle 16 px ; halo affiné ; zone tactile invisible JS conservée à 40 px.
    ========================================================================== */
 .leaflet-marker-icon.custom-marker-icon.airport-marker-base,
@@ -8786,7 +8786,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 /* ==========================================================================
-   v13.82 — bouton MAJ retiré / commune survolée décalée à droite
+   v13.82  — bouton MAJ retiré / commune survolée décalée à droite
    Seule la position horizontale du bandeau commune survolée est modifiée.
    ========================================================================== */
 #nearest-commune-display {
@@ -8802,8 +8802,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.83 — BINGO compacts dans Suivi/Déroutement + données rotation en lecture seule
+/* ========================================================================== 
+   v13.83  — BINGO compacts dans Suivi/Déroutement + données rotation en lecture seule
    Les tailles de police sont conservées. Seuls les hauteurs, marges et espacements
    verticaux sont réduits afin d'éviter le défilement sur iPad.
    ========================================================================== */
@@ -8873,8 +8873,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.84 — espacements ciblés et harmonisation des fenêtres rotations
+/* ========================================================================== 
+   v13.84  — espacements ciblés et harmonisation des fenêtres rotations
    - les fenêtres « nombre de rotations » de Suivi et Dérout/GAAR reprennent
      la mise en page et les espacements verticaux de Prévi. nbr rotations ;
    - les séparations demandées sont renforcées dans les colonnes de droite,
@@ -8928,8 +8928,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.85 — application effective des espacements demandés
+/* ========================================================================== 
+   v13.85  — application effective des espacements demandés
    Les sélecteurs reposent maintenant sur des classes explicites et ne sont plus
    limités par la largeur du viewport. Les tailles de police restent inchangées.
    ========================================================================== */
@@ -8982,8 +8982,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.86 — interlignes augmentés dans les fenêtres de droite
+/* ========================================================================== 
+   v13.86  — interlignes augmentés dans les fenêtres de droite
    - Suivi rotations et Dérout. / GAAR uniquement ;
    - taille de police, calculs, dimensions des contrôles et colonne gauche inchangés ;
    - les séparations spécifiques de la v13.85 restent conservées.
@@ -8994,8 +8994,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.88 — RLT départ / Fuel sur feu non modifiable / espacements droits
+/* ========================================================================== 
+   v13.88  — RLT départ / Fuel sur feu non modifiable / espacements droits
    ========================================================================== */
 
 /* BLOC / FUEL : six champs sur la ligne d'en-tête, avec RLT entre Fuel départ et Base. */
@@ -9080,8 +9080,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* ==========================================================================
-   v13.89 — correction RLT / Suivi rotations / première alerte post-MAJ
+/* ========================================================================== 
+   v13.89  — correction RLT / Suivi rotations / première alerte post-MAJ
    ========================================================================== */
 
 /*
@@ -9150,8 +9150,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 /* v13.90 — cellule RLT : placeholder [kg] et effacement direct gérés dans index/script ; mise en page inchangée. */
 
-/* ==========================================================================
-   v13.91 — alerte post-MAJ visible / fenêtre FUEL MINI Dérout.-GAAR
+/* ========================================================================== 
+   v13.91  — alerte post-MAJ visible / fenêtre FUEL MINI Dérout.-GAAR
    ========================================================================== */
 
 /* La demande de relance reste au-dessus de l'écran de démarrage. */
@@ -9208,7 +9208,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.92 — transfert FUEL MINI / fenêtre rotations ajustée au contenu
+   v13.92  — transfert FUEL MINI / fenêtre rotations ajustée au contenu
    ========================================================================== */
 
 /* Les lignes Fuel mini sont maintenant réellement dans cette fenêtre. */
@@ -9236,7 +9236,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.93 — netteté des noms de communes, tailles inchangées
+   v13.93  — netteté des noms de communes, tailles inchangées
    ========================================================================== */
 
 .leaflet-marker-icon.commune-name-label {
@@ -9254,7 +9254,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.94 — Dérout. / GAAR : interlignes identiques à Suivi rotations
+   v13.94  — Dérout. / GAAR : interlignes identiques à Suivi rotations
    Fenêtre de droite uniquement. Tailles de police et contrôles inchangés.
    ========================================================================== */
 
@@ -9290,7 +9290,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.95 — Dérout. / GAAR : fenêtre droite ajustée au contenu
+   v13.95  — Dérout. / GAAR : fenêtre droite ajustée au contenu
    Les interlignes v13.94 restent strictement inchangés.
    ========================================================================== */
 
@@ -9318,7 +9318,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.96 — SafeSky préparé, activation volontairement différée
+   v13.96  — SafeSky préparé, activation volontairement différée
    Le bouton reste masqué jusqu'à validation de la clé Sandbox et du proxy.
    ========================================================================== */
 
@@ -9329,7 +9329,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.97 — bouton TRAFIC réactivé pour travailler sur les filtres
+   v13.97  — bouton TRAFIC réactivé pour travailler sur les filtres
    ========================================================================== */
 
 #traffic-layer-button {
@@ -9338,7 +9338,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.98 — icône SafeSky et états de connexion
+   v13.98  — icône SafeSky et états de connexion
    Rouge : déconnecté, arrêté, chargement initial ou erreur.
    Vert : connexion active et dernière interrogation réussie.
    ========================================================================== */
@@ -9412,7 +9412,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.98 — couleur des trafics selon l'altitude relative
+   v13.98  — couleur des trafics selon l'altitude relative
    Rouge : même altitude ±500 ft.
    Vert : plus bas de plus de 500 ft.
    Bleu : plus haut de plus de 500 ft.
@@ -9485,7 +9485,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v13.99 — icône SafeSky monochrome et parfaitement stable
+   v13.99  — icône SafeSky monochrome et parfaitement stable
    ========================================================================== */
 
 #traffic-layer-button {
@@ -9569,7 +9569,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.00 — symboles trafic réduits, zone tactile conservée
+   v14.00  — symboles trafic réduits, zone tactile conservée
    ========================================================================== */
 
 /*
@@ -9591,7 +9591,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.01 — trafics encore réduits et vraie zone tactile 36 × 36 px
+   v14.01  — trafics encore réduits et vraie zone tactile 36 × 36 px
    ========================================================================== */
 
 .traffic-aircraft-icon {
@@ -9661,7 +9661,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.02 — une seule fenêtre trafic, rapprochée, fermeture facilitée
+   v14.02  — une seule fenêtre trafic, rapprochée, fermeture facilitée
    ========================================================================== */
 
 /* Sécurité : aucun ancien tooltip trafic ne doit apparaître. */
@@ -9718,7 +9718,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.02 — silhouettes selon la catégorie SafeSky
+   v14.02  — silhouettes selon la catégorie SafeSky
    ========================================================================== */
 
 .traffic-aircraft-arrow {
@@ -9755,7 +9755,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.03 — popup réellement rapproché du trafic
+   v14.03  — popup réellement rapproché du trafic
    ========================================================================== */
 
 /*
@@ -9781,7 +9781,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.03 — silhouettes uniformisées et exactement centrées dans le rond
+   v14.03  — silhouettes uniformisées et exactement centrées dans le rond
    ========================================================================== */
 
 .traffic-aircraft-symbol-wrap .traffic-aircraft-arrow {
@@ -9838,7 +9838,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.04 — popup au contact du trafic
+   v14.04  — popup au contact du trafic
    ========================================================================== */
 
 .traffic-aircraft-popup {
@@ -9863,7 +9863,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.04 — altitude toujours opposée au vecteur
+   v14.04  — altitude toujours opposée au vecteur
    ========================================================================== */
 
 .traffic-aircraft-altitude-label {
@@ -9878,7 +9878,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.04 — silhouettes centrées et familles d'aéronefs élargies
+   v14.04  — silhouettes centrées et familles d'aéronefs élargies
    ========================================================================== */
 
 .traffic-type-airplane .traffic-aircraft-arrow svg,
@@ -9901,7 +9901,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.05 — correction fondamentale de l'ancrage Leaflet
+   v14.05  — correction fondamentale de l'ancrage Leaflet
    ========================================================================== */
 
 /*
@@ -9917,7 +9917,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.05 — étiquette altitude réellement opposée au vecteur
+   v14.05  — étiquette altitude réellement opposée au vecteur
    ========================================================================== */
 
 .traffic-aircraft-altitude-label {
@@ -9931,7 +9931,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.05 — popup centré, pointe alignée et distance maîtrisée
+   v14.05  — popup centré, pointe alignée et distance maîtrisée
    ========================================================================== */
 
 .traffic-aircraft-popup {
@@ -9956,7 +9956,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.05 — dimensions des nouvelles familles visuelles
+   v14.05  — dimensions des nouvelles familles visuelles
    ========================================================================== */
 
 .traffic-type-widebody-jet .traffic-aircraft-arrow svg {
@@ -9978,7 +9978,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.06 — indicatif / immatriculation ajouté à l'étiquette altitude
+   v14.06  — indicatif / immatriculation ajouté à l'étiquette altitude
    ========================================================================== */
 
 .traffic-aircraft-altitude-label {
@@ -10008,7 +10008,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.08 — bouton déplacement simulation sous SafeSky
+   v14.08  — bouton déplacement simulation sous SafeSky
    ========================================================================== */
 
 .simulation-motion-map-button {
@@ -10050,7 +10050,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.08 — fenêtre vitesse / route de la simulation
+   v14.08  — fenêtre vitesse / route de la simulation
    ========================================================================== */
 
 .simulation-motion-modal {
@@ -10210,7 +10210,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.09 — clavier immédiat et altitude simulation
+   v14.09  — clavier immédiat et altitude simulation
    ========================================================================== */
 
 .simulation-motion-fields {
@@ -10258,7 +10258,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.10 — badge SIM sous l'avion simulé
+   v14.10  — badge SIM sous l'avion simulé
    ========================================================================== */
 
 /*
@@ -10276,7 +10276,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.11 — saisie simulation au doigt uniquement
+   v14.11  — saisie simulation au doigt uniquement
    ========================================================================== */
 
 .simulation-finger-only-note {
@@ -10293,7 +10293,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.12 — retour visuel très bref lors d'un appui au stylet
+   v14.12  — retour visuel très bref lors d'un appui au stylet
    ========================================================================== */
 
 .npf-global-stylus-blocked-field {
@@ -10303,7 +10303,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.13 — choix exclusifs des filtres altitude trafic
+   v14.13  — choix exclusifs des filtres altitude trafic
    ========================================================================== */
 
 .traffic-settings-altitude-mode-line {
@@ -10370,7 +10370,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.14 — menu filtres trafic compact et homogène
+   v14.14  — menu filtres trafic compact et homogène
    ========================================================================== */
 
 .traffic-settings-card {
@@ -10534,7 +10534,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.49 — calque routier vectoriel offline A / N / D / M / T
+   v14.49  — calque routier vectoriel offline A / N / D / M / T
    ========================================================================== */
 
 #road-overlay-button.active {
@@ -10713,7 +10713,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.16 — stabilité du calque routier
+   v14.16  — stabilité du calque routier
    ========================================================================== */
 
 .leaflet-roadOverlayCasingPane-pane canvas,
@@ -10724,7 +10724,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.17 — clic court centrage / appui long suivi GPS
+   v14.17  — clic court centrage / appui long suivi GPS
    ========================================================================== */
 
 #center-gps-button {
@@ -10758,7 +10758,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.23 — SafeSky Production via proxy NAS
+   v14.23  — SafeSky Production via proxy NAS
    ========================================================================== */
 
 /* La connexion SafeSky active conserve le contour vert déjà utilisé. */
@@ -10770,7 +10770,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.25 — silhouettes trafic renforcées, inspirées de SafeSky
+   v14.25  — silhouettes trafic renforcées, inspirées de SafeSky
    ========================================================================== */
 
 /*
@@ -10961,7 +10961,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.26 — pictogrammes proches de la référence visuelle SafeSky
+   v14.26  — pictogrammes proches de la référence visuelle SafeSky
    ========================================================================== */
 
 .traffic-aircraft-icon,
@@ -11090,7 +11090,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.27 — longueur du vecteur proportionnelle à la vitesse sol
+   v14.27  — longueur du vecteur proportionnelle à la vitesse sol
    ========================================================================== */
 
 .traffic-aircraft-vector-wrap {
@@ -11111,7 +11111,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.29 — base d'icônes SafeSky validée par l'utilisateur
+   v14.29  — base d'icônes SafeSky validée par l'utilisateur
    ========================================================================== */
 
 /* Toutes les catégories conservent le noir par défaut. */
@@ -11168,7 +11168,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.30 — familles de couleurs des voilures légères
+   v14.30  — familles de couleurs des voilures légères
    ========================================================================== */
 
 /* Famille parapente : parapente et paramoteur en magenta vif. */
@@ -11213,7 +11213,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.31 — couleur des icônes, sol noir et étiquette sur deux lignes
+   v14.31  — couleur des icônes, sol noir et étiquette sur deux lignes
    ========================================================================== */
 
 .traffic-aircraft-symbol-wrap {
@@ -11370,7 +11370,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.32 — flèches montée/descente diagonales et renforcées
+   v14.32  — flèches montée/descente diagonales et renforcées
    ========================================================================== */
 
 /*
@@ -11417,7 +11417,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.33 — flèches compactes et étiquette jamais superposée à l'icône
+   v14.33  — flèches compactes et étiquette jamais superposée à l'icône
    ========================================================================== */
 
 /*
@@ -11486,7 +11486,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.35 — recherche, suivi, ADVISORY, vecteur courbe et publication
+   v14.35  — recherche, suivi, ADVISORY, vecteur courbe et publication
    ========================================================================== */
 
 .traffic-tools-section {
@@ -11746,7 +11746,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.38 — résultats villages, hameaux et lieux nommés
+   v14.38  — résultats villages, hameaux et lieux nommés
    ========================================================================== */
 
 #results-list li.search-result-locality {
@@ -11779,7 +11779,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* v14.40 — état discret de la base nationale de localités offline. */
+/* v14.40  — état discret de la base nationale de localités offline. */
 #named-places-offline-status {
     position: fixed;
     left: max(12px, env(safe-area-inset-left));
@@ -11808,14 +11808,14 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* v14.41 — aucune modification du rendu ni du fonctionnement de la carte. */
+/* v14.41  — aucune modification du rendu ni du fonctionnement de la carte. */
 
 
-/* v14.44 — filtres SafeSky uniquement ; rendu de la carte inchangé. */
+/* v14.44  — filtres SafeSky uniquement ; rendu de la carte inchangé. */
 
 
 /* ==========================================================================
-   v14.44 — déplacement fluide continu des trafics
+   v14.44  — déplacement fluide continu des trafics
    ========================================================================== */
 
 /*
@@ -11831,7 +11831,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.45 — curseur tactile et recherche phonétique
+   v14.45  — curseur tactile et recherche phonétique
    ========================================================================== */
 
 /* Aucun changement visuel : le positionnement du curseur reste géré nativement
@@ -11839,7 +11839,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.46 — heure sur feu et forfait plein retardant
+   v14.46  — heure sur feu et forfait plein retardant
    ========================================================================== */
 
 /* Aucun changement visuel : la correction porte uniquement sur les calculs
@@ -11847,7 +11847,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.47 — correction de la source RLT du premier transit
+   v14.47  — correction de la source RLT du premier transit
    ========================================================================== */
 
 /* Aucun changement visuel : la condition d’exemption des 10 minutes lit
@@ -11855,7 +11855,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.48 — masquage temporaire du propre avion SafeSky
+   v14.48  — masquage temporaire du propre avion SafeSky
    ========================================================================== */
 
 .traffic-own-aircraft-row {
@@ -11933,11 +11933,11 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
-/* v14.49 — les cartouches M utilisent le style des routes départementales. */
+/* v14.49  — les cartouches M utilisent le style des routes départementales. */
 
 
-/* ==========================================================================
-   v14.55 — recherche OACI et destination aéroport temporaire
+/* ========================================================================== 
+   v14.55  — recherche OACI et destination aéroport temporaire
    ========================================================================== */
 
 #results-list li.search-result-airport {
@@ -11996,7 +11996,7 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 /* ==========================================================================
-   v14.55 — croix aéroport tactile et bandeau haut sans feu
+   v14.55  — croix aéroport tactile et bandeau haut sans feu
    ========================================================================== */
 
 #clear-airport-destination-btn {
@@ -12057,8 +12057,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ==========================================================================
-   v14.55 — Go To, suivi détecté vert et commandes SafeSky dupliquées
+/* ========================================================================== 
+   v14.55  — Go To, suivi détecté vert et commandes SafeSky dupliquées
    ========================================================================== */
 
 .airport-popup .popup-goto-buttons {
@@ -12116,8 +12116,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ==========================================================================
-   v14.55 — clic sur trafic suivi et affichage forcé individuel
+/* ========================================================================== 
+   v14.55  — clic sur trafic suivi et affichage forcé individuel
    ========================================================================== */
 
 .traffic-tracked-row.traffic-tracked-detected {
@@ -12137,8 +12137,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     outline-offset: 2px;
 }
 
-/* ==========================================================================
-   v14.55 — ajout manuel d'un indicatif à la liste suivie
+/* ========================================================================== 
+   v14.55  — ajout manuel d'un indicatif à la liste suivie
    ========================================================================== */
 
 .traffic-tool-button-add {
@@ -12164,8 +12164,8 @@ body.gaar-point-search-open .gaar-editing-banner {
     }
 }
 
-/* ==========================================================================
-   v14.55 — indicatifs en attente et tri alphabétique
+/* ========================================================================== 
+   v14.55  — indicatifs en attente et tri alphabétique
    ========================================================================== */
 
 .traffic-tracked-row:not(.traffic-tracked-detected)
@@ -12175,8 +12175,8 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 
-/* ==========================================================================
-   v14.56 — défilement tactile de la liste suivie
+/* ========================================================================== 
+   v14.56  — défilement tactile de la liste suivie
    ========================================================================== */
 
 .traffic-settings-card,
@@ -12201,13 +12201,13 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* =========================================================================
-   v14.57 — liste suivie sans plafond et fermeture de la fiche trafic
+   v14.57  — liste suivie sans plafond et fermeture de la fiche trafic
    Aucun changement visuel : les comportements sont gérés en JavaScript.
    ========================================================================= */
 
 
 /* ==========================================================================
-   v14.76 — pistes cartographiques et étiquettes jaunes conservées
+   v14.76  — pistes cartographiques et étiquettes jaunes conservées
    ========================================================================== */
 
 /*
@@ -12227,6 +12227,494 @@ body.gaar-point-search-open .gaar-editing-banner {
 
 
 /* ==========================================================================
-   v14.79 — vecteur vitesse segmenté par tranches de 50 kt
+   v14.79  — vecteur vitesse segmenté par tranches de 50 kt
    ========================================================================== */
 /* La géométrie et le nombre exact de traits sont calculés dans script.js. */
+
+
+/* ==========================================================================
+   v14.85  — réorganisation Gestion des Cartes
+   ========================================================================== */
+
+#offline-map-modal .offline-maps-management-section,
+#offline-map-modal .road-overlay-import-block,
+#offline-map-modal .airport-pdf-section {
+    margin-top: 0 !important;
+    padding: 14px !important;
+    border: 1px solid #d6e0ea !important;
+    border-radius: 12px !important;
+    background: #f8fbff !important;
+    box-sizing: border-box !important;
+}
+
+#offline-map-modal .offline-maps-management-section h3,
+#offline-map-modal .road-overlay-import-block h3,
+#offline-map-modal .airport-pdf-section h3 {
+    margin: 0 0 10px !important;
+    color: var(--primary-color) !important;
+    font-size: 18px !important;
+}
+
+#offline-map-modal .offline-maps-management-section {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 10px !important;
+}
+
+#offline-map-modal .road-overlay-import-block {
+    align-items: stretch !important;
+    gap: 8px !important;
+    width: 100% !important;
+    padding-top: 14px !important;
+    border-top: 1px solid #d6e0ea !important;
+}
+
+#offline-map-modal .road-overlay-delete-button {
+    align-self: flex-start !important;
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 9px 14px !important;
+    white-space: normal !important;
+}
+
+#offline-map-modal .airport-pdf-toolbar {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    flex-wrap: wrap !important;
+    gap: 8px !important;
+    margin-bottom: 10px !important;
+}
+
+#offline-map-modal .airport-pdf-toolbar .pdf-import-button {
+    width: auto !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+    padding: 12px 14px !important;
+}
+
+#offline-map-modal .airport-pdf-delete-all-button {
+    display: inline-flex;
+    align-items: center !important;
+    justify-content: center !important;
+    width: auto !important;
+    max-width: 100% !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 9px 14px !important;
+}
+
+@media (max-width: 640px) {
+    #offline-map-modal .airport-pdf-toolbar {
+        align-items: stretch !important;
+    }
+
+    #offline-map-modal .airport-pdf-toolbar .pdf-import-button,
+    #offline-map-modal .airport-pdf-delete-all-button {
+        width: 100% !important;
+    }
+
+    #offline-map-modal .road-overlay-delete-button {
+        width: auto !important;
+    }
+}
+
+
+/* ==========================================================================
+   v14.86  — sélecteur rapide des cartes offline
+   ========================================================================== */
+.quick-offline-map-button { overflow: visible !important; }
+.quick-offline-france-icon { width: 62px; height: 62px; display: flex; align-items: center; justify-content: center; }
+.quick-offline-france-icon svg { width: 58px; height: 58px; overflow: visible; }
+.quick-offline-france-shape { fill: currentColor; stroke: #ffffff; stroke-width: 2.2; stroke-linejoin: round; }
+.quick-offline-map-button.active .quick-offline-france-shape { fill: #ffffff; stroke: rgba(255,255,255,.96); }
+.quick-offline-map-button.missing-data { border-color: #b42318 !important; color: #b42318 !important; }
+.quick-offline-map-button-status {
+    position: absolute; left: 50%; bottom: 5px; transform: translateX(-50%); min-width: 34px; max-width: 78px;
+    padding: 2px 5px; overflow: hidden; border-radius: 999px; background: rgba(255,255,255,.97);
+    color: var(--primary-color); border: 1px solid rgba(0,80,130,.24); box-shadow: 0 1px 4px rgba(0,0,0,.18);
+    font-size: 11px; line-height: 1.05; font-weight: 950; white-space: nowrap; text-overflow: ellipsis;
+}
+.quick-offline-map-modal {
+    position: fixed; inset: 0; z-index: 2147483550; align-items: center; justify-content: center;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom)); box-sizing: border-box;
+    background: rgba(6,24,43,.58); backdrop-filter: blur(5px); -webkit-backdrop-filter: blur(5px);
+}
+.quick-offline-map-modal-content {
+    position: relative; width: min(92vw, 560px); max-height: 88vh; overflow-y: auto; box-sizing: border-box;
+    padding: 22px 20px 20px; border: 3px solid var(--primary-color); border-radius: 20px; background: #fff;
+    box-shadow: 0 18px 48px rgba(0,0,0,.36);
+}
+.quick-offline-map-modal-content h2 { margin: 0 58px 8px 0; color: var(--primary-color); font-size: 27px; line-height: 1.12; font-weight: 950; }
+.quick-offline-map-modal-close {
+    position: absolute; top: 0; right: 0; width: 54px; height: 54px; padding: 0; border: 0;
+    border-radius: 0 17px 0 15px; background: #e9f2f9; color: var(--primary-color); font-size: 38px;
+    line-height: 1; font-weight: 900; cursor: pointer; touch-action: manipulation;
+}
+.quick-offline-map-help { margin: 0 0 16px; color: #4d5d7a; font-size: 15px; line-height: 1.35; }
+.quick-offline-map-list { display: grid; grid-template-columns: 1fr; gap: 14px; }
+.quick-offline-map-choice {
+    width: 100%; min-height: 96px; padding: 16px 18px; border: 3px solid #b8cee0; border-radius: 18px;
+    background: linear-gradient(180deg,#fff 0%,#edf5fb 100%); color: var(--primary-color);
+    box-shadow: 0 4px 14px rgba(0,65,110,.13); cursor: pointer; touch-action: manipulation;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 5px; text-align: center;
+}
+.quick-offline-map-choice:active { transform: scale(.985); }
+.quick-offline-map-choice.active {
+    border-color: #117a37; background: linear-gradient(180deg,#1b8d49 0%,#117a37 100%); color: #fff;
+    box-shadow: 0 0 0 4px rgba(17,122,55,.16), 0 5px 16px rgba(0,0,0,.18);
+}
+.quick-offline-map-choice-name { display: block; font-size: clamp(28px,6vw,40px); line-height: 1; font-weight: 1000; letter-spacing: .025em; }
+.quick-offline-map-choice-detail { display: block; font-size: 13px; line-height: 1.2; font-weight: 850; opacity: .84; }
+.quick-offline-map-choice.active .quick-offline-map-choice-detail { opacity: 1; }
+.quick-offline-map-status { min-height: 20px; margin-top: 14px; padding: 9px 10px; border-radius: 10px; background: #f4f7fa; color: #46576a; font-size: 13px; line-height: 1.3; text-align: center; }
+.quick-offline-map-status[data-state="active"] { background: #eaf7ef; color: #176b39; }
+.quick-offline-map-empty { padding: 28px 18px; border: 2px dashed #c7d5e1; border-radius: 16px; color: #55697c; font-size: 17px; font-weight: 850; text-align: center; }
+@media (max-width: 760px) {
+    .quick-offline-france-icon, .quick-offline-france-icon svg { width: 36px !important; height: 36px !important; }
+    .quick-offline-map-button-status { bottom: 2px !important; min-width: 25px !important; max-width: 46px !important; padding: 1px 3px !important; font-size: 8px !important; }
+    .quick-offline-map-modal-content { width: min(94vw,520px); padding: 20px 16px 18px; }
+    .quick-offline-map-choice { min-height: 92px; }
+}
+@media (max-width: 430px) {
+    .quick-offline-france-icon, .quick-offline-france-icon svg { width: 38px !important; height: 38px !important; }
+}
+
+
+/* ==========================================================================
+   v14.87  — bouton France simplifié : contour bleu, fond blanc, sans texte
+   ========================================================================== */
+
+.quick-offline-map-button {
+    background: #ffffff !important;
+    color: var(--primary-color) !important;
+    border-color: rgba(0, 80, 130, .20) !important;
+    overflow: visible !important;
+}
+
+.quick-offline-map-button.active,
+.quick-offline-map-button:active,
+.quick-offline-map-button:focus-visible {
+    background: #ffffff !important;
+    color: var(--primary-color) !important;
+    border-color: rgba(0, 80, 130, .38) !important;
+}
+
+.quick-offline-map-button.loading {
+    opacity: 1 !important;
+}
+
+.quick-offline-france-icon {
+    width: 62px;
+    height: 62px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.quick-offline-france-icon svg {
+    width: 56px;
+    height: 56px;
+    overflow: visible;
+}
+
+.quick-offline-france-shape {
+    fill: none !important;
+    stroke: var(--primary-color) !important;
+    stroke-width: 3 !important;
+    stroke-linejoin: round;
+    stroke-linecap: round;
+    vector-effect: non-scaling-stroke;
+}
+
+.quick-offline-map-button.active .quick-offline-france-shape,
+.quick-offline-map-button.missing-data .quick-offline-france-shape {
+    fill: none !important;
+}
+
+.quick-offline-map-button.missing-data {
+    background: #ffffff !important;
+    color: #b42318 !important;
+    border-color: rgba(180, 35, 24, .30) !important;
+}
+
+.quick-offline-map-button.missing-data .quick-offline-france-shape {
+    stroke: #b42318 !important;
+}
+
+.quick-offline-map-button-status {
+    display: none !important;
+}
+
+@media (max-width: 760px) {
+    .quick-offline-france-icon,
+    .quick-offline-france-icon svg {
+        width: 38px !important;
+        height: 38px !important;
+    }
+}
+
+@media (max-width: 430px) {
+    .quick-offline-france-icon,
+    .quick-offline-france-icon svg {
+        width: 40px !important;
+        height: 40px !important;
+    }
+}
+
+/* v14.88  — dessin France remplacé dans index.html ; style blanc/bleu v14.87 conservé. */
+
+
+/* ==========================================================================
+   v14.89  — aides contextuelles des boutons d'import
+   ========================================================================== */
+#offline-map-modal .import-help-row {
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 9px !important;
+    width: 100% !important;
+}
+#offline-map-modal .import-help-row .import-button {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    max-width: 420px !important;
+    margin: 0 !important;
+}
+#offline-map-modal .airport-pdf-import-help-row {
+    flex: 1 1 auto !important;
+    width: auto !important;
+}
+.import-help-button {
+    flex: 0 0 40px;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    padding: 0;
+    border: 2px solid var(--primary-color);
+    border-radius: 50%;
+    background: #fff;
+    color: var(--primary-color);
+    font-size: 23px;
+    line-height: 1;
+    font-weight: 950;
+    cursor: pointer;
+    touch-action: manipulation;
+    box-shadow: 0 2px 7px rgba(0,70,120,.14);
+}
+.import-help-button:active { transform: scale(.96); background: #edf6fc; }
+.import-help-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483600;
+    align-items: center;
+    justify-content: center;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    background: rgba(6,24,43,.62);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+.import-help-modal-content {
+    position: relative;
+    width: min(92vw, 570px);
+    max-height: min(82vh, 680px);
+    overflow-y: auto;
+    box-sizing: border-box;
+    padding: 24px 20px 18px;
+    border: 3px solid var(--primary-color);
+    border-radius: 18px;
+    background: #fff;
+    box-shadow: 0 18px 48px rgba(0,0,0,.36);
+}
+.import-help-modal-content h2 { margin: 0 54px 16px 0; color: var(--primary-color); font-size: 23px; line-height: 1.2; }
+.import-help-modal-text { color: #24384b; font-size: 18px; line-height: 1.48; }
+.import-help-modal-close {
+    position: absolute; top: 0; right: 0; width: 52px; height: 52px; padding: 0; border: 0;
+    border-radius: 0 15px 0 14px; background: #e9f2f9; color: var(--primary-color);
+    font-size: 37px; line-height: 1; font-weight: 900; cursor: pointer; touch-action: manipulation;
+}
+.import-help-modal-ok {
+    display: block; width: min(100%,220px); margin: 20px auto 0; padding: 12px 18px; border: none;
+    border-radius: 10px; background: var(--primary-color); color: #fff; font-size: 18px; font-weight: 900;
+    cursor: pointer; touch-action: manipulation;
+}
+@media (max-width: 640px) {
+    #offline-map-modal .import-help-row { gap: 7px !important; }
+    .import-help-button { flex-basis: 38px; width: 38px; height: 38px; min-width: 38px; min-height: 38px; font-size: 21px; }
+    .import-help-modal-content { width: min(95vw,540px); padding: 22px 16px 16px; }
+    .import-help-modal-text { font-size: 17px; }
+}
+
+
+/* ==========================================================================
+   v14.91  — aides d’import, une phrase par ligne
+   ========================================================================== */
+.import-help-modal-text {
+    white-space: pre-line !important;
+}
+
+/* ==========================================================================
+   v14.93  — Cartes VAC hors ligne
+   ========================================================================== */
+#offline-map-modal .vac-management-section {
+    margin-top: 0 !important;
+    padding: 14px !important;
+    border: 1px solid #d6e0ea !important;
+    border-radius: 12px !important;
+    background: #f8fbff !important;
+    box-sizing: border-box !important;
+}
+#offline-map-modal .vac-management-section h3 {
+    margin: 0 0 8px !important;
+    color: var(--primary-color) !important;
+    font-size: 18px !important;
+}
+#offline-map-modal .vac-management-section p {
+    margin: 0 0 12px;
+    color: var(--light-text-color);
+    font-size: 14px;
+    line-height: 1.35;
+}
+.vac-installed-status {
+    padding: 10px 12px;
+    border: 1px solid #dbe5ee;
+    border-radius: 9px;
+    background: #ffffff;
+    color: #31475b;
+    font-weight: 750;
+    line-height: 1.4;
+}
+.vac-management-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 10px;
+}
+.vac-management-actions .import-button,
+.vac-management-actions .danger-inline-btn {
+    width: auto !important;
+    min-width: 0 !important;
+    max-width: 100% !important;
+    margin: 0 !important;
+}
+.vac-download-progress {
+    margin-top: 12px;
+}
+.vac-download-progress-track {
+    width: 100%;
+    height: 12px;
+    overflow: hidden;
+    border-radius: 999px;
+    background: #dbe5ee;
+}
+.vac-download-progress-bar {
+    width: 0;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--primary-color);
+    transition: width .12s linear;
+}
+.vac-download-progress-text {
+    margin-top: 7px;
+    color: #31475b;
+    font-size: 13px;
+    font-weight: 800;
+    text-align: center;
+}
+
+.airport-popup .popup-vac-buttons {
+    margin-top: 6px;
+}
+.airport-popup .vac-btn {
+    background: #005596;
+    color: #ffffff;
+    font-weight: 900;
+}
+
+.vac-update-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2147483610;
+    align-items: center;
+    justify-content: center;
+    padding: max(18px, env(safe-area-inset-top)) 18px max(18px, env(safe-area-inset-bottom));
+    box-sizing: border-box;
+    background: rgba(6,24,43,.62);
+    backdrop-filter: blur(5px);
+    -webkit-backdrop-filter: blur(5px);
+}
+.vac-update-modal-content {
+    width: min(92vw, 560px);
+    box-sizing: border-box;
+    padding: 22px 20px 18px;
+    border: 3px solid var(--primary-color);
+    border-radius: 18px;
+    background: #ffffff;
+    box-shadow: 0 18px 48px rgba(0,0,0,.36);
+    text-align: center;
+}
+.vac-update-modal-content h2 {
+    margin: 0 0 14px;
+    color: var(--primary-color);
+    font-size: 23px;
+}
+.vac-update-modal-content p {
+    margin: 0;
+    color: #24384b;
+    font-size: 18px;
+    line-height: 1.45;
+}
+.vac-update-detail {
+    min-height: 18px;
+    margin-top: 10px;
+    color: #55697c;
+    font-size: 14px;
+    font-weight: 750;
+}
+.vac-update-modal-actions {
+    display: flex;
+    justify-content: center;
+    gap: 10px;
+    margin-top: 18px;
+}
+.vac-update-modal-actions button {
+    min-width: 150px;
+    padding: 12px 15px;
+    border-radius: 10px;
+    font-size: 17px;
+    font-weight: 900;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+.vac-update-now-button {
+    border: 2px solid var(--primary-color);
+    background: var(--primary-color);
+    color: #ffffff;
+}
+.vac-update-later-button {
+    border: 2px solid #9fb2c2;
+    background: #ffffff;
+    color: #31475b;
+}
+@media (max-width: 640px) {
+    .vac-management-actions {
+        align-items: stretch;
+    }
+    .vac-management-actions .import-button,
+    .vac-management-actions .danger-inline-btn {
+        width: 100% !important;
+    }
+    .vac-update-modal-actions {
+        flex-direction: column;
+    }
+    .vac-update-modal-actions button {
+        width: 100%;
+    }
+}
+
