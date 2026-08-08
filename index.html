@@ -1,4 +1,4 @@
-
+      
 <!DOCTYPE html>
 <html lang="fr">
 <head>
@@ -7,9 +7,9 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.59" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.59">
-    <link rel="manifest" href="manifest.json?appv=v2026.59">
+    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.60" as="fetch" crossorigin="anonymous">
+    <link rel="stylesheet" href="style.css?appv=v2026.60">
+    <link rel="manifest" href="manifest.json?appv=v2026.60">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v13.92">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v13.92">
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v13.92">
@@ -57,7 +57,7 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.59';
+        const APP_VERSION = 'v2026.60';
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
         const POST_UPDATE_NOTICE_VERSION_KEY = 'npfPostUpdateRestartNoticeVersion';
@@ -411,6 +411,18 @@
                 </svg>
             </span>
         </button>
+        <button id="quick-offline-map-button"
+                class="left-map-action-button quick-offline-map-button"
+                type="button"
+                title="Choisir rapidement une carte offline"
+                aria-label="Choisir rapidement une carte offline">
+            <span class="quick-offline-france-icon" aria-hidden="true">
+                <svg viewBox="0 0 100 100" focusable="false" role="img">
+                    <path class="quick-offline-france-shape"
+                          d="M 58.3 9.5 L 52.3 11.0 L 50.8 13.0 L 50.1 19.3 L 48.0 20.8 L 43.8 21.7 L 41.5 22.8 L 40.2 25.1 L 40.7 26.9 L 38.1 27.5 L 33.5 26.5 L 32.8 25.9 L 32.4 23.2 L 28.1 22.6 L 27.3 24.8 L 27.8 26.6 L 29.4 28.7 L 29.5 33.1 L 30.0 34.1 L 27.3 33.4 L 24.1 33.5 L 22.6 34.2 L 21.0 32.3 L 16.5 31.7 L 15.7 32.9 L 10.5 33.0 L 8.5 34.3 L 8.0 36.2 L 9.7 37.5 L 10.1 38.5 L 9.2 38.9 L 9.1 40.0 L 10.8 42.3 L 11.7 42.6 L 13.1 41.7 L 18.1 43.3 L 19.6 45.1 L 21.1 44.7 L 23.0 45.5 L 22.8 46.7 L 24.5 47.5 L 25.6 48.9 L 24.8 49.3 L 24.8 50.7 L 25.9 53.1 L 27.9 54.8 L 31.1 56.2 L 31.3 57.3 L 30.2 59.9 L 31.7 61.9 L 31.0 62.4 L 30.5 62.1 L 31.0 62.5 L 29.8 67.8 L 30.1 69.6 L 29.2 74.8 L 28.8 74.8 L 28.9 76.7 L 28.2 79.0 L 26.0 81.5 L 26.4 82.4 L 28.5 83.1 L 28.8 84.4 L 32.4 85.1 L 33.8 86.3 L 36.5 86.4 L 39.3 87.6 L 41.2 87.3 L 43.0 86.3 L 46.2 87.7 L 46.0 88.4 L 48.8 89.9 L 51.4 89.7 L 53.1 90.5 L 55.3 90.4 L 56.7 89.5 L 59.2 89.5 L 59.4 88.3 L 58.3 85.8 L 58.5 83.2 L 59.5 81.9 L 63.6 79.5 L 65.0 79.3 L 67.4 80.6 L 71.9 81.2 L 73.1 82.7 L 74.9 82.9 L 75.9 83.9 L 79.4 84.0 L 82.1 82.7 L 82.6 81.3 L 84.7 80.2 L 85.3 79.1 L 87.4 78.3 L 89.7 73.9 L 88.7 72.7 L 85.7 73.1 L 84.2 72.1 L 83.9 70.5 L 85.0 68.4 L 82.8 65.8 L 84.2 65.4 L 85.3 64.4 L 85.4 62.6 L 83.8 60.1 L 84.5 59.7 L 84.7 58.3 L 83.4 56.6 L 83.5 54.5 L 82.5 53.6 L 81.1 53.5 L 79.8 54.1 L 78.3 55.7 L 79.2 54.5 L 79.6 52.2 L 81.2 51.2 L 81.3 50.1 L 84.2 46.9 L 83.9 45.7 L 86.5 45.6 L 87.9 44.3 L 88.5 38.6 L 90.2 34.3 L 91.8 32.3 L 92.0 30.7 L 88.0 29.7 L 86.6 28.7 L 82.8 28.4 L 81.2 25.8 L 74.7 24.8 L 71.6 22.3 L 71.0 18.9 L 69.6 18.6 L 68.3 20.4 L 67.6 20.4 L 66.9 17.9 L 64.8 17.4 L 64.6 16.7 L 62.8 15.9 L 62.1 14.1 L 59.4 13.7 Z"/>
+                </svg>
+            </span>
+        </button>
         <button id="traffic-layer-button" class="left-map-action-button traffic-map-button" title="SafeSky — afficher/masquer le trafic aérien indicatif — appui long : filtres" aria-label="SafeSky — afficher ou masquer le trafic aérien indicatif">
             <span class="traffic-icon traffic-safesky-icon" aria-hidden="true"></span>
             <span id="traffic-button-count" class="traffic-button-count">0</span>
@@ -423,6 +435,25 @@
         </button>
     </div>
     <div id="traffic-status-display" class="traffic-status-display" style="display: none;"></div>
+
+    <div id="quick-offline-map-modal"
+         class="quick-offline-map-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="quick-offline-map-modal-content"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="quick-offline-map-modal-title">
+            <button id="close-quick-offline-map-modal"
+                    class="quick-offline-map-modal-close"
+                    type="button"
+                    aria-label="Fermer">&times;</button>
+            <h2 id="quick-offline-map-modal-title">Cartes Offline</h2>
+            <p class="quick-offline-map-help">Sélectionne directement la carte à afficher. Un nouvel appui sur la carte déjà active force sa réouverture.</p>
+            <div id="quick-offline-map-list" class="quick-offline-map-list" aria-live="polite"></div>
+            <div id="quick-offline-map-status" class="quick-offline-map-status" aria-live="polite"></div>
+        </div>
+    </div>
 
     <div id="simulation-motion-modal" class="simulation-motion-modal" style="display: none;" aria-hidden="true">
         <div class="simulation-motion-modal-content" role="dialog" aria-modal="true" aria-labelledby="simulation-motion-modal-title">
@@ -540,7 +571,7 @@
                 </div>
             </div>
             <ul id="results-list" style="display: none;"></ul>
-
+               
 <div class="extra-controls extra-controls-grid">
                 <button id="gaar-mode-button" class="toggle-button" title="Afficher/Masquer les circuits GAAR">Circuits<br>GAAR</button>
                 <button id="departments-layer-button" class="toggle-button" title="Afficher/Masquer les contours de départements">Départements</button>
@@ -549,8 +580,8 @@
                 <button id="offline-maps-button" class="toggle-button" title="Gérer les cartes hors-ligne">Cartes</button>
             </div>
 
-
-
+  
+                
 <div id="gaar-controls" style="display: none;">
                 <button id="edit-circuits-button" class="gaar-action-button gaar-edit-button">Créer/Modifier</button>
                 <button id="delete-circuits-btn" class="gaar-action-button gaar-delete-button">Supprimer Circuits</button>
@@ -563,8 +594,8 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.59"></script>
-
+    <script src="script.js?appv=v2026.60"></script>
+    
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
             <button id="fuel-split-close-btn" class="fuel-split-close-btn" type="button" title="Fermer">&times;</button>
@@ -640,7 +671,7 @@
                         </div>
                     </div>
                 </div>
-
+                  
 <div class="onglet-panneau" id="bloc-fuel">
                     <div class="header-section">
                         <div class="header-item"><label id="bloc-depart-label">BLOC DÉPART</label><div id="bloc-depart" class="input-wrapper time-input-wrapper"><input type="text" class="display-input" readonly placeholder="--:--"><span class="clear-btn">&times;</span><span class="clock-icon">🕒</span><input type="time" class="engine-input"></div></div>
@@ -661,14 +692,14 @@
                     </div>
                     <div class="table-wrapper"><table class="table-section"><thead><tr><th>BLOC Arrivée</th><th>FUEL Pélic.</th><th>OACI</th><th>Masse<br>Rlt</th><th>Durée<br>Rotations</th><th>Fuel<br>Rotations</th><th>Tps de Vol</th><th>Tps de Vol Restant</th></tr></thead><tbody></tbody></table></div>
                 </div>
-
+                  
 <div class="onglet-panneau" id="suivi-rotations">
                     <div class="analyse-grid">
                         <div class="analyse-col">
                             <div class="bingo-group"><div class="result-line"><span class="label base-bingo-label">BINGO BASE</span><span class="value" id="suivi-bingo-base">-- kg</span></div></div><hr class="analyse-separator">
                             <div class="rotations-group rotation-count-group">
                                 <h3 class="analyse-col-title">Nbr Rotations Restantes</h3>
-
+                                    
 <div id="suivi-rotation-results-container" class="rotation-results-container">
                                     <div class="result-line" data-rotation-type="base"><span class="label">FUEL RETOUR BASE :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                     <div class="result-line" data-rotation-type="pelic"><span class="label">FUEL RETOUR PELIC :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
@@ -676,7 +707,7 @@
                                     <div class="result-line" data-rotation-type="tmd"><span class="label">TMD :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                     <div class="result-line" data-rotation-type="hdv"><span class="label">HDV RESTANTES :<span class="formula-help-icon">?</span></span><span class="value">--</span></div>
                                 </div>
-
+                                  
                             </div>
                         </div>
                         <div class="analyse-col">
@@ -695,7 +726,7 @@
                     </div>
                     <div class="placeholder-message" style="display: none;">Veuillez saisir au moins une ligne dans l'onglet "BLOC / FUEL" pour activer le suivi.</div>
                 </div>
-
+                  
 <div class="onglet-panneau" id="deroutement">
                     <div class="analyse-grid">
                          <div class="analyse-col">
@@ -731,18 +762,18 @@
                                 <div class="result-line"><span class="label">Heure sur Feu :<span id="derout-heure-sur-feu-help" class="formula-help-icon">?</span></span><span class="value" id="derout-heure-sur-feu">--:--</span></div>
                                 <div class="result-line derout-readonly-rotation-line"><span class="label">Durée Rotation :<span id="derout-duree-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="derout-duree-rotation">--:--</span></div>
                                 <div class="result-line derout-readonly-rotation-line derout-conso-rotation-line"><span class="label">Conso Rotation :<span id="derout-conso-rotation-help" class="formula-help-icon">?</span></span><span class="value" id="derout-conso-rotation">-- kg</span></div>
-
+                                
                             </div>
                         </div>
                     </div>
                 </div>
 
-
+  
             </div>
             <button id="reset-all-btn" title="Réinitialiser le tableau">🗑️</button>
         </div>
     </div>
-
+          
 <div id="rlt-mass-modal" class="rlt-mass-modal" style="display: none;" aria-hidden="true">
         <div class="rlt-mass-modal-content">
             <h3>Volume/Masse retardant</h3>
@@ -794,29 +825,10 @@
         <div class="main-container">
             <button id="close-offline-map-btn">&times;</button>
             <h2>Gestion des Cartes</h2>
-
+            
             <div class="modal-content">
                 <div class="import-section">
                     <button id="simulation-mode-button" type="button" class="simulation-mode-button">Mode simulation avion</button>
-                    <label for="zip-importer-input" class="import-button">Importer un pack de tuiles (.zip)</label>
-                    <input type="file" id="zip-importer-input" accept=".zip" style="display: none;">
-
-                    <div class="road-overlay-import-block">
-                        <label for="road-overlay-importer-input" class="import-button road-overlay-import-button">
-                            Importer le calque routier A / N / D / M / T
-                        </label>
-                        <input type="file" id="road-overlay-importer-input"
-                               accept=".zip,.geojson,.json,application/geo+json,application/json"
-                               style="display: none;">
-                        <div id="road-overlay-installed-status" class="road-overlay-installed-status">
-                            Aucun pack routier installé.
-                        </div>
-                        <button id="delete-road-overlay-button" type="button"
-                                class="danger-inline-btn road-overlay-delete-button"
-                                style="display: none;">
-                            Supprimer le calque routier
-                        </button>
-                    </div>
                 </div>
 
                 <div id="import-progress-section" style="display: none;">
@@ -826,8 +838,14 @@
                     </div>
                 </div>
 
-                <div class="installed-maps-section">
-                    <h3>Packs installés</h3>
+                <div class="installed-maps-section offline-maps-management-section">
+                    <h3>Cartes Offline</h3>
+                    <div class="import-help-row">
+                        <label for="zip-importer-input" class="import-button">Importer Cartes Offline</label>
+                        <button type="button" class="import-help-button" data-import-help="offline-maps" aria-label="Aide Importer Cartes Offline" title="Aide">?</button>
+                    </div>
+                    <input type="file" id="zip-importer-input" accept=".zip" style="display: none;">
+
                     <div class="offline-toggle-row">
                         <span>Type de carte :</span>
                         <div class="map-source-buttons">
@@ -845,10 +863,69 @@
                         <li class="no-maps-placeholder">Aucun pack de cartes installé.</li>
                     </ul>
                 </div>
+
+                <div class="road-overlay-import-block">
+                    <h3>Calque Routier</h3>
+                    <div class="import-help-row">
+                        <label for="road-overlay-importer-input" class="import-button road-overlay-import-button">
+                            Importer Calque Routier
+                        </label>
+                        <button type="button" class="import-help-button" data-import-help="road-overlay" aria-label="Aide Importer Calque Routier" title="Aide">?</button>
+                    </div>
+                    <input type="file" id="road-overlay-importer-input"
+                           accept=".zip,.geojson,.json,application/geo+json,application/json"
+                           style="display: none;">
+                    <div id="road-overlay-installed-status" class="road-overlay-installed-status">
+                        Aucun pack routier installé.
+                    </div>
+                    <button id="delete-road-overlay-button" type="button"
+                            class="danger-inline-btn road-overlay-delete-button"
+                            style="display: none;">
+                        Supprimer le calque routier
+                    </button>
+                </div>
+
+                <div class="vac-management-section">
+                    <h3>Cartes VAC</h3>
+                    <p>
+                        Cartes VAC officielles SIA publiées par NPF-Q400-VAC et stockées sur cet appareil
+                        pour une utilisation 100 % hors ligne. Source : SIA / AIP Atlas VAC.
+                    </p>
+                    <div id="vac-installed-status" class="vac-installed-status" aria-live="polite">
+                        Vérification du stockage local…
+                    </div>
+                    <div class="vac-management-actions">
+                        <button id="vac-download-update-button" type="button" class="import-button">
+                            Télécharger les Cartes VAC
+                        </button>
+                        <button id="vac-delete-all-button" type="button"
+                                class="danger-inline-btn"
+                                style="display: none;">
+                            Tout supprimer
+                        </button>
+                    </div>
+                    <div id="vac-download-progress" class="vac-download-progress" style="display: none;">
+                        <div class="vac-download-progress-track">
+                            <div id="vac-download-progress-bar" class="vac-download-progress-bar"></div>
+                        </div>
+                        <div id="vac-download-progress-text" class="vac-download-progress-text"></div>
+                    </div>
+                </div>
+
                 <div class="airport-pdf-section">
                     <h3>PDFs FDF réduite / aérodromes offline</h3>
                     <p>Importe un ou plusieurs PDF nommés avec leur code OACI, par exemple <b>LFTW.pdf</b>, <b>LFKJ.pdf</b> ou <b>LFAQ.pdf</b>, ou les documents communs <b>Doc Fdf Réduité.pdf</b> et <b>Carte Fréquences OPS.pdf</b>. Ils seront stockés sur l’iPad pour ouverture hors ligne.</p>
-                    <label for="airport-pdf-importer-input" class="import-button pdf-import-button">Télécharger PDFs Doc Fdf Réduité</label>
+                    <div class="airport-pdf-toolbar">
+                        <div class="import-help-row airport-pdf-import-help-row">
+                            <label for="airport-pdf-importer-input" class="import-button pdf-import-button">Télécharger PDFs Doc Fdf Réduité</label>
+                            <button type="button" class="import-help-button" data-import-help="fdf-pdfs" aria-label="Aide Télécharger PDFs Doc Fdf Réduité" title="Aide">?</button>
+                        </div>
+                        <button id="delete-all-airport-pdfs-button" type="button"
+                                class="danger-inline-btn airport-pdf-delete-all-button"
+                                style="display: none;">
+                            Tout supprimer
+                        </button>
+                    </div>
                     <input type="file" id="airport-pdf-importer-input" accept="application/pdf,.pdf" multiple style="display: none;">
                     <ul id="installed-airport-pdfs-list">
                         <li class="no-pdfs-placeholder">Aucun PDF aérodrome stocké.</li>
@@ -857,7 +934,30 @@
             </div>
         </div>
     </div>
- </body>
+ 
+
+    <div id="vac-update-modal" class="vac-update-modal" style="display: none;" aria-hidden="true">
+        <div class="vac-update-modal-content" role="dialog" aria-modal="true" aria-labelledby="vac-update-modal-title">
+            <h2 id="vac-update-modal-title">Mise à jour des cartes VAC</h2>
+            <p>Des cartes VAC ont été mises à jour. Voulez-vous les mettre à jour maintenant ?</p>
+            <div id="vac-update-detail" class="vac-update-detail"></div>
+            <div class="vac-update-modal-actions">
+                <button id="vac-update-now-button" type="button" class="vac-update-now-button">Mettre à jour</button>
+                <button id="vac-update-later-button" type="button" class="vac-update-later-button">Plus tard</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="import-help-modal" class="import-help-modal" style="display: none;" aria-hidden="true">
+        <div class="import-help-modal-content" role="dialog" aria-modal="true" aria-labelledby="import-help-modal-title">
+            <button id="close-import-help-modal" class="import-help-modal-close" type="button" aria-label="Fermer">&times;</button>
+            <h2 id="import-help-modal-title">Aide</h2>
+            <div id="import-help-modal-text" class="import-help-modal-text"></div>
+            <button id="import-help-modal-ok" class="import-help-modal-ok" type="button">OK</button>
+        </div>
+    </div>
+
+</body>
 </html>
 
     
