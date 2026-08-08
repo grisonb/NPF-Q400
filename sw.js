@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-59_permanent';
-const APP_VERSION = 'v2026.59';
+const SW_VERSION = 'sw-v2026-60_permanent';
+const APP_VERSION = 'v2026.60';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
@@ -19,7 +19,7 @@ const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contou
 const HIGH_VOLTAGE_LINES_GEOJSON_URL = './lignes_ht_rte_simplifiees.geojson';
 
 /*
- * v14.64 — app-shell minimal et atomique.
+ * v14.64  — app-shell minimal et atomique.
  * Seules les ressources indispensables à l'ouverture de l'interface bloquent
  * l'installation. Les bases volumineuses et ressources métier sont mises en
  * cache séparément, à la demande, et ne peuvent plus faire échouer le SW.
@@ -384,6 +384,13 @@ self.addEventListener('fetch', event => {
 
     if (request.method !== 'GET') return;
 
+    // v14.93  — le dépôt VAC GitHub Pages reste une source réseau pure.
+    // Les PDF sont ensuite conservés par script.js dans IndexedDB, pas dans Cache Storage.
+    if (isVacRepositoryRequest(request.url)) {
+        event.respondWith(fetch(request));
+        return;
+    }
+
     if (isTrafficApiRequest(request.url)) {
         event.respondWith(fetch(request));
         return;
@@ -408,6 +415,17 @@ self.addEventListener('fetch', event => {
 });
 
 
+
+
+function isVacRepositoryRequest(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'grisonb.github.io'
+            && parsed.pathname.startsWith('/NPF-Q400-VAC/');
+    } catch (_) {
+        return false;
+    }
+}
 
 function isTrafficApiRequest(url) {
     try {
