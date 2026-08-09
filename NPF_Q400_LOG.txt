@@ -1,5 +1,55 @@
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
+VERSION TEST v14.97 — COMMUNE SURVOLÉE / ALLÈGEMENT IPAD
+Date : 09/08/2026
+Base : TEST v14.96
+
+OBJECTIF
+- Corriger la cause identifiée du chargement instable de la commune survolée dans la PWA iPad.
+- Utiliser sur iPad/tablette le GeoJSON Etalab `communes-1000m.geojson`, conformément au commentaire déjà présent dans le code.
+- Conserver `communes-50m.geojson` sur PC.
+- Adapter le Service Worker pour mettre en cache le fichier 1000 m.
+- Ne modifier ni le GPS, ni l'algorithme d'identification de la commune, ni SafeSky, ni les cartes Offline, ni les VAC.
+
+CORRECTION
+1. Source GeoJSON sur iPad/tablette
+- Avant : iPad/tablette chargeait `communes-100m.geojson`.
+- Après : iPad/tablette charge `communes-1000m.geojson`.
+- PC conserve `communes-50m.geojson`.
+
+2. Service Worker
+- Ajout explicite de `communes-1000m.geojson` aux ressources GeoJSON communes reconnues.
+- Le fichier 1000 m bénéficie du même fonctionnement cache-first introduit en v14.96.
+- Après un premier chargement réussi, la copie locale est utilisée immédiatement dans la PWA.
+- La mise à jour réseau reste effectuée en arrière-plan lorsque disponible.
+- Les anciens chemins 100 m restent reconnus pour compatibilité de cache, mais ne sont plus demandés par le script sur iPad.
+
+3. Éléments inchangés
+- Algorithme de détermination de la commune inchangé.
+- Gestion GPS inchangée.
+- Bandeau « Commune survolée » inchangé.
+- Carte Offline / IndexedDB inchangés.
+- SafeSky inchangé.
+- VAC inchangées.
+- Calque routier inchangé.
+- Aucun nouveau domaine réseau.
+
+VALIDATION À EFFECTUER SUR IPAD
+- Mettre TEST v14.97 en ligne.
+- Lancer la PWA depuis l'icône de l'écran d'accueil avec Internet.
+- Vérifier que « Commune survolée » passe de « chargement... » au nom de commune et reste stable.
+- Fermer complètement la PWA puis la relancer.
+- Vérifier qu'il n'y a plus d'alternance « chargement / indisponible ».
+- Tester ensuite en mode avion après un premier chargement réussi.
+- Comparer le comportement avec Safari.
+- La validation réelle sur iPadOS reste à effectuer sur l'appareil.
+
+======================================================================
+HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
+======================================================================
+
+NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
+
 VERSION TEST v14.96 — COMMUNE SURVOLÉE / PWA IPAD
 Date : 09/08/2026
 Base : TEST v14.95
