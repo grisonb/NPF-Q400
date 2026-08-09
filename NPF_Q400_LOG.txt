@@ -1,5 +1,175 @@
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
+VERSION PÉRENNE v2026.61
+Date : 09/08/2026
+Base validée : TEST v14.99
+
+VALIDATION
+- La correction de la commune survolée a été validée sur iPad avec un nouveau raccourci PWA.
+- Le GeoJSON des communes est désormais chargé localement depuis :
+  `./data/communes-1000m.geojson`
+- Le Service Worker reconnaît cette ressource comme donnée applicative locale et la conserve dans son cache stable.
+- Le premier chargement ne dépend plus du téléchargement direct du GeoJSON Etalab sur iPad/tablette.
+
+REPRISE DE LA TEST v14.99
+- Reprise intégrale de la logique fonctionnelle validée en TEST v14.99.
+- Aucun changement fonctionnel supplémentaire.
+- Passage uniquement en version pérenne v2026.61.
+
+POINT DE DÉPLOIEMENT IMPORTANT
+- Le dépôt pérenne doit contenir :
+  `data/communes-1000m.geojson`
+- Sans ce fichier, la correction de la commune survolée ne peut pas fonctionner dans une nouvelle installation PWA.
+- Le workflow utilisé sur le dépôt TEST peut être utilisé sur le dépôt pérenne pour créer/mettre à jour ce fichier.
+
+ÉLÉMENTS INCHANGÉS
+- GPS.
+- Algorithme `findCommuneContainingPoint`.
+- SafeSky.
+- VAC.
+- Cartes Offline / IndexedDB.
+- Calque routier.
+- Données de localités.
+- Interface utilisateur.
+
+======================================================================
+HISTORIQUE TEST CONSERVÉ INTÉGRALEMENT
+======================================================================
+
+NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
+
+VERSION TEST v14.99 — COMMUNE SURVOLÉE / FICHIER LOCAL RÉELLEMENT PRIS EN CHARGE PAR LE SW
+Date : 09/08/2026
+Base : TEST v14.98
+
+CONSTAT
+- Le workflow v14.98 a correctement créé `data/communes-1000m.geojson` dans le dépôt TEST.
+- `script.js` v14.98 utilise bien ce fichier local sur iPad/tablette.
+- En revanche, le Service Worker v14.98 ne reconnaissait pas encore explicitement ce fichier local comme GeoJSON de communes.
+- La requête locale pouvait donc retomber sur le chemin générique au lieu du traitement dédié avec cache stable et délai adapté.
+
+OBJECTIF
+- Finaliser la correction v14.98 sans modifier l'algorithme GPS/commune.
+- Faire reconnaître `./data/communes-1000m.geojson` par le Service Worker.
+- Utiliser le même cache stable que pour les autres données métier.
+- Accorder au premier chargement local le délai adapté de 45 secondes.
+- Conserver ensuite la copie locale immédiatement réutilisable par la PWA.
+
+MODIFICATIONS
+1. `script.js`
+- iPad/tablette conserve la source locale :
+  `./data/communes-1000m.geojson`
+- PC conserve la source officielle 50 m actuelle.
+- Aucun changement de `findCommuneContainingPoint`.
+- Aucun changement GPS.
+
+2. `sw.js`
+- Ajout de `LOCAL_COMMUNES_GEOJSON_URL = './data/communes-1000m.geojson'`.
+- Ajout du fichier local dans `APP_DATA_URLS`.
+- `isCommunesGeojsonRequest()` reconnaît désormais :
+  - le fichier local NPF `data/communes-1000m.geojson` ;
+  - les anciennes URL Etalab 50/100/1000 m pour compatibilité.
+- `isAppDataRequest()` reconnaît explicitement `communes-1000m.geojson`.
+- Le fichier local passe par `handleAppDataRequest()`.
+- Premier chargement : délai dédié de 45 secondes.
+- Après succès : stockage dans `APP_DATA_CACHE`.
+- Ouvertures suivantes : cache local immédiatement disponible, actualisation réseau en arrière-plan.
+- Aucun échec de cette donnée métier ne peut rendre l'app-shell incomplet.
+
+3. Éléments inchangés
+- GPS.
+- Commune survolée : algorithme géométrique.
+- SafeSky.
+- VAC.
+- Cartes Offline / IndexedDB.
+- Calque routier.
+- Workflow GitHub existant.
+- `data/communes-1000m.geojson` déjà créé par le workflow.
+
+VALIDATION À EFFECTUER
+- Mettre v14.99 TEST dans le dépôt.
+- Ne pas relancer le workflow : le GeoJSON local existe déjà.
+- Attendre la publication GitHub Pages.
+- Créer un NOUVEAU raccourci PWA depuis Safari.
+- Ouvrir avec Internet et vérifier que la commune survolée devient stable.
+- Fermer puis rouvrir la PWA.
+- Tester ensuite en mode avion après au moins un chargement réussi.
+- La validation réelle reste à effectuer sur iPadOS.
+
+======================================================================
+HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
+======================================================================
+
+NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
+
+VERSION TEST v14.98 — COMMUNE SURVOLÉE / DONNÉE LOCALE PWA IPAD
+Date : 09/08/2026
+Base : TEST v14.97
+
+CONSTAT À L'ORIGINE DE LA CORRECTION
+- Une installation v14.95 ancienne fonctionne correctement pour la commune survolée.
+- Un nouveau raccourci PWA créé depuis cette même v14.95 ne fonctionne pas correctement.
+- Le défaut dépend donc de l'état de stockage initial de la nouvelle installation PWA et non de la version fonctionnelle déjà chargée.
+- Le premier démarrage d'une nouvelle PWA ne doit plus dépendre du téléchargement direct du gros GeoJSON Etalab des communes.
+
+OBJECTIF
+- Supprimer, sur iPad/tablette, la dépendance réseau Etalab au moment où NPF doit identifier la commune survolée.
+- Héberger `communes-1000m.geojson` directement dans le dépôt NPF-Q400 TEST sous `data/communes-1000m.geojson`.
+- Faire charger ce fichier depuis la même origine GitHub Pages que l'application.
+- Le conserver dans le cache stable de données de la PWA.
+- Ne modifier ni le GPS, ni `findCommuneContainingPoint`, ni SafeSky, ni les cartes Offline, ni les VAC.
+
+MODIFICATIONS
+
+1. script.js — source locale sur iPad/tablette
+- iPad/tablette utilise désormais :
+  `./data/communes-1000m.geojson`
+- Le navigateur ne contacte plus Etalab pour les polygones de communes sur iPad/tablette.
+- Le PC conserve temporairement la source 50 m existante afin de ne pas dégrader sa précision.
+- L'algorithme géométrique d'identification de la commune reste strictement inchangé.
+
+2. sw.js — cache local stable
+- Ajout de `./data/communes-1000m.geojson` aux données applicatives.
+- Le Service Worker reconnaît explicitement ce fichier local.
+- Lors de l'installation du Service Worker, une tentative non bloquante de préchargement de ce fichier est effectuée.
+- Si cette tentative échoue, l'installation de NPF n'est pas refusée.
+- Dès que le fichier est obtenu avec succès, il est conservé dans `APP_DATA_CACHE`.
+- Les ouvertures suivantes peuvent donc utiliser la copie locale mise en cache.
+
+3. Dépôt — récupération officielle du GeoJSON
+- Ajout du workflow `.github/workflows/sync-communes-npf.yml`.
+- Le workflow télécharge la source officielle Etalab `communes-1000m.geojson`.
+- Il valide :
+  - HTTP réussi ;
+  - JSON valide ;
+  - type `FeatureCollection` ;
+  - présence d'un nombre significatif de communes ;
+  - taille minimale de sécurité.
+- Le fichier n'est remplacé dans le dépôt qu'après validation.
+- Le workflow est déclenché manuellement afin d'éviter toute modification automatique non contrôlée du dépôt.
+
+4. Éléments volontairement inchangés
+- GPS et reprise GPS inchangés.
+- `findCommuneContainingPoint` inchangé.
+- Calcul du département inchangé.
+- Bandeau « Commune survolée » inchangé.
+- SafeSky inchangé.
+- Carte Offline / IndexedDB inchangés.
+- VAC inchangées.
+- Calque routier inchangé.
+
+IMPORTANT POUR LE TEST
+- Le fichier `data/communes-1000m.geojson` doit exister dans le dépôt avant de tester la nouvelle installation PWA.
+- Le workflow fourni permet de le créer depuis la source officielle.
+- Une fois le fichier présent dans GitHub Pages, créer un NOUVEAU raccourci PWA pour reproduire exactement le cas qui posait problème.
+- La validation réelle reste à effectuer sur iPadOS.
+
+======================================================================
+HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
+======================================================================
+
+NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
+
 VERSION TEST v14.97 — COMMUNE SURVOLÉE / ALLÈGEMENT IPAD
 Date : 09/08/2026
 Base : TEST v14.96
