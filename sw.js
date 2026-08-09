@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v14-97_pwa_communes_1000m';
-const APP_VERSION = 'v14.97';
+const SW_VERSION = 'sw-v2026-61_permanent_local_communes';
+const APP_VERSION = 'v2026.61';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
@@ -17,13 +17,16 @@ const APP_DATA_CACHE = 'npf-q400-app-data-v1';
 const APP_SHELL_CACHE_PREFIX = 'npf-q400-app-shell-';
 const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
 const COMMUNES_GEOJSON_1000M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-1000m.geojson';
+const COMMUNES_GEOJSON_1000M_GZIP_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-1000m.geojson.gz';
 const COMMUNES_GEOJSON_100M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-100m.geojson';
 const COMMUNES_GEOJSON_50M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-50m.geojson';
 const COMMUNES_GEOJSON_URLS = Object.freeze([
+    COMMUNES_GEOJSON_1000M_GZIP_URL,
     COMMUNES_GEOJSON_1000M_URL,
     COMMUNES_GEOJSON_100M_URL,
     COMMUNES_GEOJSON_50M_URL
 ]);
+const LOCAL_COMMUNES_GEOJSON_URL = './data/communes-1000m.geojson';
 const HIGH_VOLTAGE_LINES_GEOJSON_URL = './lignes_ht_rte_simplifiees.geojson';
 
 /*
@@ -47,6 +50,7 @@ const APP_DATA_URLS = [
     './communes.json',
     './communes_aliases.json',
     './data/localites/localites-france-v14.56.zip',
+    LOCAL_COMMUNES_GEOJSON_URL,
     HIGH_VOLTAGE_LINES_GEOJSON_URL,
     DEPARTMENTS_GEOJSON_URL,
     ...COMMUNES_GEOJSON_URLS,
@@ -461,9 +465,22 @@ function getRequestFilename(request) {
 
 function isCommunesGeojsonRequest(url) {
     try {
-        const parsed = new URL(url);
+        const parsed = new URL(url, self.location.href);
+
+        const localPath = new URL(
+            LOCAL_COMMUNES_GEOJSON_URL,
+            self.location.href
+        ).pathname;
+
+        if (
+            parsed.origin === self.location.origin
+            && parsed.pathname === localPath
+        ) {
+            return true;
+        }
+
         return parsed.hostname === 'etalab-datasets.geo.data.gouv.fr'
-            && /^\/contours-administratifs\/latest\/geojson\/communes-(?:50|100|1000)m\.geojson$/i.test(parsed.pathname);
+            && /^\/contours-administratifs\/latest\/geojson\/communes-(?:50|100|1000)m\.geojson(?:\.gz)?$/i.test(parsed.pathname);
     } catch (_) {
         return false;
     }
@@ -483,6 +500,7 @@ function isAppDataRequest(request) {
         return [
             'communes.json',
             'communes_aliases.json',
+            'communes-1000m.geojson',
             'localites-france-v14.56.zip',
             'lignes_ht_rte_simplifiees.geojson'
         ].includes(filename)
