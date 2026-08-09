@@ -1,5 +1,13 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v14.96';
+const NPF_SCRIPT_BUILD_VERSION = 'v14.97';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
+
+// =========================================================================
+// v14.97 TEST — commune survolée : GeoJSON allégé sur iPad
+// - iPad/tablette : communes-1000m.geojson ;
+// - PC : communes-50m.geojson conservé ;
+// - le Service Worker met aussi en cache le fichier 1000 m ;
+// - aucun changement du GPS ni de l'identification géométrique de la commune.
+// =========================================================================
 
 // =========================================================================
 // v14.96 TEST — commune survolée stable dans la PWA iPad
@@ -18187,7 +18195,7 @@ function getCommunesGeojsonUrl() {
      * pour identifier la commune/arrondissement sous le point GPS dans l'immense
      * majorité des cas.
      */
-    const precision = isTouchTabletForCommunesLayer() ? '100m' : '50m';
+    const precision = isTouchTabletForCommunesLayer() ? '1000m' : '50m';
     return {
         precision,
         url: `https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-${precision}.geojson`
