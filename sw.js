@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v14-96_pwa_communes_cache';
-const APP_VERSION = 'v14.96';
+const SW_VERSION = 'sw-v14-97_pwa_communes_1000m';
+const APP_VERSION = 'v14.97';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
@@ -16,9 +16,11 @@ const APP_SHELL_CACHE = `npf-q400-app-shell-${SW_VERSION}`;
 const APP_DATA_CACHE = 'npf-q400-app-data-v1';
 const APP_SHELL_CACHE_PREFIX = 'npf-q400-app-shell-';
 const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
+const COMMUNES_GEOJSON_1000M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-1000m.geojson';
 const COMMUNES_GEOJSON_100M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-100m.geojson';
 const COMMUNES_GEOJSON_50M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-50m.geojson';
 const COMMUNES_GEOJSON_URLS = Object.freeze([
+    COMMUNES_GEOJSON_1000M_URL,
     COMMUNES_GEOJSON_100M_URL,
     COMMUNES_GEOJSON_50M_URL
 ]);
@@ -461,7 +463,7 @@ function isCommunesGeojsonRequest(url) {
     try {
         const parsed = new URL(url);
         return parsed.hostname === 'etalab-datasets.geo.data.gouv.fr'
-            && /^\/contours-administratifs\/latest\/geojson\/communes-(?:50|100)m\.geojson$/i.test(parsed.pathname);
+            && /^\/contours-administratifs\/latest\/geojson\/communes-(?:50|100|1000)m\.geojson$/i.test(parsed.pathname);
     } catch (_) {
         return false;
     }
