@@ -1,8 +1,16 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.60';
+const NPF_SCRIPT_BUILD_VERSION = 'v14.96';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
 // =========================================================================
-// v2026.60  — performance carte Offline aux grands dézooms
+// v14.96 TEST — commune survolée stable dans la PWA iPad
+// - le Service Worker met en cache les GeoJSON Etalab communes 100 m / 50 m ;
+// - cache-first après un premier chargement réussi ;
+// - timeout initial adapté aux gros GeoJSON dans la PWA installée ;
+// - aucun changement du GPS ni de l'identification géométrique de la commune.
+// =========================================================================
+
+// =========================================================================
+// v14.95 TEST — performance carte Offline aux grands dézooms
 // - lecture directe prioritaire par index IndexedDB `tileUrl` ;
 // - les bases isolées modernes n'essaient plus toutes les anciennes clés pack-scopées ;
 // - la base historique commune est ignorée lorsque tous les packs actifs sont confirmés isolés ;
@@ -11,7 +19,7 @@ window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 // =========================================================================
 
 // =========================================================================
-// v14.94  — stabilisation carte / SafeSky / dézoom
+// v14.94 TEST — stabilisation carte / SafeSky / dézoom
 // - un seul rafraîchissement SafeSky à la fois ;
 // - une demande forcée reçue pendant un chargement est regroupée et rejouée ;
 // - les réponses SafeSky devenues obsolètes sont ignorées ;
@@ -21,7 +29,7 @@ window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 // =========================================================================
 
 // =========================================================================
-// v14.93  — Cartes VAC SIA hors ligne via GitHub Pages
+// v14.93 TEST — Cartes VAC SIA hors ligne via GitHub Pages
 // - téléchargement des VAC publiées par le dépôt NPF-Q400-VAC ;
 // - stockage IndexedDB dédié et ouverture 100 % hors ligne ;
 // - bouton VAC dans les popups des terrains disposant d’une VAC locale ;
@@ -208,7 +216,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 
 // =========================================================================
-// v2026.52 — version pérenne issue de v12.95 
+// v2026.52 — version pérenne issue de v12.95 TEST
 // Corrige le grand bandeau bas : Safari peut donner une hauteur CSS trop courte
 // avec -webkit-fill-available. On force une variable de hauteur réelle et on
 // redemande à Leaflet de recalculer sa taille.
@@ -582,7 +590,7 @@ document.addEventListener('DOMContentLoaded', () => {
 // =========================================================================
 // VARIABLES GLOBALES
 // =========================================================================
-// v14.44  — filtre trafics au sol et zone centrée sur la carte.
+// v14.44 TEST — filtre trafics au sol et zone centrée sur la carte.
 let allCommunes = [], map, baseTileLayer, permanentAirportLayer, routesLayer, waterPointsLayer, currentCommune = null, selectedPelicanOACI = null, selectedAirportDestination = null;
 let npfRunwayMapLayer = null;
 let npfRunwayRenderer = null;
@@ -590,7 +598,7 @@ let communeAliases = [];
 let communesByCodeInsee = new Map();
 
 /*
- * v14.40  — base nationale de localités intégralement offline.
+ * v14.40 TEST — base nationale de localités intégralement offline.
  *
  * Une archive ZIP unique est pré-cachée par le service worker. Elle contient
  * 179 402 villages, hameaux et lieux-dits répartis en petits fragments de
@@ -685,7 +693,7 @@ let communesLayerLoadController = null;
 let communesLayerLoadPromise = null;
 
 /*
- * v13.93  — priorité des libellés de communes selon la population.
+ * v13.93 TEST — priorité des libellés de communes selon la population.
  * La géométrie Etalab reste la source des contours. La population est chargée
  * séparément depuis l'API officielle geo.api.gouv.fr et mise en cache localement.
  */
@@ -723,7 +731,7 @@ const AIRPORT_PDF_DB_NAME = 'AirportPdfsDB';
 const AIRPORT_PDF_DB_VERSION = 1;
 
 /*
- * v14.93  — cartes VAC SIA hors ligne.
+ * v14.93 TEST — cartes VAC SIA hors ligne.
  * Les PDF sont publiés par le dépôt GitHub Pages NPF-Q400-VAC puis stockés
  * localement dans une base IndexedDB distincte des PDF FDF.
  */
@@ -789,7 +797,7 @@ let isRoadOverlayLoading = false;
 const TRAFFIC_LAYER_KEY = 'showTrafficLayer';
 
 /*
- * v14.24  — appel direct de SafeSky Production depuis NPF.
+ * v14.24 TEST — appel direct de SafeSky Production depuis NPF.
  *
  * La clé temporaire est volontairement intégrée dans le code à la demande de
  * l'utilisateur. Elle sera visible dans GitHub, le navigateur et les requêtes.
@@ -836,7 +844,7 @@ let lastTrafficAircraftSnapshot = [];
 let lastTrafficRenderMeta = null;
 
 /*
- * v14.44  — déplacement fluide continu sur base v14.43.
+ * v14.44 TEST — déplacement fluide continu sur base v14.43.
  * Les marqueurs sont conservés entre deux réponses SafeSky et raccordés
  * progressivement aux nouvelles positions sans réintroduire les anciennes
  * zones GPS / feu ni modifier le filtre explicite des trafics au sol.
@@ -845,7 +853,7 @@ const TRAFFIC_TRACKED_IDENTIFIERS_STORAGE_KEY =
     'safeSkyTrackedIdentifiersV1';
 
 /*
- * v14.74  — indicatifs suivis permanents.
+ * v14.74 TEST — indicatifs suivis permanents.
  *
  * Cette liste est intégrée au code de NPF : elle est donc automatiquement
  * recréée après une réinstallation ou un effacement du stockage local. Elle
@@ -882,7 +890,7 @@ const TRAFFIC_PERMANENT_TRACKED_CALLSIGN_SET = new Set(
     TRAFFIC_PERMANENT_TRACKED_CALLSIGNS
 );
 /*
- * v14.48  — l'identifiant du propre avion est volontairement temporaire.
+ * v14.48 TEST — l'identifiant du propre avion est volontairement temporaire.
  * sessionStorage le conserve pendant la session PWA courante, puis le navigateur
  * le supprime lorsqu'une nouvelle session réelle est créée.
  */
@@ -892,7 +900,7 @@ let ownTrafficAircraftSessionFallback = null;
 const TRAFFIC_PUBLISHED_BEACON_ID_STORAGE_KEY =
     'safeSkyPublishedBeaconIdV1';
 /*
- * v14.57  — la liste suivie n'est plus plafonnée à 20 entrées.
+ * v14.57 TEST — la liste suivie n'est plus plafonnée à 20 entrées.
  * La concurrence ne limite pas le nombre enregistré : elle évite seulement
  * d'envoyer toutes les interrogations SafeSky individuelles simultanément.
  */
@@ -901,7 +909,7 @@ const TRAFFIC_VIEWPORT_IDENTIFIER_QUERY_LIMIT = 40;
 const TRAFFIC_TEMPORARY_SEARCH_RESULT_TTL_MS = 10 * 60 * 1000;
 const TRAFFIC_SMOOTH_FRAME_INTERVAL_MS = 50;
 /*
- * v14.72  — l'âge déjà accumulé par un point SafeSky ne doit plus
+ * v14.72 TEST — l'âge déjà accumulé par un point SafeSky ne doit plus
  * consommer la totalité de la période de mouvement local. Deux horizons sont
  * désormais séparés :
  * - rattrapage limité de l'horodatage source jusqu'à la réception par NPF ;
@@ -938,7 +946,7 @@ const DEFAULT_TRAFFIC_SETTINGS = Object.freeze({
     relativeAltitudeBandFt: 1500,
     groundToAboveBandFt: 1500,
     /*
-     * v14.44  — la zone trafic est toujours centrée sur la carte.
+     * v14.44 TEST — la zone trafic est toujours centrée sur la carte.
      * Les deux anciennes options GPS / feu restent neutralisées pour assurer
      * la migration des réglages déjà stockés.
      */
@@ -1049,7 +1057,7 @@ const CHAT_PUSH_VAPID_PUBLIC_KEY = 'BAB6UkrM0OzfJPCKYux_BdLfQJbMo7qKoXPhIoTB99J9
 let mqttLoaderPromise = null;
 
 /*
- * v14.79  — repositionnement des repères des pélicandromes permanents.
+ * v14.79 TEST — repositionnement des repères des pélicandromes permanents.
  *
  * Les coordonnées ci-dessous ont été relevées et transmises par l’utilisateur
  * pour placer le rond / symbole cliquable au point opérationnel souhaité.
@@ -1089,7 +1097,7 @@ const otherAirports = [
 ];
 
 /*
- * v14.71  — aérodromes complémentaires PIAF.
+ * v14.71 TEST — aérodromes complémentaires PIAF.
  *
  * La liste embarquée ci-dessous reprend les aérodromes métropolitains et corses
  * disposant d'un code OACI à quatre lettres LFxx dans la table PIAF de la DGAC.
@@ -1576,7 +1584,7 @@ const additionalAerodromes = piafMetropolitanAerodromesData
 
 
 /*
- * v14.76  — pistes intégrées à la carte NPF, indépendamment des symboles.
+ * v14.76 TEST — pistes intégrées à la carte NPF, indépendamment des symboles.
  *
  * Les données de la v14.75 restent entièrement embarquées dans script.js.
  * Les extrémités géographiques permettent à Leaflet d'afficher chaque piste
@@ -1988,7 +1996,7 @@ function getAdditionalAerodromeRunways(oaci) {
 
 
 /*
- * v14.77  — pistes des aérodromes déclarés comme pélicandromes.
+ * v14.77 TEST — pistes des aérodromes déclarés comme pélicandromes.
  *
  * Les 27 pélicandromes permanents de la liste `pelicanAirports` disposent
  * désormais de leurs pistes dans la même représentation cartographique que
@@ -2093,7 +2101,7 @@ const declaredPelicanRunwaysByOaci = (() => {
 
 
 /*
- * v14.78  — couverture des pistes de tous les aéroports pouvant être
+ * v14.78 TEST — couverture des pistes de tous les aéroports pouvant être
  * déclarés comme pélicandromes depuis l'interface.
  *
  * La v14.77 ne contenait que les 27 pélicandromes permanents. Les 97 terrains
@@ -3234,7 +3242,7 @@ async function initializeApp() {
         }
 
         /*
-         * v14.63  — l'interface ne doit jamais attendre IndexedDB ou le
+         * v14.63 TEST — l'interface ne doit jamais attendre IndexedDB ou le
          * service worker avant de créer la carte et de lier les boutons.
          */
         initializeOfflineTilePreference().catch(error => {
@@ -3676,7 +3684,7 @@ function scoreCommuneSearchCandidate(candidate, searchWords, departmentFilter = 
         }
 
         /*
-         * v14.45  — tolérance phonétique ciblée avec département.
+         * v14.45 TEST — tolérance phonétique ciblée avec département.
          * « essen 12 », « esen 12 » et « aissen 12 » doivent retrouver
          * Ayssènes. La comparaison porte sur le nom compact complet afin que
          * les mots très fréquents de noms composés (Saint, Sainte...) ne
@@ -5250,7 +5258,7 @@ function scheduleOfflineTileWake(reason = 'startup') {
 
 
 /*
- * v14.69  — restauration fiable de la carte Offline mémorisée.
+ * v14.69 TEST — restauration fiable de la carte Offline mémorisée.
  *
  * Les v14.66/v14.67 reconstruisaient plusieurs fois la couche Leaflet, mais avec
  * les mêmes informations de pack déjà présentes en mémoire. Sur Safari/iPadOS,
@@ -5686,7 +5694,7 @@ function rebuildBaseTileLayerAfterOfflineSwitch(reason = 'offline-switch') {
 
 
 /*
- * v14.63  — lecture directe des tuiles Offline depuis IndexedDB.
+ * v14.63 TEST — lecture directe des tuiles Offline depuis IndexedDB.
  *
  * La carte ne dépend plus du service worker pour afficher les packs téléchargés.
  * Safari peut conserver une page sans contrôleur SW après une mise à jour : dans
@@ -5719,7 +5727,7 @@ let directOfflineRecoveryCount = 0;
 let directOfflineLastRecoveryReason = '';
 
 /*
- * v14.69  — lecture NPF à froid stabilisée.
+ * v14.69 TEST — lecture NPF à froid stabilisée.
  *
  * La carte NPF est nettement plus volumineuse que la carte OACI. Safari peut
  * mettre plusieurs secondes à ouvrir son index IndexedDB et supporte mal une
@@ -6112,7 +6120,7 @@ function readDirectOfflineTileRecord(db, tileUrl, options = {}) {
         tx.onabort = () => fail(tx.error || new Error('Transaction tuile annulée'));
 
         /*
-         * v2026.60 — les imports modernes possèdent un index `tileUrl` : une seule
+         * v14.95 — les imports modernes possèdent un index `tileUrl` : une seule
          * recherche indexée remplace les dizaines de `store.get()` essayées avant.
          * Le chemin historique n'est conservé que lorsque la base peut réellement
          * contenir d'anciens enregistrements sans champ `tileUrl`.
@@ -6856,7 +6864,7 @@ function setupEventListeners() {
 
     const showFireHistoryFromSearch = () => {
         /*
-         * v14.45  — placement tactile natif du curseur dans la recherche.
+         * v14.45 TEST — placement tactile natif du curseur dans la recherche.
          * L'ancien setSelectionRange différé remettait systématiquement le
          * curseur à droite après un toucher au milieu du nom. On conserve le
          * focus et l'historique, mais Safari/iPadOS choisit désormais lui-même
@@ -8139,7 +8147,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 
 
 // =========================================================================
-// v14.89  — aides contextuelles des imports offline
+// v14.89 TEST — aides contextuelles des imports offline
 // - ajout d’un bouton ? à côté de Importer Cartes Offline ;
 // - ajout d’un bouton ? à côté de Importer Calque Routier ;
 // - ajout d’un bouton ? à côté de Télécharger PDFs Doc Fdf Réduité ;
@@ -8147,14 +8155,14 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.88  — contour France fidèle à la référence visuelle validée
+// v14.88 TEST — contour France fidèle à la référence visuelle validée
 // - remplacement du tracé polygonal approximatif de la v14.87 ;
 // - contour vectorisé depuis la référence France validée ;
 // - fond blanc, contour bleu, aucun texte conservés.
 // =========================================================================
 
 // =========================================================================
-// v14.87  — icône France corrigée pour le sélecteur rapide offline
+// v14.87 TEST — icône France corrigée pour le sélecteur rapide offline
 // - suppression du texte dans le bouton France ;
 // - fond blanc conservé en permanence ;
 // - silhouette remplacée par un contour bleu de la France ;
@@ -8162,7 +8170,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.85  — réorganisation de Gestion des Cartes et suppression groupée des PDF
+// v14.85 TEST — réorganisation de Gestion des Cartes et suppression groupée des PDF
 // - section Cartes Offline regroupée avec son bouton d'import ;
 // - section Calque Routier placée immédiatement sous les cartes offline ;
 // - libellés d'import simplifiés ;
@@ -8171,7 +8179,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.84  — stabilité cartes offline pendant un vol prolongé
+// v14.84 TEST — stabilité cartes offline pendant un vol prolongé
 // - le calque routier ne reconstruit plus toutes ses couches à chaque recentrage GPS ;
 // - les cartouches ne sont recalculés qu'après un déplacement significatif ;
 // - les connexions IndexedDB sont rouvertes automatiquement après plusieurs erreurs ;
@@ -8179,7 +8187,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.83  — cartouches routiers lisibles
+// v14.83 TEST — cartouches routiers lisibles
 // - suppression à l'affichage des suffixes techniques girondins U / Uxxxx ;
 // - un seul cartouche par référence dans l'emprise visible ;
 // - priorité aux axes principaux et rejet des cartouches qui se chevauchent ;
@@ -8187,7 +8195,7 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.82  — routes territoriales T / RT et cartouches sur la portion visible
+// v14.82 TEST — routes territoriales T / RT et cartouches sur la portion visible
 // - import et affichage des références T10, RT10 et « Route territoriale 10 » ;
 // - classe T affichée comme une route nationale à partir du niveau 1 NM ;
 // - cartouches calculés sur les segments réellement visibles dans la fenêtre ;
@@ -8195,14 +8203,14 @@ async function toggleHighVoltageLinesLayer(forceState = null, options = {}) {
 // =========================================================================
 
 // =========================================================================
-// v14.49  — routes métropolitaines M
+// v14.49 TEST — routes métropolitaines M
 // - import des références M613, M185, M5E14, RM613 et « Route métropolitaine » ;
 // - classe M affichée comme une route départementale, dès le niveau 1 NM ;
 // - conservation intégrale des classes A, N et D existantes.
 // =========================================================================
 
 // =========================================================================
-// v14.49  — calque routier vectoriel offline A / N / D / M / T
+// v14.49 TEST — calque routier vectoriel offline A / N / D / M / T
 // =========================================================================
 
 function getRoadOverlayManifest() {
@@ -9618,7 +9626,7 @@ async function toggleRoadOverlayLayer(forceState = null, options = {}) {
 
 
 // =========================================================================
-// v13.01  — réglages calque trafic ADS-B
+// v13.01 TEST — réglages calque trafic ADS-B
 // =========================================================================
 function sanitizeTrafficSettings(candidate = {}) {
     const fallback = DEFAULT_TRAFFIC_SETTINGS;
@@ -9678,7 +9686,7 @@ function sanitizeTrafficSettings(candidate = {}) {
     );
 
     /*
-     * v14.44  — suppression des modes « autour de ma position » et
+     * v14.44 TEST — suppression des modes « autour de ma position » et
      * « autour du feu ». Le trafic est toujours demandé autour du centre
      * courant de la carte, quelle que soit une ancienne valeur mémorisée.
      */
@@ -9698,7 +9706,7 @@ function sanitizeTrafficSettings(candidate = {}) {
         fallback.onlyTrackedIdentifiers
     );
     /*
-     * v14.41  — publication NPF vers SafeSky supprimée.
+     * v14.41 TEST — publication NPF vers SafeSky supprimée.
      * Les anciennes valeurs mémorisées sont ignorées et neutralisées.
      */
     const publishOwnPosition = false;
@@ -10319,7 +10327,7 @@ function refreshTrackedTrafficListUi() {
             );
 
             /*
-             * v14.56  — distinction appui / défilement dans la liste suivie.
+             * v14.56 TEST — distinction appui / défilement dans la liste suivie.
              *
              * Aucun preventDefault n'est utilisé : Safari peut donc faire défiler
              * naturellement la carte des filtres lorsque le doigt part verticalement.
@@ -12113,7 +12121,7 @@ async function fetchTrackedTrafficBeacons() {
 }
 
 /*
- * v14.41  — SafeSky est strictement utilisé en lecture.
+ * v14.41 TEST — SafeSky est strictement utilisé en lecture.
  * Ces fonctions restent comme stubs de compatibilité interne, sans requête POST.
  */
 async function publishOwnSafeSkyPosition() {
@@ -12179,7 +12187,7 @@ function getFireTrafficPoint() {
 
 function getTrafficQueryPoints() {
     /*
-     * v14.44  — les anciennes zones GPS et feu sont supprimées.
+     * v14.44 TEST — les anciennes zones GPS et feu sont supprimées.
      * Le rayon SafeSky est toujours appliqué autour du centre actuel de la
      * carte, ce qui rend le comportement unique et prévisible.
      */
@@ -12274,7 +12282,7 @@ async function fetchTrafficAircraftForPoint(point, providers) {
 }
 
 // =========================================================================
-// v12.96  — calque trafic ADS-B indicatif
+// v12.96 TEST — calque trafic ADS-B indicatif
 // =========================================================================
 function getTrafficQueryPoint() {
     const points = getTrafficQueryPoints();
@@ -14605,7 +14613,7 @@ function installTrafficMarkerPopupInteraction(marker) {
 }
 
 /*
- * v14.57  — fermeture de la fiche trafic par clic réel sur le fond de carte.
+ * v14.57 TEST — fermeture de la fiche trafic par clic réel sur le fond de carte.
  * Le déplacement, le zoom, le pincement et la molette ne ferment pas la fiche.
  */
 function closeOpenTrafficAircraftPopup() {
@@ -15876,7 +15884,7 @@ function normalizeOaciCodeInput(value) {
 }
 
 /*
- * v14.55  — destination aéroport temporaire et fermeture tactile fiable.
+ * v14.55 TEST — destination aéroport temporaire et fermeture tactile fiable.
  * Cette destination ne modifie ni le feu, ni la base, ni le pélicandrome, ni les
  * calculs mission. Elle remplace uniquement la route GPS et le bandeau de carte.
  */
@@ -16140,7 +16148,7 @@ function refreshUI() {
 
 
 /* =========================================================================
-   v14.93  — Cartes VAC SIA hors ligne via GitHub Pages / IndexedDB
+   v14.93 TEST — Cartes VAC SIA hors ligne via GitHub Pages / IndexedDB
    ========================================================================= */
 
 function initVacDB() {
@@ -17274,7 +17282,7 @@ function drawPermanentAirportMarkers() {
          * - un point noir central ;
          * - un cercle transparent séparé pour conserver une grande zone tactile.
          *
-         * v14.73  — symbole légèrement agrandi pour mieux distinguer les
+         * v14.73 TEST — symbole légèrement agrandi pour mieux distinguer les
          * aérodromes pouvant être sélectionnés comme pélicandrome. La zone
          * tactile transparente reste volontairement inchangée.
          */
@@ -21417,7 +21425,7 @@ async function setOfflineTilesEnabled(enabled) {
     notifyServiceWorkerOfflineTilesPreference(offlineTilesMode);
 
     /*
-     * v14.63  — persistance IndexedDB strictement en arrière-plan.
+     * v14.63 TEST — persistance IndexedDB strictement en arrière-plan.
      * Safari peut conserver une transaction ouverte sans déclencher oncomplete ;
      * cela ne doit plus bloquer le bouton ni la création de la couche Leaflet.
      */
@@ -21748,7 +21756,7 @@ async function setMapSourceMode(mode) {
 
     try {
         /*
-         * v14.63  — le changement visible et la couche sont appliqués
+         * v14.63 TEST — le changement visible et la couche sont appliqués
          * synchroniquement, avant tout accès IndexedDB ou attente du SW.
          */
         setOfflineTilesEnabled(offlineTilesMode);
@@ -23769,7 +23777,7 @@ const calculateConsoRotation = (dist) => { const effectiveDist = Math.max(dist, 
 const calculateTransitTime = (dist) => (dist <= 70) ? (dist * (60 / 210)) : (dist * (60 / 240));
 
 /*
- * v14.47  — forfait premier transit piloté par le champ RLT Départ.
+ * v14.47 TEST — forfait premier transit piloté par le champ RLT Départ.
  * Ce forfait est distinct des 10 minutes conservées avant validation du largage.
  */
 const RETARDANT_LOADING_FORFAIT_MIN = 10;
@@ -24159,7 +24167,7 @@ function recalculateBlocFuel() {
     });
 }
 
-// v13.88  — Fuel sur feu Prévi en lecture seule, RLT départ et espacements ajustés.
+// v13.88 TEST — Fuel sur feu Prévi en lecture seule, RLT départ et espacements ajustés.
 function updatePreviTab() {
     const defaultFormula = "Données insuffisantes pour le calcul.";
     const setHelp = (id, formula) => {
@@ -29547,10 +29555,10 @@ document.addEventListener('visibilitychange', () => {
 
 
 
-// v13.89  — corrections d'affichage RLT/Suivi et alerte post-MAJ gérées par index.html/style.css.
+// v13.89 TEST — corrections d'affichage RLT/Suivi et alerte post-MAJ gérées par index.html/style.css.
 
 
-// v14.44  — filtres trafic : centre carte unique et affichage au sol optionnel.
+// v14.44 TEST — filtres trafic : centre carte unique et affichage au sol optionnel.
 
 
-// v14.44  — restauration de getOwnTrafficAltitudeFeet : connexion SafeSky rétablie, carte inchangée.
+// v14.44 TEST — restauration de getOwnTrafficAltitudeFeet : connexion SafeSky rétablie, carte inchangée.
