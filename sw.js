@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-60_permanent';
-const APP_VERSION = 'v2026.60';
+const SW_VERSION = 'sw-v14-96_pwa_communes_cache';
+const APP_VERSION = 'v14.96';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
@@ -16,10 +16,16 @@ const APP_SHELL_CACHE = `npf-q400-app-shell-${SW_VERSION}`;
 const APP_DATA_CACHE = 'npf-q400-app-data-v1';
 const APP_SHELL_CACHE_PREFIX = 'npf-q400-app-shell-';
 const DEPARTMENTS_GEOJSON_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/departements-1000m.geojson';
+const COMMUNES_GEOJSON_100M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-100m.geojson';
+const COMMUNES_GEOJSON_50M_URL = 'https://etalab-datasets.geo.data.gouv.fr/contours-administratifs/latest/geojson/communes-50m.geojson';
+const COMMUNES_GEOJSON_URLS = Object.freeze([
+    COMMUNES_GEOJSON_100M_URL,
+    COMMUNES_GEOJSON_50M_URL
+]);
 const HIGH_VOLTAGE_LINES_GEOJSON_URL = './lignes_ht_rte_simplifiees.geojson';
 
 /*
- * v14.64  — app-shell minimal et atomique.
+ * v14.64 TEST — app-shell minimal et atomique.
  * Seules les ressources indispensables à l'ouverture de l'interface bloquent
  * l'installation. Les bases volumineuses et ressources métier sont mises en
  * cache séparément, à la demande, et ne peuvent plus faire échouer le SW.
@@ -41,6 +47,7 @@ const APP_DATA_URLS = [
     './data/localites/localites-france-v14.56.zip',
     HIGH_VOLTAGE_LINES_GEOJSON_URL,
     DEPARTMENTS_GEOJSON_URL,
+    ...COMMUNES_GEOJSON_URLS,
     './icons/safesky-traffic-monochrome.png',
     './icons/icon-192x192.png',
     './icons/icon-512x512.png',
@@ -384,7 +391,7 @@ self.addEventListener('fetch', event => {
 
     if (request.method !== 'GET') return;
 
-    // v14.93  — le dépôt VAC GitHub Pages reste une source réseau pure.
+    // v14.93 TEST — le dépôt VAC GitHub Pages reste une source réseau pure.
     // Les PDF sont ensuite conservés par script.js dans IndexedDB, pas dans Cache Storage.
     if (isVacRepositoryRequest(request.url)) {
         event.respondWith(fetch(request));
@@ -449,12 +456,25 @@ function getRequestFilename(request) {
     }
 }
 
+
+function isCommunesGeojsonRequest(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'etalab-datasets.geo.data.gouv.fr'
+            && /^\/contours-administratifs\/latest\/geojson\/communes-(?:50|100)m\.geojson$/i.test(parsed.pathname);
+    } catch (_) {
+        return false;
+    }
+}
+
 function isAppDataRequest(request) {
     try {
         const parsed = new URL(request.url);
+        const isExternalCommuneGeojson = isCommunesGeojsonRequest(request.url);
         if (
             parsed.origin !== self.location.origin
             && request.url !== DEPARTMENTS_GEOJSON_URL
+            && !isExternalCommuneGeojson
         ) return false;
 
         const filename = parsed.pathname.split('/').pop() || '';
@@ -465,7 +485,8 @@ function isAppDataRequest(request) {
             'lignes_ht_rte_simplifiees.geojson'
         ].includes(filename)
             || parsed.pathname.includes('/icons/')
-            || request.url === DEPARTMENTS_GEOJSON_URL;
+            || request.url === DEPARTMENTS_GEOJSON_URL
+            || isExternalCommuneGeojson;
     } catch (_) {
         return false;
     }
@@ -574,19 +595,49 @@ async function handleAppShellRequest(request) {
 
 async function handleAppDataRequest(request) {
     const dataCache = await caches.open(APP_DATA_CACHE);
-    const cached = await caches.match(request, { ignoreSearch: true });
+    const isCommunePolygonGeojson = isCommunesGeojsonRequest(request.url);
+
+    /*
+     * v14.96 TEST — PWA iPad / commune survolée :
+     * le gros GeoJSON Etalab des communes ne doit plus dépendre du chemin
+     * générique limité à 8 s. Après un premier succès, la copie locale stable
+     * est renvoyée immédiatement et le réseau ne sert qu'à la rafraîchir.
+     */
+    const cached = await dataCache.match(request, { ignoreSearch: true })
+        || await caches.match(request, { ignoreSearch: true });
 
     if (cached) {
-        fetch(request).then(async fresh => {
-            if (fresh && (fresh.ok || fresh.type === 'opaque')) {
-                await dataCache.put(request, fresh.clone());
+        try {
+            if (!(await dataCache.match(request, { ignoreSearch: true }))) {
+                await dataCache.put(request, cached.clone());
             }
-        }).catch(() => {});
+        } catch (_) {}
+
+        (async () => {
+            try {
+                const refreshRequest = new Request(request, { cache: 'no-cache' });
+                const fresh = await swFetchWithTimeout(
+                    refreshRequest,
+                    {},
+                    isCommunePolygonGeojson ? 45000 : 12000
+                );
+                if (fresh && (fresh.ok || fresh.type === 'opaque')) {
+                    await dataCache.put(request, fresh.clone());
+                }
+            } catch (_) {
+                /* La dernière copie locale valide reste utilisée. */
+            }
+        })();
+
         return cached;
     }
 
     try {
-        const fresh = await swFetchWithTimeout(request, {}, 12000);
+        const fresh = await swFetchWithTimeout(
+            request,
+            {},
+            isCommunePolygonGeojson ? 45000 : 12000
+        );
         if (fresh && (fresh.ok || fresh.type === 'opaque')) {
             await dataCache.put(request, fresh.clone());
         }
@@ -594,7 +645,9 @@ async function handleAppDataRequest(request) {
     } catch (_) {
         return new Response('', {
             status: 504,
-            statusText: 'Offline data unavailable'
+            statusText: isCommunePolygonGeojson
+                ? 'Offline communes GeoJSON unavailable'
+                : 'Offline data unavailable'
         });
     }
 }
