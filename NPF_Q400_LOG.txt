@@ -1,69 +1,59 @@
-NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION PÉRENNE v2026.60 — MISE EN PRODUCTION DE LA v14.95
-Date : 08/08/2026
-Base : v14.95
+NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
+
+VERSION TEST v14.96 — COMMUNE SURVOLÉE / PWA IPAD
+Date : 09/08/2026
+Base : TEST v14.95
 
 OBJECTIF
-- Publier v2026.60 à partir de la base de développement v14.95.
-- Conserver l'ensemble des fonctions intégrées jusqu'à v14.95, notamment les Cartes VAC, la stabilisation SafeSky/carte et l'optimisation du lecteur de tuiles Offline aux grands dézooms.
-- Ne modifier aucune logique métier par rapport à v14.95 ; seules les références de version et les mentions de préproduction sont adaptées à la livraison pérenne.
+- Corriger le bandeau « Commune survolée » qui alterne entre « chargement... » et « indisponible » dans la PWA installée sur l’écran d’accueil de l’iPad.
+- Conserver le fonctionnement déjà correct observé dans Safari.
+- Rendre le fichier de polygones des communes réutilisable depuis le cache de la PWA après un premier chargement réussi.
+- Ne modifier ni le GPS, ni l’algorithme d’identification de la commune, ni les cartes Offline, ni SafeSky, ni les VAC.
 
-MISE EN PRODUCTION
-- Version applicative alignée sur `v2026.60` dans `index.html`, `manifest.json`, `script.js` et `sw.js`.
-- Paramètres `appv` des ressources alignés sur `v2026.60`.
-- Cache du service worker renommé `sw-v2026-60_permanent`.
-- Formatage et structure de `script.js` conservés depuis v14.95 : aucune minification ni recomposition générale.
-- Les méthodes JavaScript `.test()`, les textes métier « Test : », les clés techniques historiques contenant `test` et le nom propre « La Teste-de-Buch » ne sont pas altérés.
-- Le journal reprend intégralement la v14.95 et l'historique antérieur.
+MODIFICATIONS
+1. Service Worker — reconnaissance des GeoJSON communes Etalab
+- Les ressources externes officielles `communes-100m.geojson` et `communes-50m.geojson` sont désormais reconnues explicitement comme données applicatives.
+- Elles ne passent plus par le chemin réseau générique limité à 8 secondes.
 
-CARTES VAC CONSERVÉES
-- Source de publication : `https://grisonb.github.io/NPF-Q400-VAC/`.
-- Le manifeste distant reste utilisé uniquement lorsqu'une connexion Internet est disponible.
-- Les PDF VAC téléchargés sont stockés localement dans IndexedDB et restent ouvrables hors ligne.
-- Les mises à jour restent différentielles par SHA-256.
-- Une ancienne VAC locale n'est remplacée qu'après téléchargement et validation complète de la nouvelle.
-- Aucun accès direct navigateur au SIA n'est réintroduit.
+2. Cache PWA des polygones de communes
+- Le cache stable `APP_DATA_CACHE` est utilisé en priorité lorsque le GeoJSON des communes a déjà été téléchargé.
+- La copie locale est rendue immédiatement à NPF.
+- Une actualisation réseau est ensuite tentée en arrière-plan lorsque le réseau est disponible.
+- La dernière copie valide reste conservée si l’actualisation réseau échoue.
 
-STABILITÉ CARTE / SAFESKY CONSERVÉE
-- Un seul rafraîchissement SafeSky est exécuté à la fois ; les demandes concurrentes sont regroupées.
-- Les réponses SafeSky devenues obsolètes sont ignorées.
-- Les lectures de tuiles correspondant à un ancien niveau de zoom peuvent être invalidées afin de libérer la file IndexedDB.
-- Le contrôle léger du fond de carte après zoom/changement SafeSky reste actif sans reconstruction systématique de la base Offline.
+3. Premier chargement
+- Lorsqu’aucune copie locale n’existe encore, le Service Worker laisse jusqu’à 45 secondes au téléchargement initial du GeoJSON des communes.
+- Une réponse valide est enregistrée dans `APP_DATA_CACHE` avant d’être fournie à l’application.
+- Un échec du téléchargement des communes ne peut pas empêcher l’installation ou la mise à jour du Service Worker.
 
-PERFORMANCE CARTE OFFLINE CONSERVÉE
-- Les bases modernes utilisent en priorité l'index IndexedDB `tileUrl`.
-- Les recherches historiques lentes restent réservées aux cas de compatibilité nécessaires.
-- La base commune héritée n'est plus interrogée lorsque tous les packs actifs sont confirmés dans des bases isolées modernes.
-- Le cache négatif borné des tuiles réellement absentes est conservé.
-- La concurrence NPF reste limitée à 3 lectures simultanées et `keepBuffer` reste fixé à 6 afin de ne pas augmenter la pression sur Safari/iPadOS.
+4. Fonctionnement hors ligne
+- Après un premier chargement réussi, les polygones des communes peuvent être relus depuis le cache stable de la PWA sans accès réseau.
+- Aucun changement n’est apporté aux données cartographiques elles-mêmes.
 
-VÉRIFICATION HORS LIGNE
-- La base nationale de localités reste `data/localites/localites-france-v14.56.zip`.
-- `index.html` la précharge avec la version `v2026.60`.
-- `sw.js` conserve cette archive dans le cache de données de l'application.
-- Les cartes Offline déjà importées restent dans leurs bases IndexedDB dédiées.
-- Les VAC déjà téléchargées restent dans leur base IndexedDB dédiée.
-- Aucun nouveau domaine, API, service réseau ou bibliothèque n'est ajouté par rapport à v14.95.
-- Le contrôle réel final en mode avion et le test de performance 20/50/100 NM restent à effectuer sur l'iPad après publication.
+5. Éléments volontairement inchangés
+- Algorithme `findCommuneContainingPoint` inchangé.
+- Gestion GPS et bandeau « Commune survolée » inchangés.
+- Précision iPad conservée à 100 m.
+- Carte Offline, lecteur IndexedDB, SafeSky, VAC et calque routier inchangés.
+- Aucun nouveau domaine réseau ajouté.
 
-AUDIT ET CONTRÔLES TECHNIQUES
-- Syntaxe de `script.js` et de `sw.js` contrôlée avec Node.js.
-- `manifest.json` contrôlé comme JSON valide.
-- Versions index, manifeste, script et service worker alignées sur `v2026.60`.
-- Absence de tout libellé de préproduction en majuscules dans les six fichiers livrés.
-- Présence du mécanisme VAC IndexedDB, du contrôle différentiel SHA-256 et du maintien de l'ancienne VAC en cas d'échec contrôlée statiquement.
-- Présence de la sérialisation SafeSky et de la stabilisation du fond de carte contrôlée statiquement.
-- Présence du chemin rapide `tileUrl`, de l'optimisation des bases candidates et du cache négatif de tuiles contrôlée statiquement.
-- Archive nationale des localités contrôlée par taille et empreinte SHA-256.
-- Intégrité des archives ZIP contrôlée après création.
+CONTRÔLES TECHNIQUES
+- Versions index, manifeste, script et service worker alignées sur v14.96.
+- Syntaxe JavaScript de `script.js` et `sw.js` à contrôler après génération.
+- `manifest.json` à contrôler comme JSON valide.
+- Contrôle statique : `communes-100m.geojson` et `communes-50m.geojson` passent par `handleAppDataRequest`.
+- Contrôle statique : timeout spécifique de 45 secondes uniquement pour les GeoJSON communes.
+- Contrôle statique : cache-first pour les GeoJSON communes avec mise à jour réseau en arrière-plan.
+- Aucun nouveau domaine réseau ajouté.
 
-INSTALLATION
-- Remplacer dans le dépôt les cinq fichiers applicatifs : `index.html`, `manifest.json`, `script.js`, `style.css` et `sw.js`.
-- Le fichier de journal peut également être ajouté sous le nom `NPF_Q400_MODIFICATIONS_v2026_60.txt`.
-- Conserver `data/localites/localites-france-v14.56.zip` dans le dépôt.
-- Il n'est pas nécessaire de réimporter les cartes Offline, le calque routier ou les VAC du seul fait du changement de version.
-- Après publication, fermer complètement la PWA puis la relancer.
-- Le test réel sur Safari/iPadOS reste indispensable, notamment en mode avion et lors de dézooms successifs 20/50/100 NM.
+VALIDATION À EFFECTUER DANS NPF TEST
+- Mettre TEST v14.96 en ligne.
+- Ouvrir d’abord NPF avec Internet dans la PWA installée sur l’écran d’accueil.
+- Attendre l’affichage stable de la commune survolée.
+- Fermer complètement la PWA puis la rouvrir et vérifier que la commune apparaît sans alternance « chargement / indisponible ».
+- Refaire ensuite le test en mode avion pour confirmer la lecture depuis le cache local.
+- Comparer avec Safari sur le même iPad.
+- La validation réelle sur iPadOS reste à effectuer sur l’appareil.
 
 ======================================================================
 HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
@@ -71,9 +61,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.95 — PERFORMANCE CARTE OFFLINE / DÉZOOM 50–100 NM
+VERSION TEST v14.95 — PERFORMANCE CARTE OFFLINE / DÉZOOM 50–100 NM
 Date : 08/08/2026
-Base : v14.94
+Base : TEST v14.94
 
 OBJECTIF
 - Accélérer le chargement de la carte Offline lors des dézooms importants, notamment vers 50 NM et 100 NM.
@@ -119,8 +109,8 @@ CONTRÔLES TECHNIQUES
 - Contrôle statique : les valeurs de concurrence IndexedDB et `keepBuffer` restent identiques à v14.94.
 - Aucun nouveau domaine réseau ajouté.
 
-VALIDATION À EFFECTUER DANS NPF de développement
-- Charger la version de développement v14.95 sur l'iPad avec la même carte Offline que celle utilisée actuellement.
+VALIDATION À EFFECTUER DANS NPF TEST
+- Charger TEST v14.95 sur l'iPad avec la même carte Offline que celle utilisée actuellement.
 - Partir d'un affichage rapproché puis dézoomer vers 50 NM et 100 NM.
 - Refaire plusieurs fois 20/50/100 NM et comparer le délai d'apparition des tuiles avec la v14.94.
 - Vérifier ensuite un changement de filtre SafeSky afin de confirmer que la correction v14.94 reste fonctionnelle.
@@ -133,9 +123,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.94 — STABILISATION CARTE / SAFE SKY / DÉZOOM
+VERSION TEST v14.94 — STABILISATION CARTE / SAFE SKY / DÉZOOM
 Date : 08/08/2026
-Base : v14.93
+Base : TEST v14.93
 
 OBJECTIF
 - Corriger les disparitions intermittentes du fond de carte observées lors de certains dézooms et changements de filtres SafeSky.
@@ -182,8 +172,8 @@ CONTRÔLES TECHNIQUES
 - Contrôle des URL externes : aucune nouvelle dépendance réseau introduite par v14.94.
 - Intégrité de l'archive TXT contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
-- Charger la version de développement v14.94 sur l'iPad.
+VALIDATION À EFFECTUER DANS NPF TEST
+- Charger TEST v14.94 sur l'iPad.
 - Avec la carte Offline habituelle active, effectuer plusieurs zooms/dézooms rapides puis attendre environ une seconde après chaque geste.
 - Vérifier que le fond de carte reste affiché.
 - Activer SafeSky puis modifier plusieurs fois les filtres, notamment pendant un rafraîchissement.
@@ -197,9 +187,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.93 — CARTES VAC SIA HORS LIGNE VIA GITHUB PAGES
+VERSION TEST v14.93 — CARTES VAC SIA HORS LIGNE VIA GITHUB PAGES
 Date : 08/08/2026
-Base : v14.92
+Base : TEST v14.92
 
 OBJECTIF
 - Intégrer les cartes VAC dans NPF sans accès direct navigateur au SIA.
@@ -268,7 +258,7 @@ MODIFICATIONS
 - Hors ligne, l’ouverture d’une VAC locale ne dépend donc ni du SIA ni de GitHub Pages.
 
 8. Périmètre
-- Le périmètre distant reste celui du manifest généré à partir de  v14.92 :
+- Le périmètre distant reste celui du manifest généré à partir de TEST v14.92 :
   27 pélicandromes permanents + 96 aérodromes sélectionnables = 123 terrains.
 - Le manifest courant annonce 108 VAC disponibles et 15 terrains sans VAC Atlas VAC exacte.
 - Aucun document SUP AIP ou document militaire n’est substitué automatiquement à une VAC absente.
@@ -285,8 +275,8 @@ CONTRÔLES TECHNIQUES
 - Ancien bloc de diagnostic CORS SIA retiré de l’interface.
 - Intégrité des archives ZIP contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
-- Mettre à jour NPF de développement avec v14.93.
+VALIDATION À EFFECTUER DANS NPF TEST
+- Mettre à jour NPF TEST avec v14.93.
 - Ouvrir Gestion des Cartes.
 - Appuyer sur « Télécharger les Cartes VAC » et confirmer.
 - Vérifier la fin du téléchargement, le compteur et le volume local.
@@ -300,12 +290,12 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.92 — DIAGNOSTIC CORS SIA DEPUIS NPF
+VERSION TEST v14.92 — DIAGNOSTIC CORS SIA DEPUIS NPF
 Date : 08/08/2026
-Base : v14.91
+Base : TEST v14.91
 
 OBJECTIF
-- Vérifier directement depuis NPF  si une PWA hébergée sur GitHub Pages peut télécharger et lire une VAC officielle du SIA.
+- Vérifier directement depuis NPF TEST si une PWA hébergée sur GitHub Pages peut télécharger et lire une VAC officielle du SIA.
 - Ne pas commencer le système VAC offline tant que ce test n’a pas validé le téléchargement direct.
 - Aucun proxy NAS/VPS n’est ajouté.
 
@@ -349,7 +339,7 @@ CONTRÔLES TECHNIQUES
 - Aucune requête SIA automatique au démarrage ajoutée.
 - Intégrité des archives ZIP contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Mettre l’iPad/PC en ligne.
 - Ouvrir Gestion des Cartes.
 - Appuyer une fois sur « Test SIA ».
@@ -362,9 +352,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.91 — RETOURS À LA LIGNE DANS LES AIDES D’IMPORT
+VERSION TEST v14.91 — RETOURS À LA LIGNE DANS LES AIDES D’IMPORT
 Date : 07/08/2026
-Base : v14.90
+Base : TEST v14.90
 
 MODIFICATIONS
 1. Aide « Importer Cartes Offline »
@@ -414,9 +404,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.90 — CORRECTION DES TEXTES D’AIDE
+VERSION TEST v14.90 — CORRECTION DES TEXTES D’AIDE
 Date : 07/08/2026
-Base : v14.89
+Base : TEST v14.89
 
 MODIFICATIONS
 - Mise à jour des trois textes d’aide de la fenêtre Gestion des Cartes.
@@ -450,9 +440,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.89 — AIDES CONTEXTUELLES DES IMPORTS
+VERSION TEST v14.89 — AIDES CONTEXTUELLES DES IMPORTS
 Date : 07/08/2026
-Base : v14.88
+Base : TEST v14.88
 
 DEMANDE INTÉGRÉE
 - Ajout d’aides « ? » pour les trois opérations d’import de la fenêtre Gestion des Cartes.
@@ -495,7 +485,7 @@ CONTRÔLES TECHNIQUES
 - Absence de nouvelle dépendance réseau contrôlée.
 - Intégrité des archives ZIP contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Ouvrir Gestion des Cartes.
 - Vérifier la présence d’un « ? » à côté de chacun des trois boutons d’import.
 - Ouvrir chaque aide et contrôler le texte.
@@ -508,9 +498,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.88 — CONTOUR FRANCE FIDÈLE À LA RÉFÉRENCE VALIDÉE
+VERSION TEST v14.88 — CONTOUR FRANCE FIDÈLE À LA RÉFÉRENCE VALIDÉE
 Date : 07/08/2026
-Base : v14.87
+Base : TEST v14.87
 
 DEMANDE INTÉGRÉE
 - Remplacer la forme approximative de la France par un contour réellement reconnaissable.
@@ -541,9 +531,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.87 — CORRECTION VISUELLE DU BOUTON FRANCE
+VERSION TEST v14.87 — CORRECTION VISUELLE DU BOUTON FRANCE
 Date : 07/08/2026
-Base : v14.86
+Base : TEST v14.86
 
 DEMANDE INTÉGRÉE
 - L’icône précédente ne ressemblait pas suffisamment à la France.
@@ -586,7 +576,7 @@ CONTRÔLES TECHNIQUES
 - Absence de nouvelle dépendance réseau contrôlée.
 - Intégrité des archives ZIP contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Vérifier visuellement que le bouton au-dessus de SafeSky ne contient plus aucun texte.
 - Vérifier que le fond du bouton est blanc.
 - Vérifier que la France apparaît bien comme un simple contour bleu.
@@ -599,9 +589,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.86 — SÉLECTEUR RAPIDE DES CARTES OFFLINE EN VOL
+VERSION TEST v14.86 — SÉLECTEUR RAPIDE DES CARTES OFFLINE EN VOL
 Date : 07/08/2026
-Base : v14.85
+Base : TEST v14.85
 
 CONTEXTE
 - De nouveaux problèmes de chargement de la carte NPF ont été rencontrés pendant un vol.
@@ -631,7 +621,7 @@ CONTRÔLES TECHNIQUES
 - Absence de nouvelle dépendance réseau contrôlée.
 - Intégrité des archives ZIP contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Vérifier la position du bouton France juste au-dessus de SafeSky.
 - Vérifier les gros boutons correspondant aux cartes réellement téléchargées, notamment OACI et NPF.
 - Basculer OACI ↔ NPF et vérifier la fermeture automatique de la fenêtre.
@@ -645,9 +635,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.85 — RÉORGANISATION DE GESTION DES CARTES
+VERSION TEST v14.85 — RÉORGANISATION DE GESTION DES CARTES
 Date : 05/08/2026
-Base : v14.84
+Base : TEST v14.84
 
 DEMANDES INTÉGRÉES
 1. Suppression simultanée des PDF offline
@@ -702,7 +692,7 @@ CONTRÔLES TECHNIQUES
 - Absence de nouvelle dépendance réseau contrôlée.
 - Intégrité des archives de livraison contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Ouvrir `Gestion des Cartes`.
 - Vérifier l’ordre des sections et les deux nouveaux libellés.
 - Vérifier que `Supprimer le calque routier` ne prend plus toute la largeur.
@@ -717,9 +707,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.84 — STABILITÉ DES CARTES OFFLINE EN VOL
+VERSION TEST v14.84 — STABILITÉ DES CARTES OFFLINE EN VOL
 Date : 05/08/2026
-Base : v14.83
+Base : TEST v14.83
 
 PROBLÈME SIGNALÉ
 - Pendant un vol avec la v14.83, l’accès aux cartes hors ligne a été temporairement perdu.
@@ -798,7 +788,7 @@ CONTRÔLES TECHNIQUES
 - Vérification de l’absence de nouvelle dépendance réseau.
 - Intégrité des deux archives de livraison contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Installer la v14.84 sans réimporter les cartes ni le pack routier.
 - Vérifier que les cartes offline déjà installées s’ouvrent normalement.
 - Activer le suivi GPS et le calque routier.
@@ -813,9 +803,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.83 — CARTOUCHES ROUTIERS LISIBLES
+VERSION TEST v14.83 — CARTOUCHES ROUTIERS LISIBLES
 Date : 04/08/2026
-Base : v14.82
+Base : TEST v14.82
 
 PROBLÈME SIGNALÉ
 - Après import du pack routier v6, la carte devenait illisible dans la région bordelaise.
@@ -878,7 +868,7 @@ CONTRÔLES TECHNIQUES
 - Vérification de l’absence de dépendance réseau supplémentaire.
 - Intégrité des archives de livraison contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Mettre à jour les fichiers applicatifs vers v14.83.
 - Ouvrir le calque A/N/D/M/T déjà installé.
 - Contrôler la lisibilité autour de Bordeaux, Mérignac, Saint-Médard-en-Jalles et Eysines.
@@ -892,9 +882,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 
 NPF-Q400 — HISTORIQUE CUMULATIF DES MODIFICATIONS
 
-VERSION v14.82 — ROUTES TERRITORIALES ET CARTOUCHES SUR LA PORTION VISIBLE
+VERSION TEST v14.82 — ROUTES TERRITORIALES ET CARTOUCHES SUR LA PORTION VISIBLE
 Date : 04/08/2026
-Base : v14.81
+Base : TEST v14.81
 
 PROBLÈMES TRAITÉS
 - Le nouveau pack routier v6 contient les classes A, N, D, M et T.
@@ -937,7 +927,7 @@ CONTRÔLES TECHNIQUES
 - Vérification que le point calculé reste dans l’emprise visible.
 - Intégrité des archives de livraison contrôlée.
 
-VALIDATION À EFFECTUER DANS NPF de développement
+VALIDATION À EFFECTUER DANS NPF TEST
 - Importer le pack routier v6 validé.
 - Vérifier les routes girondines D211, D1215, D1215E1, D2215, D1563, D213E2 et D1250.
 - Vérifier M6, M7, M35, M351, M353, M820, M902 et M6202.
@@ -950,9 +940,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.81 — RECHERCHE PHONÉTIQUE NATIONALE ÉLARGIE
+VERSION TEST v14.81 — RECHERCHE PHONÉTIQUE NATIONALE ÉLARGIE
 Date : 03/08/2026
-Base : v14.80
+Base : TEST v14.80
 
 PROBLÈME SIGNALÉ
 - La base nationale de localités est correctement chargée en ligne et hors ligne.
@@ -983,7 +973,7 @@ CAS DE VALIDATION CIBLÉS
 - Les recherches exactes `Abbartello 2A` et `Baille Argent 971` restent prioritaires.
 
 VÉRIFICATION DE L’UTILISATION HORS LIGNE
-- L’archive reste `data/localites/localites-france-v14.56.zip`, déjà intégrée au dépôt de développement.
+- L’archive reste `data/localites/localites-france-v14.56.zip`, déjà intégrée au dépôt TEST.
 - La recherche élargie lit uniquement plusieurs fragments à l’intérieur de cette archive locale.
 - Aucune nouvelle URL, API, bibliothèque ni ressource distante n’est ajoutée.
 - Le service worker conserve sa logique de cache de données ; seules les versions applicative et de cache sont incrémentées.
@@ -996,7 +986,7 @@ AUDIT ET CONTRÔLES TECHNIQUES
 - Contrôle de l’archive nationale : 2 807 fragments et 179 402 localités.
 - Contrôle statique des groupes : `ab` couvre 10 fragments dont `abb`; `ba` couvre 24 fragments dont `bai` et `bay`.
 - Vérification que les données sources de `Abbartello — Olmeto (2A)` et `Baille Argent — Pointe-Noire (971)` sont présentes dans les fragments désormais chargés.
-- Le test final réel doit être effectué dans la PWA de développement avec Internet, puis en mode avion.
+- Le test final réel doit être effectué dans la PWA TEST avec Internet, puis en mode avion.
 
 - Journal cumulatif v14.80 conservé intégralement ci-dessous.
 
@@ -1005,9 +995,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.80 — SUPPRESSION DE L’ANCIEN CODE LFBV POUR BRIVE
+VERSION TEST v14.80 — SUPPRESSION DE L’ANCIEN CODE LFBV POUR BRIVE
 Date : 03/08/2026
-Base : v14.79
+Base : TEST v14.79
 
 MODIFICATION DEMANDÉE
 - Supprimer l’entrée `LFBV` associée à Brive.
@@ -1059,9 +1049,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.79 — PISTES TOUJOURS VISIBLES, REPÈRES PÉLICANDROMES CORRIGÉS ET VECTEUR PAR TRANCHES DE 50 KT
+VERSION TEST v14.79 — PISTES TOUJOURS VISIBLES, REPÈRES PÉLICANDROMES CORRIGÉS ET VECTEUR PAR TRANCHES DE 50 KT
 Date : 02/08/2026
-Base : v14.78
+Base : TEST v14.78
 
 PROBLÈMES SIGNALÉS
 - Malgré l’ajout des données en v14.78, les pistes de `LFBT`, `LFBO`, `LFBF`, `LFMQ`, `LFMN` et d’autres terrains restaient absentes de la carte.
@@ -1156,9 +1146,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.78 — PISTES DE TOUS LES AÉROPORTS DÉCLARÉS PÉLICANDROMES
+VERSION TEST v14.78 — PISTES DE TOUS LES AÉROPORTS DÉCLARÉS PÉLICANDROMES
 Date : 02/08/2026
-Base : v14.77
+Base : TEST v14.77
 
 PROBLÈME SIGNALÉ
 - Les pistes de Montpellier-Méditerranée, Nice-Côte d’Azur, Tarbes-Lourdes-Pyrénées et d’autres aéroports déclarés PÉLIC n’apparaissaient pas.
@@ -1236,9 +1226,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.77 — PISTES DES PÉLICANDROMES ET AFFICHAGE À PARTIR DE 1 NM
+VERSION TEST v14.77 — PISTES DES PÉLICANDROMES ET AFFICHAGE À PARTIR DE 1 NM
 Date : 02/08/2026
-Base : v14.76
+Base : TEST v14.76
 
 MODIFICATION DEMANDÉE
 - Conserver la logique actuelle de la v14.76 : ronds/repères d’aéroport cliquables et pistes intégrées dans la carte NPF.
@@ -1291,9 +1281,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.76 — PISTES INTÉGRÉES À LA CARTE ET RONDS D’AÉROPORT RESTAURÉS
+VERSION TEST v14.76 — PISTES INTÉGRÉES À LA CARTE ET RONDS D’AÉROPORT RESTAURÉS
 Date : 02/08/2026
-Base : v14.75
+Base : TEST v14.75
 
 MODIFICATION DEMANDÉE
 - Revenir au rendu précédent des aéroports avec leurs symboles ronds.
@@ -1345,9 +1335,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.75 — PISTES À L’ÉCHELLE ET ÉTIQUETTES JAUNES DES TRAFICS SUIVIS
+VERSION TEST v14.75 — PISTES À L’ÉCHELLE ET ÉTIQUETTES JAUNES DES TRAFICS SUIVIS
 Date : 02/08/2026
-Base : v14.74
+Base : TEST v14.74
 
 MODIFICATIONS DEMANDÉES
 - Pour les aérodromes complémentaires, afficher uniquement les pistes, avec leur longueur réellement à l’échelle sur la carte.
@@ -1398,9 +1388,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.74 — LISTE PERMANENTE D’IDENTIFIANTS SAFESKY SUIVIS
+VERSION TEST v14.74 — LISTE PERMANENTE D’IDENTIFIANTS SAFESKY SUIVIS
 Date : 02/08/2026
-Base : v14.73
+Base : TEST v14.73
 
 MODIFICATION DEMANDÉE
 - Conserver une liste définie d’identifiants suivis après une réinstallation complète de la PWA.
@@ -1470,9 +1460,9 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
-VERSION v14.73 — ICÔNES DES AÉROPORTS SÉLECTIONNABLES COMME PÉLICANDROME LÉGÈREMENT AGRANDIES
+VERSION TEST v14.73 — ICÔNES DES AÉROPORTS SÉLECTIONNABLES COMME PÉLICANDROME LÉGÈREMENT AGRANDIES
 Date : 02/08/2026
-Base : v14.72 validée
+Base : TEST v14.72 validée
 
 MODIFICATION DEMANDÉE
 - Augmenter légèrement la taille des symboles des aéroports susceptibles d’être sélectionnés comme pélicandrome.
@@ -1501,11 +1491,11 @@ HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
 ======================================================================
 
 ============================================================
-VERSION v14.72 — DÉPLACEMENT CONTINU DES TRAFICS SAFESKY
+VERSION TEST v14.72 — DÉPLACEMENT CONTINU DES TRAFICS SAFESKY
 ============================================================
 
 DATE : 02/08/2026
-BASE : v14.71 
+BASE : v14.71 TEST
 
 PROBLÈME SIGNALÉ
 - Les positions SafeSky sont renouvelées toutes les cinq secondes.
@@ -1551,11 +1541,11 @@ CONTRÔLES DE LIVRAISON
 
 
 ============================================================
-VERSION v14.71 — TOUS LES AUTRES AÉRODROMES EN POINTS NOIRS
+VERSION TEST v14.71 — TOUS LES AUTRES AÉRODROMES EN POINTS NOIRS
 ============================================================
 
 DATE : 01/08/2026
-BASE : v14.70 
+BASE : v14.70 TEST
 
 DEMANDE
 - Conserver les aérodromes déjà intégrés avec leur symbole actuel : point noir cerclé de blanc puis de noir.
@@ -1593,11 +1583,11 @@ CONTRÔLES DE LIVRAISON
 - Intégrité et contenu du ZIP contrôlés après création.
 
 ============================================================
-VERSION v14.70 — MISE À JOUR ATOMIQUE ET VERSIONNEMENT VERROUILLÉ
+VERSION TEST v14.70 — MISE À JOUR ATOMIQUE ET VERSIONNEMENT VERROUILLÉ
 ============================================================
 
 DATE : 01/08/2026
-BASE : v14.69 
+BASE : v14.69 TEST
 
 PROBLÈME SIGNALÉ
 - L'application reste sur l'ancienne version et ne passe pas à la v14.69.
@@ -1640,11 +1630,11 @@ CONTRÔLES DE LIVRAISON
 - Intégrité et contenu réel du ZIP contrôlés après création.
 
 ============================================================
-VERSION v14.69 — LECTURE NPF INDEXEDDB STABILISÉE AU DÉMARRAGE
+VERSION TEST v14.69 — LECTURE NPF INDEXEDDB STABILISÉE AU DÉMARRAGE
 ============================================================
 
 DATE : 01/08/2026
-BASE : v14.68 
+BASE : v14.68 TEST
 
 PROBLÈME SIGNALÉ
 - La carte OACI s'affiche correctement dès l'ouverture.
@@ -1681,9 +1671,9 @@ CONTRÔLES DE LIVRAISON
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
 
-VERSION v14.68 — CHARGEMENT AUTOMATIQUE FIABLE DE LA CARTE OFFLINE MÉMORISÉE
+VERSION TEST v14.68 — CHARGEMENT AUTOMATIQUE FIABLE DE LA CARTE OFFLINE MÉMORISÉE
 Date : 1 août 2026
-Base : v14.67  — alerte de mise à jour unique restaurée
+Base : v14.67 TEST — alerte de mise à jour unique restaurée
 
 CORRECTION PRINCIPALE
 - Correction du retour de la carte Offline vide à chaque ouverture de la PWA.
@@ -1720,9 +1710,9 @@ VALIDATIONS
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
 
-VERSION v14.67 — RESTAURATION DÉFINITIVE DE L’ALERTE DE MISE À JOUR UNIQUE
+VERSION TEST v14.67 — RESTAURATION DÉFINITIVE DE L’ALERTE DE MISE À JOUR UNIQUE
 Date : 1 août 2026
-Base : v14.66  — restauration automatique de la carte Offline au démarrage
+Base : v14.66 TEST — restauration automatique de la carte Offline au démarrage
 
 CORRECTION PRINCIPALE
 - Correction du retour de la boucle permanente « Mise à jour installée » apparue en v14.66.
@@ -1758,9 +1748,9 @@ VALIDATIONS
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
 
-VERSION v14.66 — RESTAURATION AUTOMATIQUE DE LA CARTE OFFLINE AU DÉMARRAGE
+VERSION TEST v14.66 — RESTAURATION AUTOMATIQUE DE LA CARTE OFFLINE AU DÉMARRAGE
 Date : 1 août 2026
-Base : v14.65  — fin de la boucle du message de mise à jour
+Base : v14.65 TEST — fin de la boucle du message de mise à jour
 
 CORRECTION PRINCIPALE
 - Correction de la carte Offline mémorisée qui restait vide à chaque ouverture de la PWA.
@@ -1797,9 +1787,9 @@ VALIDATIONS
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
 
-VERSION v14.65 — FIN DE LA BOUCLE « MISE À JOUR INSTALLÉE »
+VERSION TEST v14.65 — FIN DE LA BOUCLE « MISE À JOUR INSTALLÉE »
 Date : 1 août 2026
-Base : v14.64  — démarrage PWA hors ligne fiabilisé
+Base : v14.64 TEST — démarrage PWA hors ligne fiabilisé
 
 CORRECTION PRINCIPALE
 - Suppression de la boucle permanente du message « Mise à jour installée ».
@@ -1834,9 +1824,9 @@ VALIDATIONS
 
 NPF-Q400 — JOURNAL CUMULATIF DES MODIFICATIONS
 
-VERSION v14.64 — DÉMARRAGE PWA HORS LIGNE FIABILISÉ
+VERSION TEST v14.64 — DÉMARRAGE PWA HORS LIGNE FIABILISÉ
 Date : 1 août 2026
-Base : v14.63  — lecture directe des tuiles Offline depuis IndexedDB
+Base : v14.63 TEST — lecture directe des tuiles Offline depuis IndexedDB
 
 CORRECTIONS
 - Séparation du cache de démarrage PWA et des données volumineuses.
@@ -1868,7 +1858,7 @@ RÈGLE DE TENUE DU JOURNAL
 
 ===============================================================================
 
-NPF-Q400 —  v14.63 — Lecture directe des cartes Offline
+NPF-Q400 — TEST v14.63 — Lecture directe des cartes Offline
 
 CORRECTION PRINCIPALE
 - La couche de carte Offline ne dépend plus du contrôle de la page par le service worker.
@@ -1890,7 +1880,7 @@ CONSERVÉ
 
 ===============================================================================
 
-NPF-Q400 —  v14.62
+NPF-Q400 — TEST v14.62
 
 CORRECTION PRINCIPALE
 - Le clic sur « Offline » ne dépend plus d’une réponse IndexedDB ni du contrôle préalable du service worker.
@@ -1919,7 +1909,7 @@ CONSERVÉ
 
 ===============================================================================
 
-NPF-Q400 —  v14.61
+NPF-Q400 — TEST v14.61
 Restauration du moteur Offline de la v14.56
 
 Base fonctionnelle : v14.57 pour les fonctions SafeSky ajoutées.
@@ -1955,7 +1945,7 @@ CONTRÔLES OBLIGATOIRES EFFECTUÉS
 
 ===============================================================================
 
-NPF-Q400 —  v14.60 — Activation Offline immédiate
+NPF-Q400 — TEST v14.60 — Activation Offline immédiate
 
 Corrections :
 - suppression de toute attente IndexedDB avant la reconstruction de la carte ;
@@ -1980,7 +1970,7 @@ Contrôles de livraison :
 
 ===============================================================================
 
-NPF-Q400 — VERSION v14.59
+NPF-Q400 — VERSION TEST v14.59
 Activation Offline non bloquante
 
 CORRECTION PRINCIPALE
@@ -2009,9 +1999,9 @@ CONSERVATION
 
 ===============================================================================
 
-NPF-Q400 —  v14.58 — RÉPARATION MODE OFFLINE
+NPF-Q400 — TEST v14.58 — RÉPARATION MODE OFFLINE
 
-Base : v14.57 .
+Base : v14.57 TEST.
 
 CORRECTIONS
 - Le bouton « Cartes » et les boutons Online / Offline sont désormais installés dans un bloc autonome, immédiatement après la création de la carte.
@@ -2041,7 +2031,7 @@ Le contrôle OFFLINE fait désormais partie de la validation obligatoire avant l
 
 ===============================================================================
 
-v14.57  — liste suivie sans limite et fermeture de la fiche trafic sur clic carte
+v14.57 TEST — liste suivie sans limite et fermeture de la fiche trafic sur clic carte
 
 Modifications apportées :
 - suppression complète du plafond de 20 appareils dans la liste SafeSky suivie ;
@@ -2058,11 +2048,11 @@ Modifications apportées :
 - distinction tactile entre un appui bref et un geste dépassant 8 px pour éviter une fermeture après déplacement sur iPad ;
 - maintien de l’ouverture de la fiche pendant les rafraîchissements et déplacements fluides du trafic ;
 - maintien intégral du scroll tactile, de l’ajout d’indicatifs en attente, du tri alphabétique et de l’affichage forcé individuel au sol ;
-- version applicative portée en v14.57 .
+- version applicative portée en v14.57 TEST.
 
 ===============================================================================
 
-v14.56  — défilement tactile de la liste suivie
+v14.56 TEST — défilement tactile de la liste suivie
 
 Modifications apportées :
 - correction du blocage du défilement lorsque le doigt démarre sur une ligne verte détectée ;
@@ -2073,11 +2063,11 @@ Modifications apportées :
 - fonctionnement identique pour les trafics détectés en vol et au sol ;
 - le bouton « Retirer » conserve son fonctionnement indépendant ;
 - aucune modification de la liste, du tri alphabétique, des filtres ou de l'affichage forcé individuel ;
-- version applicative portée en v14.56 .
+- version applicative portée en v14.56 TEST.
 
 ===============================================================================
 
-v14.55  — ajout d’un indicatif en attente et tri alphabétique
+v14.55 TEST — ajout d’un indicatif en attente et tri alphabétique
 
 Modifications apportées :
 - correction du refus d’ajout de MILAN80 et des autres indicatifs non actuellement détectés ;
@@ -2094,11 +2084,11 @@ Modifications apportées :
 - classement permanent de la liste suivie par ordre alphabétique des indicatifs, avec tri numérique naturel ;
 - tri également appliqué aux anciennes entrées déjà enregistrées ;
 - le retrait, l’affichage forcé au sol et les boutons SafeSky existants restent inchangés ;
-- version applicative portée en v14.55 .
+- version applicative portée en v14.55 TEST.
 
 ===============================================================================
 
-v14.54  — ajout manuel d’un indicatif dans la liste suivie
+v14.54 TEST — ajout manuel d’un indicatif dans la liste suivie
 
 Modifications apportées :
 - ajout d’un bouton « Ajouter » immédiatement à gauche du bouton « Rechercher » dans les filtres SafeSky ;
@@ -2112,11 +2102,11 @@ Modifications apportées :
 - le bouton « Rechercher » conserve son fonctionnement actuel avec recherche exacte ou partielle des trafics actifs ;
 - prise en charge des réponses SafeSky d’identité ne contenant pas de position géographique courante ;
 - aucune modification des filtres, de l’affichage forcé individuel ni des autres fonctions de la v14.53 ;
-- version applicative portée en v14.54 .
+- version applicative portée en v14.54 TEST.
 
 ===============================================================================
 
-v14.53  — clic sur la liste suivie et affichage forcé individuel
+v14.53 TEST — clic sur la liste suivie et affichage forcé individuel
 
 Modifications apportées :
 - les lignes vertes de la liste d’identifiants suivis deviennent directement sélectionnables ;
@@ -2131,11 +2121,11 @@ Modifications apportées :
 - le bouton « Retirer » conserve son action propre et ne déclenche pas le centrage de la carte ;
 - prise en charge du toucher iPad ainsi que des touches Entrée et Espace ;
 - maintien intégral des fonctions Go To, de la coloration verte et des boutons dupliqués de la v14.52 ;
-- version applicative portée en v14.53 .
+- version applicative portée en v14.53 TEST.
 
 ===============================================================================
 
-v14.52  — Go To aéroport, suivi détecté vert et commandes dupliquées
+v14.52 TEST — Go To aéroport, suivi détecté vert et commandes dupliquées
 
 Modifications apportées :
 - ajout d’un bouton « Go To » sous tous les autres boutons de la fiche d’un aéroport ;
@@ -2152,11 +2142,11 @@ Modifications apportées :
 - conservation des trois boutons originaux en bas de la fenêtre ;
 - les deux séries commandent exactement les mêmes réglages et actions ;
 - maintien intégral de la recherche OACI et de la correction tactile de la v14.51 ;
-- version applicative portée en v14.52 .
+- version applicative portée en v14.52 TEST.
 
 ===============================================================================
 
-v14.51  — croix aéroport tactile et bandeau en haut sans feu
+v14.51 TEST — croix aéroport tactile et bandeau en haut sans feu
 
 Modifications apportées :
 - correction de la croix × du bandeau de destination aéroport sur iPad/PWA ;
@@ -2170,11 +2160,11 @@ Modifications apportées :
 - masquage explicite de tout ancien bandeau BINGO résiduel dans ce cas ;
 - aucune modification du feu, de la base, du pélicandrome ou des calculs mission ;
 - maintien intégral de la recherche OACI de la v14.50 et des routes métropolitaines de la v14.49 ;
-- version applicative portée en v14.51 .
+- version applicative portée en v14.51 TEST.
 
 ===============================================================================
 
-v14.50  — recherche OACI et route GPS vers un aéroport
+v14.50 TEST — recherche OACI et route GPS vers un aéroport
 
 Modifications apportées :
 - la barre de recherche accepte désormais les codes OACI des aéroports connus de NPF ;
@@ -2191,11 +2181,11 @@ Modifications apportées :
 - absence de mémorisation permanente de la destination aéroport ;
 - maintien intégral des routes métropolitaines M de la v14.49 ;
 - maintien intégral du masquage temporaire du propre avion de la v14.48 ;
-- version applicative portée en v14.50 .
+- version applicative portée en v14.50 TEST.
 
 ===============================================================================
 
-v14.49  — prise en charge des routes métropolitaines M
+v14.49 TEST — prise en charge des routes métropolitaines M
 
 Modifications apportées :
 - ajout de la classe routière M au moteur d’import du calque offline ;
@@ -2208,7 +2198,7 @@ Modifications apportées :
 - maintien intégral du masquage temporaire de son propre avion introduit en v14.48 ;
 - maintien intégral des calculs d’heure sur feu de la v14.47 ;
 - maintien intégral des classes A, N et D et du stockage du pack existant ;
-- version applicative portée en v14.49 .
+- version applicative portée en v14.49 TEST.
 
 IMPORTANT :
 Le pack A/N/D actuel ne contient pas les géométries M, car elles ont été rejetées lors de sa génération.
@@ -2217,7 +2207,7 @@ Le nouvel import remplace uniquement l’ancien calque routier. Il ne faut pas s
 
 ===============================================================================
 
-v14.48  — masquage temporaire du propre avion SafeSky
+v14.48 TEST — masquage temporaire du propre avion SafeSky
 Date : 31 juillet 2026
 
 Modifications apportées :
@@ -2234,11 +2224,11 @@ Modifications apportées :
 - mise à jour immédiate du calque et du compteur de trafics lors de la sélection ou de la réinitialisation ;
 - aucune modification des calculs Prévi/Suivi, des règles RLT, des cartes offline, de la recherche des communes ou du fonctionnement SafeSky restant ;
 - base nationale hors ligne conservée à l’identique et archive renommée localites-france-v14.48.zip pour la cohérence du cache ;
-- version applicative portée en v14.48 .
+- version applicative portée en v14.48 TEST.
 
 ===============================================================================
 
-v14.47  — correction de la source RLT du premier transit
+v14.47 TEST — correction de la source RLT du premier transit
 Date : 30 juillet 2026
 
 Modifications apportées :
@@ -2254,11 +2244,11 @@ Modifications apportées :
 - aucune modification des consommations, BINGO, rotations, trafic SafeSky, cartes offline ou recherche des communes ;
 - correction des références de version actives dans index.html et harmonisation complète en v14.47 ;
 - base nationale hors ligne conservée à l’identique et archive renommée localites-france-v14.47.zip pour la cohérence du cache ;
-- version applicative portée en v14.47 .
+- version applicative portée en v14.47 TEST.
 
 ===============================================================================
 
-v14.46  — heure sur feu avec forfait plein retardant
+v14.46 TEST — heure sur feu avec forfait plein retardant
 Date : 30 juillet 2026
 
 Modifications apportées :
@@ -2275,11 +2265,11 @@ Modifications apportées :
 - aides de calcul Prévi et Suivi rotations mises à jour avec la formule et le motif d'application ou d'exemption ;
 - aucune modification du fuel sur feu, de la consommation rotation, des BINGO, des trafics SafeSky, des cartes ou de la recherche des communes ;
 - base nationale hors ligne conservée à l'identique et archive renommée localites-france-v14.46.zip pour la cohérence du cache ;
-- version applicative portée en v14.46 .
+- version applicative portée en v14.46 TEST.
 
 ===============================================================================
 
-v14.45  — curseur tactile libre et recherche phonétique Ayssènes
+v14.45 TEST — curseur tactile libre et recherche phonétique Ayssènes
 Date : 30 juillet 2026
 
 Modifications apportées :
@@ -2297,11 +2287,11 @@ Modifications apportées :
 - recherche nationale sans département inchangée afin de préserver la rapidité ;
 - déplacement fluide des trafics, filtre des trafics au sol, zone SafeSky centrée sur la carte et cartes offline inchangés ;
 - base nationale hors ligne conservée et archive renommée localites-france-v14.45.zip pour la cohérence du cache ;
-- version applicative portée en v14.45 .
+- version applicative portée en v14.45 TEST.
 
 ===============================================================================
 
-v14.44  — réactivation du déplacement fluide des trafics sur la bonne base v14.43
+v14.44 TEST — réactivation du déplacement fluide des trafics sur la bonne base v14.43
 Date : 30 juillet 2026
 
 Modifications apportées :
@@ -2321,11 +2311,11 @@ Modifications apportées :
 - maintien de la fenêtre d’un trafic ouverte pendant les rafraîchissements ;
 - aucun changement des filtres altitude, de la recherche d’identifiants, de la liste suivie, des cartes offline ou des localités ;
 - base nationale hors ligne conservée et archive renommée localites-france-v14.44.zip pour la cohérence du cache ;
-- version applicative portée en v14.44 .
+- version applicative portée en v14.44 TEST.
 
 ===============================================================================
 
-v14.43  — rétablissement de la connexion SafeSky
+v14.43 TEST — rétablissement de la connexion SafeSky
 Date : 30 juillet 2026
 
 CORRECTION
@@ -2336,11 +2326,11 @@ CORRECTION
 - le filtre « Afficher les trafics au sol » et le centrage sur le centre de la carte sont conservés ;
 - aucune modification du déplacement, du zoom, des tuiles, des calques ou du rendu de la carte ;
 - base nationale des localités hors ligne conservée ;
-- version applicative portée en v14.43 .
+- version applicative portée en v14.43 TEST.
 
 ===============================================================================
 
-v14.42  — filtre d’affichage des trafics au sol et suppression des zones GPS / feu
+v14.42 TEST — filtre d’affichage des trafics au sol et suppression des zones GPS / feu
 
 Modifications apportées :
 - ajout dans « Filtres trafic » d’une cellule avec case à cocher « Afficher les trafics au sol » ;
@@ -2359,9 +2349,9 @@ Modifications apportées :
 - conservation intégrale de la base nationale offline de 179 402 localités ;
 - archive nationale renommée localites-france-v14.42.zip uniquement pour la cohérence du cache ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.42 .
+- version applicative portée en v14.42 TEST.
 
-v14.41  — recherche partielle d’identifiants SafeSky et suppression de la publication NPF
+v14.41 TEST — recherche partielle d’identifiants SafeSky et suppression de la publication NPF
 
 Modifications apportées :
 - suppression du réglage « Publier ma position NPF vers SafeSky » dans les filtres trafic ;
@@ -2384,9 +2374,9 @@ Modifications apportées :
 - conservation intégrale de la base nationale offline de 179 402 localités ;
 - archive nationale renommée localites-france-v14.41.zip uniquement pour la cohérence du cache ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.41 .
+- version applicative portée en v14.41 TEST.
 
-v14.40  — base nationale France 100 % offline pour villages, hameaux et lieux-dits
+v14.40 TEST — base nationale France 100 % offline pour villages, hameaux et lieux-dits
 
 Modifications apportées :
 - remplacement du prototype limité à la Gironde par une base nationale hors ligne ;
@@ -2416,9 +2406,9 @@ Modifications apportées :
 - aucune suppression ni réimport des packs de cartes requis ;
 - maintien des fonctions SafeSky existantes ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.40 .
+- version applicative portée en v14.40 TEST.
 
-v14.39  — base pilote Gironde 100 % offline pour villages, hameaux et lieux-dits
+v14.39 TEST — base pilote Gironde 100 % offline pour villages, hameaux et lieux-dits
 
 Modifications apportées :
 - suppression de toute dépendance au géocodeur Géoplateforme pour la recherche des localités ;
@@ -2459,9 +2449,9 @@ Modifications apportées :
 - maintien des corrections cartes offline de la v14.37 et de la v14.38 ;
 - maintien des fonctions SafeSky existantes ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.39 .
+- version applicative portée en v14.39 TEST.
 
-v14.38  — recherche complémentaire de localités par Géoplateforme avec classement phonétique NPF
+v14.38 TEST — recherche complémentaire de localités par Géoplateforme avec classement phonétique NPF
 
 Modifications apportées :
 - ajout d’un test pilote pour les villages, hameaux, quartiers et lieux nommés absents de la base des communes ;
@@ -2500,9 +2490,9 @@ Modifications apportées :
 - maintien de toutes les corrections cartes offline de la v14.37 ;
 - maintien de toutes les fonctions SafeSky de la v14.37 ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.38 .
+- version applicative portée en v14.38 TEST.
 
-v14.37  — compatibilité cartes NPF multi-ZIP et diagnostic publication SafeSky
+v14.37 TEST — compatibilité cartes NPF multi-ZIP et diagnostic publication SafeSky
 
 Modifications apportées :
 - retour sur la base fonctionnelle v14.35 pour éviter de conserver la réécriture trop large de l’IndexedDB introduite en v14.36 ;
@@ -2536,9 +2526,9 @@ Modifications apportées :
 - conservation de l’indicatif saisi pour une future autorisation SafeSky ;
 - maintien de la recherche globale, du suivi par identifiant, des zones ADVISORY, du vecteur courbe et de l’animation fluide ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.37 .
+- version applicative portée en v14.37 TEST.
 
-v14.35  — recherche globale, suivi direct, zones drone, taux de virage, animation fluide et publication NPF
+v14.35 TEST — recherche globale, suivi direct, zones drone, taux de virage, animation fluide et publication NPF
 
 Modifications apportées :
 - ajout d’une recherche globale SafeSky par indicatif complet ;
@@ -2603,9 +2593,9 @@ Modifications apportées :
 - maintien de SafeSky comme source unique du trafic ;
 - conservation des cartes offline, des noms de packs sans version et de toutes les fonctions de la v14.34 ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.35 .
+- version applicative portée en v14.35 TEST.
 
-v14.34  — noms des ZIP de carte indépendants de leur version
+v14.34 TEST — noms des ZIP de carte indépendants de leur version
 
 Modifications apportées :
 - ajout d’une fonction unique normalizeOfflinePackName() ;
@@ -2628,9 +2618,9 @@ Modifications apportées :
 - aucune modification des imports manuels existants ;
 - conservation de toutes les fonctions de la v14.33 ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.34 .
+- version applicative portée en v14.34 TEST.
 
-v14.33  — flèches compactes et étiquette maintenue hors de l’icône
+v14.33 TEST — flèches compactes et étiquette maintenue hors de l’icône
 
 Modifications apportées :
 - réduction de la hauteur visuelle des flèches diagonales de montée et de descente ;
@@ -2650,9 +2640,9 @@ Modifications apportées :
 - stabilité du placement lors des faibles variations de route ;
 - conservation de toutes les fonctions de la v14.32 ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.33 .
+- version applicative portée en v14.33 TEST.
 
-v14.32  — flèches montée/descente diagonales et renforcées
+v14.32 TEST — flèches montée/descente diagonales et renforcées
 
 Modifications apportées :
 - remplacement de la flèche verticale de montée ↑ par une flèche diagonale ↗ ;
@@ -2673,9 +2663,9 @@ Modifications apportées :
 - conservation des couleurs vertes pour la montée et rouges pour la descente ;
 - conservation de toutes les fonctions de la v14.31 ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.32 .
+- version applicative portée en v14.32 TEST.
 
-v14.31  — fenêtre trafic enrichie, couleur des icônes et étiquette permanente sur deux lignes
+v14.31 TEST — fenêtre trafic enrichie, couleur des icônes et étiquette permanente sur deux lignes
 
 Modifications apportées :
 - demande à SafeSky d’inclure les trafics au sol ;
@@ -2710,9 +2700,9 @@ Modifications apportées :
 - conservation des vecteurs proportionnels à la vitesse sol ;
 - conservation de SafeSky comme source unique du trafic ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.31 .
+- version applicative portée en v14.31 TEST.
 
-v14.30  — harmonisation des couleurs paramoteur, parachutiste et pendulaire
+v14.30 TEST — harmonisation des couleurs paramoteur, parachutiste et pendulaire
 
 Modifications apportées :
 - paramoteur affiché dans la même famille magenta que le parapente ;
@@ -2728,9 +2718,9 @@ Modifications apportées :
 - maintien des vecteurs proportionnels à la vitesse ;
 - SafeSky reste l’unique source de trafic ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.30 .
+- version applicative portée en v14.30 TEST.
 
-v14.29  — intégration de la base d’icônes SafeSky validée
+v14.29 TEST — intégration de la base d’icônes SafeSky validée
 
 Modifications apportées :
 - remplacement définitif des pictogrammes ULM, PLANEUR, AVION, JET, PARAPENTE et DELTAPLANE par la base visuelle validée ;
@@ -2752,9 +2742,9 @@ Modifications apportées :
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
 - aucune modification des cartes offline, de la simulation ou des autres fonctions NPF ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.29 .
+- version applicative portée en v14.29 TEST.
 
-v14.28  — six pictogrammes recalés sur les références SafeSky fournies
+v14.28 TEST — six pictogrammes recalés sur les références SafeSky fournies
 
 Modifications apportées :
 - remplacement ciblé des pictogrammes AVION, JET, PLANEUR, ULM, PARAPENTE et DELTAPLANE ;
@@ -2769,9 +2759,9 @@ Modifications apportées :
 - aucune modification des autres catégories de trafic ;
 - SafeSky reste l’unique source de trafic ;
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni ;
-- version applicative portée en v14.28 .
+- version applicative portée en v14.28 TEST.
 
-v14.27  — libellés français des catégories SafeSky et vecteurs proportionnels à la vitesse
+v14.27 TEST — libellés français des catégories SafeSky et vecteurs proportionnels à la vitesse
 
 Modifications apportées :
 - distinction explicite entre les catégories SafeSky JET, MOTORPLANE et THREE_AXES_LIGHT_PLANE ;
@@ -2805,9 +2795,9 @@ Modifications apportées :
 - aucun fichier SAFESKY_DIRECT_NPF ni FORMAT_CALQUE_ROUTIER_NPF fourni avec cette version ;
 - aucune modification des cartes offline, de la simulation ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.27 .
+- version applicative portée en v14.27 TEST.
 
-v14.26  — pictogrammes trafic rapprochés de la référence visuelle SafeSky
+v14.26 TEST — pictogrammes trafic rapprochés de la référence visuelle SafeSky
 
 Modifications apportées :
 - remplacement intégral des pictogrammes introduits en v14.25 ;
@@ -2844,9 +2834,9 @@ Modifications apportées :
 - conservation des corrections routières, de l’optimisation mémoire et du comportement du bouton de position ;
 - aucune modification des cartes offline, de la simulation ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.26 .
+- version applicative portée en v14.26 TEST.
 
-v14.25  — icônes trafic renforcées dans le style visuel SafeSky
+v14.25 TEST — icônes trafic renforcées dans le style visuel SafeSky
 
 Modifications apportées :
 - refonte visuelle complète des symboles de trafic affichés sur la carte ;
@@ -2884,9 +2874,9 @@ Modifications apportées :
 - conservation des corrections routières, de l’optimisation mémoire et du comportement du bouton de position ;
 - aucune modification des cartes offline, de la simulation ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.25 .
+- version applicative portée en v14.25 TEST.
 
-v14.24  — SafeSky direct avec clé intégrée, sans NAS
+v14.24 TEST — SafeSky direct avec clé intégrée, sans NAS
 
 Modifications apportées :
 - suppression complète de la dépendance au proxy SafeSky du NAS ;
@@ -2916,9 +2906,9 @@ Modifications apportées :
 - conservation du comportement du bouton de position : clic court = centrage, appui long = suivi ;
 - aucune modification des cartes offline, de la simulation ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.24 .
+- version applicative portée en v14.24 TEST.
 
-v14.23  — activation SafeSky Production via proxy sécurisé du NAS
+v14.23 TEST — activation SafeSky Production via proxy sécurisé du NAS
 
 Modifications apportées :
 - activation réelle de SafeSky comme source de trafic dans NPF-Q400 ;
@@ -2963,9 +2953,9 @@ Modifications apportées :
 - ajout d’un guide complet d’installation du proxy NAS ;
 - aucune modification du pack routier, des cartes offline, de la simulation ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.23 .
+- version applicative portée en v14.23 TEST.
 
-v14.22  — correction de l’import des références DN, RD, RN et CD
+v14.22 TEST — correction de l’import des références DN, RD, RN et CD
 
 Modifications apportées :
 - correction du rejet de la référence DN7 pendant l’import du pack routier ;
@@ -2992,9 +2982,9 @@ Modifications apportées :
 - aucune nécessité de régénérer le pack v4 s’il a déjà été créé ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.22 .
+- version applicative portée en v14.22 TEST.
 
-v14.21  — optimisation mémoire et fluidité du calque routier par niveau de zoom
+v14.21 TEST — optimisation mémoire et fluidité du calque routier par niveau de zoom
 
 Modifications apportées :
 - correction du fort ralentissement observé aux zooms où les routes sont masquées ;
@@ -3022,9 +3012,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse reste compatible et n’a pas besoin d’être réimporté ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.21 .
+- version applicative portée en v14.21 TEST.
 
-v14.20  — nationales à partir de 1 NM, autoroutes à partir de 2 NM
+v14.20 TEST — nationales à partir de 1 NM, autoroutes à partir de 2 NM
 
 Modifications apportées :
 - ajustement du seuil d’affichage des routes nationales ;
@@ -3041,9 +3031,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse reste compatible et n’a pas besoin d’être réimporté ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.20 .
+- version applicative portée en v14.20 TEST.
 
-v14.19  — autoroutes et nationales affichées à partir de 2 NM
+v14.19 TEST — autoroutes et nationales affichées à partir de 2 NM
 
 Modifications apportées :
 - décalage du seuil d’affichage des autoroutes ;
@@ -3060,9 +3050,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse reste compatible et n’a pas besoin d’être réimporté ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.19 .
+- version applicative portée en v14.19 TEST.
 
-v14.18  — départementales affichées à partir du zoom 1 NM
+v14.18 TEST — départementales affichées à partir du zoom 1 NM
 
 Modifications apportées :
 - décalage du seuil d’affichage des routes départementales ;
@@ -3077,9 +3067,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse reste compatible et n’a pas besoin d’être réimporté ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.18 .
+- version applicative portée en v14.18 TEST.
 
-v14.17  — routes stables et commandes distinctes du bouton de position
+v14.17 TEST — routes stables et commandes distinctes du bouton de position
 
 Modifications apportées :
 - conservation intégrale des corrections v14.16 sur les départementales intermittentes ;
@@ -3105,9 +3095,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse reste compatible ;
 - aucune modification du trafic, de la simulation ou des cartes offline ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.17 .
+- version applicative portée en v14.17 TEST.
 
-v14.16  — stabilité d’affichage des routes départementales
+v14.16 TEST — stabilité d’affichage des routes départementales
 
 Modifications apportées :
 - correction du cas où une départementale pouvait afficher son étiquette sans son tracé ;
@@ -3129,9 +3119,9 @@ Modifications apportées :
 - le ZIP France Sud + Corse existant reste compatible et n’a pas besoin d’être régénéré ;
 - aucune modification du trafic, de la simulation, des cartes offline ou du blocage du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.16 .
+- version applicative portée en v14.16 TEST.
 
-v14.15  — moteur du calque routier vectoriel offline A / N / D
+v14.15 TEST — moteur du calque routier vectoriel offline A / N / D
 
 Modifications apportées :
 - ajout d’un bouton ROUTES dans la colonne gauche de la carte ;
@@ -3175,9 +3165,9 @@ Modifications apportées :
 - le pack France restera un fichier séparé afin de ne pas alourdir les mises à jour de NPF ;
 - maintien du blocage global du stylet, du trafic, de la simulation et des cartes offline ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.15 .
+- version applicative portée en v14.15 TEST.
 
-v14.14  — menu filtres trafic compact, homogène et sans limite d’avions
+v14.14 TEST — menu filtres trafic compact, homogène et sans limite d’avions
 
 Modifications apportées :
 - suppression de la ligne « Nombre maximal d’avions » dans le menu des filtres ;
@@ -3203,9 +3193,9 @@ Modifications apportées :
 - maintien des filtres altitude absolu, ± autour de moi et du sol à + au-dessus de moi ;
 - maintien du blocage global du stylet ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.14 .
+- version applicative portée en v14.14 TEST.
 
-v14.13  — filtres trafic altitude absolue, ± autour de moi ou du sol à + au-dessus de moi
+v14.13 TEST — filtres trafic altitude absolue, ± autour de moi ou du sol à + au-dessus de moi
 
 Modifications apportées :
 - remplacement de l’ancienne case « Tranche autour de mon altitude » par trois choix exclusifs à boutons radio ;
@@ -3227,9 +3217,9 @@ Modifications apportées :
 - note explicative mise à jour dans la fenêtre Filtres trafic ;
 - aucune modification du rayon, du nombre maximal d’avions, des couleurs, de SafeSky ou des autres fonctions de l’application ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.13 .
+- version applicative portée en v14.13 TEST.
 
-v14.12  — blocage global du stylet dans toute l’application
+v14.12 TEST — blocage global du stylet dans toute l’application
 
 Modifications apportées :
 - extension du blocage du stylet à l’ensemble de la PWA ;
@@ -3252,9 +3242,9 @@ Modifications apportées :
 - modification de la mention dans la fenêtre simulation pour préciser que le stylet est désactivé dans toute l’application ;
 - aucune modification du trafic, du déplacement simulé, des cartes, du chat ou du suivi rotation ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.12 .
+- version applicative portée en v14.12 TEST.
 
-v14.11  — blocage du stylet dans les champs de simulation
+v14.11 TEST — blocage du stylet dans les champs de simulation
 
 Modifications apportées :
 - détection des événements de type pen dans les champs Vitesse, Route et Altitude ;
@@ -3269,9 +3259,9 @@ Modifications apportées :
 - ajout de la mention « Saisie des valeurs au doigt uniquement » dans la fenêtre ;
 - aucune modification du déplacement, de l’altitude, du trafic réel, du chat ou des cartes ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.11 .
+- version applicative portée en v14.11 TEST.
 
-v14.10  — étiquette SIM déplacée sous l’avion simulé
+v14.10 TEST — étiquette SIM déplacée sous l’avion simulé
 
 Modifications apportées :
 - déplacement du badge « SIM » sous le rond de l’avion simulé ;
@@ -3282,9 +3272,9 @@ Modifications apportées :
 - désactivation des interactions tactiles sur le badge afin qu’il ne gêne pas la carte ;
 - aucune modification du déplacement simulé, du trafic réel, de l’altitude, du chat ou des cartes ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.10 .
+- version applicative portée en v14.10 TEST.
 
-v14.09  — clavier immédiat, altitude simulée et trafic live centré sur la simulation
+v14.09 TEST — clavier immédiat, altitude simulée et trafic live centré sur la simulation
 
 Modifications apportées :
 - remplacement des champs Vitesse et Route par des champs texte à clavier numérique, afin de permettre une sélection fiable sur iPad ;
@@ -3308,9 +3298,9 @@ Modifications apportées :
 - prévention des requêtes trafic concurrentes déclenchées par les mises à jour de position chaque seconde ;
 - aucune modification des autres fonctions du chat, des cartes, du suivi rotation ou de SafeSky ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.09 .
+- version applicative portée en v14.09 TEST.
 
-v14.08  — déplacement continu de l’avion en mode simulation
+v14.08 TEST — déplacement continu de l’avion en mode simulation
 
 Modifications apportées :
 - ajout d’un moteur de déplacement continu de l’avion simulé ;
@@ -3337,9 +3327,9 @@ Modifications apportées :
 - arrêt complet du moteur et restauration du GPS réel à la sortie du mode simulation ;
 - aucune modification du trafic SafeSky, du chat, des cartes offline ou du positionnement du feu simulé ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.08 .
+- version applicative portée en v14.08 TEST.
 
-v14.07  — mémorisation du dernier état de connexion du chat
+v14.07 TEST — mémorisation du dernier état de connexion du chat
 
 Modifications apportées :
 - ajout d’une préférence persistante teamChatConnectionDesired dans localStorage ;
@@ -3357,9 +3347,9 @@ Modifications apportées :
 - validation d’un changement de canal ou de pseudo sans perdre l’intention de connexion ;
 - aucune modification des messages, de l’historique, du partage de position, des notifications ou du trafic aérien ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.07 .
+- version applicative portée en v14.07 TEST.
 
-v14.06  — indicatif ou immatriculation dans l’étiquette trafic
+v14.06 TEST — indicatif ou immatriculation dans l’étiquette trafic
 
 Modifications apportées :
 - ajout d’un identifiant compact dans l’étiquette associée à l’altitude ;
@@ -3375,9 +3365,9 @@ Modifications apportées :
 - couleurs de bordure selon l’altitude relative intégralement conservées ;
 - aucune modification du popup détaillé, des filtres, des symboles ou de SafeSky ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.06 .
+- version applicative portée en v14.06 TEST.
 
-v14.05  — correction de l’ancrage Leaflet, altitude opposée et familles d’aéronefs affinées
+v14.05 TEST — correction de l’ancrage Leaflet, altitude opposée et familles d’aéronefs affinées
 
 Modifications apportées :
 - identification de la cause réelle du décalage entre la fenêtre et le trafic ;
@@ -3401,9 +3391,9 @@ Modifications apportées :
 - limitation maintenue : les silhouettes représentent une famille d’aéronefs et non le dessin exact de chaque modèle ;
 - grande croix, persistance du popup, couleurs relatives, filtres et source SafeSky inchangés ;
 - la ressource SafeSky monochrome reste uniquement dans l’archive ;
-- version applicative portée en v14.05 .
+- version applicative portée en v14.05 TEST.
 
-v14.04  — popup au contact, altitude opposée au vecteur et types ICAO élargis
+v14.04 TEST — popup au contact, altitude opposée au vecteur et types ICAO élargis
 
 Modifications apportées :
 - déplacement de la fenêtre détaillée vers le trafic par passage du popupAnchor vertical de +4 px à +28 px ;
@@ -3428,9 +3418,9 @@ Modifications apportées :
 - limitation assumée : l’API fournit une catégorie ou un désignateur, mais pas une silhouette graphique exacte propre à chaque modèle ;
 - couleurs relatives, dimensions, zone tactile, filtres et fonctionnement SafeSky inchangés ;
 - la ressource SafeSky monochrome reste présente uniquement dans l’archive ;
-- version applicative portée en v14.04 .
+- version applicative portée en v14.04 TEST.
 
-v14.03  — fenêtre rapprochée et silhouettes trafic corrigées
+v14.03 TEST — fenêtre rapprochée et silhouettes trafic corrigées
 
 Modifications apportées :
 - rapprochement vertical de la fenêtre détaillée de 14 px par rapport à la v14.02 ;
@@ -3451,9 +3441,9 @@ Modifications apportées :
 - rotation conservée autour du centre exact du rond pour les aéronefs directionnels ;
 - dimensions du rond, zone tactile 36 × 36 px, couleurs d’altitude relative et persistance de la fenêtre inchangées ;
 - la ressource SafeSky monochrome reste présente uniquement dans l’archive ;
-- version applicative portée en v14.03 .
+- version applicative portée en v14.03 TEST.
 
-v14.02  — fenêtre trafic unique, rapprochée, croix agrandie et silhouettes par catégorie
+v14.02 TEST — fenêtre trafic unique, rapprochée, croix agrandie et silhouettes par catégorie
 
 Modifications apportées :
 - suppression complète de la petite étiquette Leaflet qui s’affichait en même temps que la fenêtre détaillée ;
@@ -3474,9 +3464,9 @@ Modifications apportées :
 - couleurs rouge / verte / bleue selon l’altitude relative intégralement conservées ;
 - dimensions du symbole et zone tactile 36 × 36 px de la v14.01 conservées ;
 - la ressource SafeSky monochrome reste incluse dans l’archive mais ne sera plus fournie séparément ;
-- version applicative portée en v14.02 .
+- version applicative portée en v14.02 TEST.
 
-v14.01  — trafics plus petits et zone tactile réellement réduite
+v14.01 TEST — trafics plus petits et zone tactile réellement réduite
 
 Modifications apportées :
 - nouvelle réduction du symbole visible des trafics de 20 × 20 px à 15 × 15 px ;
@@ -3490,9 +3480,9 @@ Modifications apportées :
 - possibilité nettement améliorée de sélectionner successivement deux trafics proches ;
 - persistance de la fenêtre détaillée du trafic sélectionné après rafraîchissement intégralement conservée ;
 - couleurs d’altitude relative, filtres, SafeSky et compteur stable inchangés ;
-- version applicative portée en v14.01 .
+- version applicative portée en v14.01 TEST.
 
-v14.00  — fenêtre trafic persistante et symboles réduits
+v14.00 TEST — fenêtre trafic persistante et symboles réduits
 
 Modifications apportées :
 - mémorisation du trafic dont la fenêtre détaillée est ouverte avant chaque rafraîchissement ;
@@ -3506,9 +3496,9 @@ Modifications apportées :
 - léger repositionnement de l’étiquette d’altitude pour rester proche du symbole réduit ;
 - conservation du conteneur tactile Leaflet de 128 × 128 px afin de maintenir une sélection confortable sur iPad ;
 - vecteur pointillé, couleurs d’altitude relative, filtres et fonctionnement SafeSky inchangés ;
-- version applicative portée en v14.00 .
+- version applicative portée en v14.00 TEST.
 
-v13.99  — icône SafeSky monochrome et compteur stable
+v13.99 TEST — icône SafeSky monochrome et compteur stable
 
 Modifications apportées :
 - transformation de l’icône SafeSky fournie en pictogramme monochrome transparent ;
@@ -3526,9 +3516,9 @@ Modifications apportées :
 - couleur de la bulle figée en rouge, sans passage orange, bleu ou autre changement d’aspect ;
 - couleurs relatives des symboles trafic rouge / vert / bleu de la v13.98 intégralement conservées ;
 - fonctionnement SafeSky seul après configuration du proxy intégralement conservé ;
-- version applicative portée en v13.99 .
+- version applicative portée en v13.99 TEST.
 
-v13.98  — icône SafeSky, état de connexion et couleurs d’altitude relative
+v13.98 TEST — icône SafeSky, état de connexion et couleurs d’altitude relative
 
 Modifications apportées :
 - remplacement du pictogramme avion du bouton TRAFIC par l’icône SafeSky fournie ;
@@ -3547,9 +3537,9 @@ Modifications apportées :
 - dès que SAFESKY_PROXY_URL sera renseigné, SafeSky deviendra automatiquement l’unique source de trafic ;
 - aucune fusion entre SafeSky et les anciennes sources ADS-B, évitant les doublons ;
 - ajout de l’icône SafeSky au pré-cache du service worker ;
-- version applicative portée en v13.98 .
+- version applicative portée en v13.98 TEST.
 
-v13.97  — trafic actif et menu des filtres accessible
+v13.97 TEST — trafic actif et menu des filtres accessible
 
 Modifications apportées :
 - réactivation du bouton TRAFIC sur la carte ;
@@ -3562,9 +3552,9 @@ Modifications apportées :
 - aucun appel SafeSky effectué en l’absence de proxy configuré ;
 - code préparatoire SafeSky v13.96 intégralement conservé ;
 - passage ultérieur à SafeSky limité au renseignement de SAFESKY_PROXY_URL et à la configuration du proxy serveur ;
-- version applicative portée en v13.97 .
+- version applicative portée en v13.97 TEST.
 
-v13.96  — code préparatoire pour l’intégration SafeSky
+v13.96 TEST — code préparatoire pour l’intégration SafeSky
 
 Modifications apportées :
 - ajout d’un adaptateur SafeSky dans le moteur trafic existant ;
@@ -3583,7 +3573,7 @@ Modifications apportées :
 - ajout d’un diagnostic console getSafeSkyIntegrationStatus() ne contenant aucun secret ;
 - bouton TRAFIC toujours masqué et moteur toujours verrouillé jusqu’à validation de la clé Sandbox et du proxy ;
 - aucune modification fonctionnelle des autres onglets ;
-- version applicative portée en v13.96 .
+- version applicative portée en v13.96 TEST.
 
 Étapes restant à effectuer à réception de la clé Sandbox :
 - créer ou compléter le proxy serveur avec la clé dans un fichier de configuration non public ;
@@ -3593,7 +3583,7 @@ Modifications apportées :
 - retirer la règle CSS masquant le bouton TRAFIC ;
 - valider le trafic réel, les filtres et le dédoublonnage avant passage en Production.
 
-v13.95  — fenêtre droite Dérout. / GAAR ajustée au contenu
+v13.95 TEST — fenêtre droite Dérout. / GAAR ajustée au contenu
 
 Modifications apportées :
 - suppression de l’étirement vertical résiduel de la seconde colonne de l’onglet Dérout. / GAAR ;
@@ -3602,9 +3592,9 @@ Modifications apportées :
 - fin de la fenêtre immédiatement après la ligne « Conso Rotation » ;
 - interlignes de 16 px validés en v13.94 strictement conservés ;
 - tailles de police, calculs, champs et fenêtre de gauche inchangés ;
-- version applicative portée en v13.95 .
+- version applicative portée en v13.95 TEST.
 
-v13.94  — interlignes Dérout. / GAAR identiques à Suivi rotations
+v13.94 TEST — interlignes Dérout. / GAAR identiques à Suivi rotations
 
 Modifications apportées :
 - réduction des espaces verticaux dans la fenêtre de droite de l’onglet Dérout. / GAAR ;
@@ -3613,9 +3603,9 @@ Modifications apportées :
 - espace fixe de 16 px entre deux lignes successives ;
 - padding interne aligné sur Suivi rotations : 14 px en haut, 14 px sur les côtés et 8 px en bas ;
 - tailles de police, dimensions des champs, calculs et colonne de gauche inchangés ;
-- version applicative portée en v13.94 .
+- version applicative portée en v13.94 TEST.
 
-v13.93  — priorité des communes par population / noms plus nets à taille inchangée
+v13.93 TEST — priorité des communes par population / noms plus nets à taille inchangée
 
 Modifications apportées :
 - correction de la disparition de communes importantes, notamment Lézignan-Corbières, lorsque la limite de libellés visibles est atteinte ;
@@ -3630,9 +3620,9 @@ Modifications apportées :
 - amélioration de la netteté par utilisation de la police système iPad, suppression des ombres multiples, fond légèrement plus opaque et contour de cellule plus propre ;
 - fonctionnement de secours conservé hors ligne : dernier classement mis en cache, puis proximité du centre si aucune population n’est disponible ;
 - aucune modification des icônes de l’application ou des boutons ;
-- version applicative portée en v13.93 .
+- version applicative portée en v13.93 TEST.
 
-v13.92  — transfert effectif FUEL MINI / fenêtre rotations ajustée / alerte au premier lancement
+v13.92 TEST — transfert effectif FUEL MINI / fenêtre rotations ajustée / alerte au premier lancement
 
 Modifications apportées :
 - dans l’onglet « DEROUT. / GAAR », transfert réel des deux lignes « Fuel mini 1 Lrg / BASE » et « Fuel mini 1 Lrg / Pélic » dans la fenêtre séparée intitulée « FUEL MINI » ;
@@ -3649,9 +3639,9 @@ Modifications apportées :
 - styles essentiels de la fenêtre intégrés directement à la modale pour qu’elle reste visible même si l’ancienne feuille CSS est encore servie pendant la transition ;
 - conservation de l’alerte jusqu’à deux secondes de visibilité réelle ;
 - aucune modification des calculs, des autres onglets, des données enregistrées ni des cartes hors ligne ;
-- version applicative portée en v13.92 .
+- version applicative portée en v13.92 TEST.
 
-v13.91  — alerte post-MAJ fiable / fenêtre FUEL MINI séparée en Dérout. / GAAR
+v13.91 TEST — alerte post-MAJ fiable / fenêtre FUEL MINI séparée en Dérout. / GAAR
 
 Modifications apportées :
 - correction du message « Mise à jour installée » afin qu’une navigation automatique très rapide ne puisse plus consommer l’alerte avant qu’elle ait été réellement visible ;
@@ -3666,9 +3656,9 @@ Modifications apportées :
 - conservation des valeurs, aides « ? », formules et identifiants existants : seuls leur conteneur et leur position sont modifiés ;
 - adaptation de la colonne gauche pour conserver l’ensemble dans la hauteur disponible sans ajouter de défilement ;
 - aucune modification des calculs, des autres onglets, des tailles de police ou des données enregistrées ;
-- version applicative portée en v13.91 .
+- version applicative portée en v13.91 TEST.
 
-v13.90  — cellule RLT : unité en fond et effacement direct
+v13.90 TEST — cellule RLT : unité en fond et effacement direct
 
 Modifications apportées :
 - dans l’onglet « BLOC / FUEL », remplacement du texte de fond « [valeur] » de la cellule « RLT » par « [kg] » ;
@@ -3677,9 +3667,9 @@ Modifications apportées :
 - suppression du comportement nécessitant auparavant un premier appui pour retirer seulement « kg », puis un second pour vider la cellule ;
 - interception de l’appui avant la prise de focus du champ afin de garantir le fonctionnement sur iPad/PWA ;
 - aucune modification des calculs, de l’enregistrement par vol, de l’export PDF, des autres cellules ni de la mise en page ;
-- version applicative portée en v13.90 .
+- version applicative portée en v13.90 TEST.
 
-v13.89  — corrections RLT / espacement Suivi rotations / alerte post-MAJ immédiate
+v13.89 TEST — corrections RLT / espacement Suivi rotations / alerte post-MAJ immédiate
 
 Modifications apportées :
 - dans l’onglet « BLOC / FUEL », correction du chevauchement entre le premier chiffre de la cellule « RLT » et la croix d’effacement lorsqu’une valeur à quatre chiffres telle que 9000 est saisie ;
@@ -3692,9 +3682,9 @@ Modifications apportées :
 - le message ne dépend plus du second lancement manuel de la PWA pour apparaître ;
 - conservation du nombre d’affichages et de tous les autres mécanismes de mise à jour existants ;
 - aucune modification des calculs de rotations, du stockage des vols, de l’export PDF ni des cartes hors ligne ;
-- version applicative portée en v13.89 .
+- version applicative portée en v13.89 TEST.
 
-v13.88  — Fuel sur feu Prévi non modifiable / RLT départ / espacements des fenêtres droites
+v13.88 TEST — Fuel sur feu Prévi non modifiable / RLT départ / espacements des fenêtres droites
 
 Modifications apportées :
 - dans l’onglet « PREVI. NBR ROTATIONS », suppression de toute possibilité de modifier « Fuel sur Feu » ;
@@ -3710,9 +3700,9 @@ Modifications apportées :
 - dans l’onglet « DEROUT. / GAAR », augmentation automatique de l’espace entre toutes les lignes de la fenêtre de droite en répartissant le contenu sur la hauteur disponible ;
 - cette répartition dynamique évite d’ajouter un défilement vertical ;
 - calculs de rotations, valeurs BINGO, tailles de police et autres fonctions laissés inchangés ;
-- version applicative portée en v13.88 .
+- version applicative portée en v13.88 TEST.
 
-v13.87  — aides détaillées Suivi rotations / Dérout. GAAR
+v13.87 TEST — aides détaillées Suivi rotations / Dérout. GAAR
 
 Modifications apportées :
 - dans l’onglet « SUIVI ROTATIONS », ajout d’une aide « ? » pour « Durée Transit Pélic↔Feu » ;
@@ -3728,9 +3718,9 @@ Modifications apportées :
 - les aides précisent que ce choix modifie le trajet initial, mais pas les valeurs des rotations suivantes Feu ↔ Pélic ;
 - l’état de cette case est également explicité dans les aides existantes « Heure sur Feu » et « Fuel mini » ;
 - aucune formule, valeur, logique de calcul, taille, espacement ou autre fonction modifiée ;
-- version applicative portée en v13.87 .
+- version applicative portée en v13.87 TEST.
 
-v13.86  — interlignes augmentés dans les fenêtres de droite
+v13.86 TEST — interlignes augmentés dans les fenêtres de droite
 
 Modifications apportées :
 - dans l’onglet « SUIVI ROTATIONS », augmentation de l’espacement vertical entre toutes les lignes de la fenêtre de droite ;
@@ -3739,9 +3729,9 @@ Modifications apportées :
 - conservation des espacements renforcés déjà présents entre les groupes fonctionnels spécifiques ;
 - fenêtre « Nbr Rotations » de gauche, zones BINGO, tailles de police, valeurs, calculs et commandes laissés inchangés ;
 - aucune autre fonction modifiée ;
-- version applicative portée en v13.86 .
+- version applicative portée en v13.86 TEST.
 
-v13.85  — affichage effectif des espacements / fenêtres rotations harmonisées
+v13.85 TEST — affichage effectif des espacements / fenêtres rotations harmonisées
 
 Modifications apportées :
 - correction de l’absence de changement visuel constatée en v13.84 ;
@@ -3752,9 +3742,9 @@ Modifications apportées :
 - fenêtres « Nbr Rotations » de « SUIVI ROTATIONS » et « DEROUT. / GAAR » alignées sur la présentation de « PREVI. NBR ROTATIONS » : même cadre, même padding, même marge sous le titre et espacement de 25 px entre les lignes ;
 - taille des polices, valeurs, calculs et logique d’affichage décimal du nombre de rotations inchangés ;
 - aucune autre fonction modifiée ;
-- version applicative portée en v13.85 .
+- version applicative portée en v13.85 TEST.
 
-v13.84  — espacements ciblés / fenêtres rotations harmonisées
+v13.84 TEST — espacements ciblés / fenêtres rotations harmonisées
 
 Modifications apportées :
 - dans l’onglet « SUIVI ROTATIONS », ajout d’un espace visuel plus marqué entre « Fuel sur Feu » et « Durée Rotation » ;
@@ -3765,9 +3755,9 @@ Modifications apportées :
 - fenêtres « Nbr Rotations » des onglets « SUIVI ROTATIONS » et « DEROUT. / GAAR » harmonisées avec celle de « PREVI. NBR ROTATIONS » ;
 - reprise du même cadre, du même padding, de la même marge sous le titre et du même espacement entre les cinq lignes de résultats ;
 - aucune modification des tailles de police, des valeurs, des calculs, des commandes ou des autres fonctions ;
-- version applicative portée en v13.84 .
+- version applicative portée en v13.84 TEST.
 
-v13.83  — BINGO plus compacts / données rotation ajoutées au déroutement
+v13.83 TEST — BINGO plus compacts / données rotation ajoutées au déroutement
 
 Modifications apportées :
 - dans les onglets « SUIVI ROTATIONS » et « DEROUT. / GAAR », réduction de la hauteur occupée par les zones BINGO sans modifier la taille de leurs polices ;
@@ -3777,9 +3767,9 @@ Modifications apportées :
 - ces deux nouvelles valeurs sont affichées en lecture seule, sans champ de saisie, bouton AUTO/MANUEL ni possibilité de modification ;
 - calculs identiques à ceux déjà utilisés par les onglets Prévision et Suivi rotations ;
 - aucune modification des tailles de police, règles de calcul, données enregistrées ou autres fonctions ;
-- version applicative portée en v13.83 .
+- version applicative portée en v13.83 TEST.
 
-v13.82  — suppression du bouton MAJ / commune survolée décalée à droite
+v13.82 TEST — suppression du bouton MAJ / commune survolée décalée à droite
 
 Modifications apportées :
 - suppression du seul bouton « 🔄 MAJ » visible sous le numéro de version dans la colonne des commandes de carte ;
@@ -3787,9 +3777,9 @@ Modifications apportées :
 - bandeau « commune survolée » déplacé vers le bord droit de l’écran afin d’utiliser l’espace libéré ;
 - position verticale, dimensions, police, contenu et comportement du bandeau « commune survolée » laissés inchangés ;
 - aucune autre fonction, commande, fenêtre, icône, donnée ou règle d’affichage supprimée ou modifiée ;
-- version applicative portée en v13.82 .
+- version applicative portée en v13.82 TEST.
 
-v13.81  — icônes de pélicandromes réellement réduites
+v13.81 TEST — icônes de pélicandromes réellement réduites
 
 Modifications apportées :
 - taille visuelle des icônes de pélicandromes réduite de 20 px à 16 px ;
@@ -3800,9 +3790,9 @@ Modifications apportées :
 - ancrage de la fenêtre contextuelle adapté à la nouvelle taille ;
 - zone tactile invisible conservée à 40 px de diamètre pour garder une sélection facile en vol ;
 - aucune modification des autres marqueurs, bandeaux ou fonctions ;
-- version applicative portée en v13.81 .
+- version applicative portée en v13.81 TEST.
 
-v13.80  — icônes pélicandromes légèrement réduites
+v13.80 TEST — icônes pélicandromes légèrement réduites
 
 Modifications apportées :
 - taille visuelle des icônes de pélicandromes réduite de 22 px à 20 px ;
@@ -3810,9 +3800,9 @@ Modifications apportées :
 - taille des pictogrammes internes ajustée proportionnellement ;
 - zone tactile invisible conservée à 40 px de diamètre pour garder une sélection facile en vol ;
 - aucun changement sur les autres marqueurs, les bandeaux ou les fonctions de la v13.79 ;
-- version applicative portée en v13.80 .
+- version applicative portée en v13.80 TEST.
 
-v13.79  — bandeaux carte remontés / hauteur optimisée / icônes épurées
+v13.79 TEST — bandeaux carte remontés / hauteur optimisée / icônes épurées
 
 Modifications apportées :
 - bandeau BINGO carte remonté au plus haut sur la carte ;
