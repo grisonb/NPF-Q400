@@ -1,4 +1,4 @@
-/* NPF_STYLE_BUILD_VERSION: v2026.66 */
+/* NPF_STYLE_BUILD_VERSION: v2026.67 */
 /* v14.83 — nettoyage des références techniques et limitation des cartouches routiers. */
 /* v14.81 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
 /* v14.80 — Brive conservé uniquement sous LFSL. */
@@ -14238,3 +14238,162 @@ body.gaar-point-search-open .gaar-editing-banner {
    ========================================================================== */
 
 /* Le bouton GLR n'existe plus dans le DOM ; aucune règle de masquage n'est requise. */
+
+
+/* ==========================================================================
+   v15.35 TEST — fenêtre de configuration avant connexion au chat
+   ========================================================================== */
+
+.chat-config-row {
+    display: flex !important;
+    justify-content: flex-end !important;
+    align-items: center !important;
+}
+
+#chat-connect-button {
+    min-width: 150px;
+}
+
+.chat-connect-modal {
+    position: fixed;
+    inset: 0;
+    z-index: 2400;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding:
+        calc(16px + env(safe-area-inset-top))
+        calc(16px + env(safe-area-inset-right))
+        calc(16px + env(safe-area-inset-bottom))
+        calc(16px + env(safe-area-inset-left));
+    box-sizing: border-box;
+    background: rgba(0, 0, 0, 0.48);
+}
+
+.chat-connect-modal-content {
+    width: min(460px, 100%);
+    max-height: calc(100dvh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
+    background: #ffffff;
+    border: 1px solid var(--border-color);
+    border-radius: 14px;
+    box-shadow: 0 12px 34px rgba(0, 0, 0, 0.28);
+    padding: 18px;
+}
+
+.chat-connect-modal-content h3 {
+    margin: 0 0 16px;
+    color: var(--primary-color);
+    font-size: 20px;
+    line-height: 1.2;
+}
+
+.chat-connect-gps-row,
+.chat-connect-field {
+    display: flex;
+    width: 100%;
+    box-sizing: border-box;
+    margin-bottom: 14px;
+}
+
+.chat-connect-gps-row {
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    min-height: 46px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #f7f9fc;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+}
+
+#chat-connect-gps-checkbox {
+    width: 24px;
+    height: 24px;
+    min-width: 24px;
+    accent-color: var(--primary-color);
+}
+
+.chat-connect-field {
+    flex-direction: column;
+    gap: 7px;
+    font-size: 14px;
+    font-weight: 700;
+    color: #334155;
+}
+
+.chat-connect-field input {
+    width: 100%;
+    box-sizing: border-box;
+    min-height: 44px;
+    padding: 10px 12px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: #ffffff;
+    color: #111827;
+    font-size: 16px;
+    outline: none;
+}
+
+.chat-connect-field input:focus {
+    border-color: var(--primary-color);
+    box-shadow: 0 0 0 2px rgba(0, 90, 156, 0.14);
+}
+
+.chat-connect-modal-status {
+    min-height: 20px;
+    margin: -2px 0 10px;
+    font-size: 13px;
+    font-weight: 700;
+    color: #475569;
+}
+
+.chat-connect-modal-status.error {
+    color: var(--secondary-color);
+}
+
+.chat-connect-modal-actions {
+    display: grid;
+    grid-template-columns: 1fr 1.35fr;
+    gap: 10px;
+}
+
+.chat-connect-modal-actions button {
+    min-height: 44px;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 800;
+    cursor: pointer;
+}
+
+.chat-connect-modal-secondary {
+    border: 1px solid var(--border-color);
+    background: #ffffff;
+    color: #334155;
+}
+
+.chat-connect-modal-primary {
+    border: 1px solid var(--primary-color);
+    background: var(--primary-color);
+    color: #ffffff;
+}
+
+@media (max-width: 600px) {
+    .chat-connect-modal {
+        align-items: flex-start;
+        padding-top: calc(12px + env(safe-area-inset-top));
+    }
+
+    .chat-connect-modal-content {
+        width: 100%;
+        padding: 16px;
+    }
+
+    .chat-connect-modal-actions {
+        grid-template-columns: 1fr;
+    }
+}
