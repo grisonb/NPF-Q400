@@ -1,88 +1,8 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.63';
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.64';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
-// =========================================================================
-// v2026.63 PÉRENNE — reprise carte unifiée après VAC / retour au premier plan
-// - déduplication focus / visibilitychange / pageshow ;
-// - retour court : un seul invalidateSize léger, sans redraw systématique ;
-// - redraw lourd uniquement si les tuiles sont absentes ou après reprise longue ;
-// - anciens gestionnaires concurrents de reprise Leaflet neutralisés ;
-// - VAC, SafeSky, GPS, cartes Offline et données inchangés.
-// =========================================================================
+// GLR reste intégré mais son accès cartographique est temporairement masqué.
 
-// =========================================================================
-// v2026.62 PÉRENNE — stabilisation carte / calque routier / SafeSky
-// - priorité au fond de carte après zoom/déplacement ;
-// - rendu SafeSky temporairement suspendu pendant les gestes et le rendu routier ;
-// - calque routier différé et rendu par étapes pour limiter les pics CPU/mémoire ;
-// - animation SafeSky allégée sur iPad lorsque le calque routier est affiché ;
-// - aucune modification des données, filtres SafeSky, VAC, GPS ou cartes Offline.
-// =========================================================================
-
-// =========================================================================
-// v2026.61 PÉRENNE — commune survolée : GeoJSON local + SW finalisé
-// - iPad/tablette : ./data/communes-1000m.geojson (même origine que NPF) ;
-// - aucune dépendance Etalab au runtime pour la commune survolée sur iPad ;
-// - PC : source 50 m existante conservée ;
-// - GPS et algorithme de recherche géométrique inchangés.
-// =========================================================================
-
-// =========================================================================
-// v14.97 — commune survolée : GeoJSON allégé sur iPad
-// - iPad/tablette : communes-1000m.geojson ;
-// - PC : communes-50m.geojson conservé ;
-// - le Service Worker met aussi en cache le fichier 1000 m ;
-// - aucun changement du GPS ni de l'identification géométrique de la commune.
-// =========================================================================
-
-// =========================================================================
-// v14.96 — commune survolée stable dans la PWA iPad
-// - le Service Worker met en cache les GeoJSON Etalab communes 100 m / 50 m ;
-// - cache-first après un premier chargement réussi ;
-// - timeout initial adapté aux gros GeoJSON dans la PWA installée ;
-// - aucun changement du GPS ni de l'identification géométrique de la commune.
-// =========================================================================
-
-// =========================================================================
-// v14.95 — performance carte Offline aux grands dézooms
-// - lecture directe prioritaire par index IndexedDB `tileUrl` ;
-// - les bases isolées modernes n'essaient plus toutes les anciennes clés pack-scopées ;
-// - la base historique commune est ignorée lorsque tous les packs actifs sont confirmés isolés ;
-// - cache négatif borné pour éviter de rechercher plusieurs fois les mêmes tuiles absentes ;
-// - aucune modification du nombre de lectures simultanées, du keepBuffer ou des données cartographiques.
-// =========================================================================
-
-// =========================================================================
-// v14.94 — stabilisation carte / SafeSky / dézoom
-// - un seul rafraîchissement SafeSky à la fois ;
-// - une demande forcée reçue pendant un chargement est regroupée et rejouée ;
-// - les réponses SafeSky devenues obsolètes sont ignorées ;
-// - les lectures NPF de l'ancien niveau de zoom sont invalidées au zoomstart ;
-// - après zoom ou changement SafeSky, la couche de fond est vérifiée/redessinée
-// sans reconstruction de la base de tuiles ni changement de carte active.
-// =========================================================================
-
-// =========================================================================
-// v14.93 — Cartes VAC SIA hors ligne via GitHub Pages
-// - téléchargement des VAC publiées par le dépôt NPF-Q400-VAC ;
-// - stockage IndexedDB dédié et ouverture 100 % hors ligne ;
-// - bouton VAC dans les popups des terrains disposant d’une VAC locale ;
-// - contrôle léger des mises à jour au démarrage, uniquement si le réseau répond ;
-// - téléchargement différentiel par SHA-256 et conservation de l’ancienne VAC
-// tant que le nouveau PDF n’a pas été téléchargé et validé.
-// =========================================================================
-
-// =========================================================================
-// INITIALISATION DE L'APPLICATION
-// =========================================================================
-
-/*
- * v14.12 — blocage global du stylet.
- *
- * Apple Pencil et les autres stylets sont ignorés dans toute la PWA :
- * carte, boutons, listes, fenêtres, recherche de communes et autres champs.
- * Les interactions au doigt, à la souris et au clavier restent disponibles.
- */
 function installGlobalStylusBlocker() {
     if (window.__npfGlobalStylusBlockerInstalled) return;
     window.__npfGlobalStylusBlockerInstalled = true;
@@ -831,6 +751,29 @@ const OPS_FREQUENCIES_PDF_SERVER_CANDIDATES = [
     './pdf/Carte Frequences OPS.pdf'
 ];
 let airportPdfDb = null;
+
+/*
+ * v15.11 — FdS / GAAR depuis le NAS BFG, accès direct depuis la carte.
+ * Important : aucun jeton BFG longue durée n'est inclus dans cette PWA publique.
+ * Le navigateur ne manipule qu'un jeton de session court émis par le NAS après
+ * saisie du mot de passe, avec expiration à minuit Europe/Paris.
+ */
+const NPF_BRIEFING_DOCS_API_URL = 'https://grisonb.synology.me/briefing-api/npf-docs-api.php';
+const NPF_FDS_GMAIL_REFRESH_URL = 'https://script.google.com/macros/s/AKfycbwjw2i5AcY9UT31sRvz1sTessKF4k1EUHMo0KW4Tga-mLTeBhup0IN98dXnAJSoqq_LDQ/exec';
+const NPF_GAAR_IMPORT_REQUEST_URL = 'https://grisonb.synology.me/briefing-api/request-gaar-import.php';
+const NPF_BRIEFING_DOCS_DB_NAME = 'NpfBriefingDocsDB';
+const NPF_BRIEFING_DOCS_DB_VERSION = 1;
+const NPF_BRIEFING_DOCS_STORE_NAME = 'docs';
+const NPF_BRIEFING_DOCS_SESSION_TOKEN_KEY = 'npfBriefingDocsSessionTokenV1';
+const NPF_BRIEFING_DOCS_SESSION_EXP_KEY = 'npfBriefingDocsSessionExpV1';
+const NPF_BRIEFING_DOCS_LAST_SYNC_KEY = 'npfBriefingDocsLastSyncV1';
+const NPF_BRIEFING_DOC_TYPES = Object.freeze(['fds', 'gaar']);
+let npfBriefingDocsDb = null;
+let npfBriefingDocsSyncInProgress = false;
+let npfBriefingDocsPendingType = null;
+let npfBriefingDocViewerType = null;
+let npfBriefingDocViewerObjectUrl = null;
+
 const WATER_POINTS_LAYER_KEY = 'showWaterPointsLayer';
 let showWaterPointsLayer = localStorage.getItem(WATER_POINTS_LAYER_KEY) === 'true';
 const HIGH_VOLTAGE_LINES_LAYER_KEY = 'showHighVoltageLinesLayer';
@@ -892,6 +835,12 @@ let trafficRefreshTimer = null;
 let lastTrafficRefreshAt = 0;
 let lastTrafficError = '';
 let lastTrafficDisplayedCount = 0;
+/*
+ * v15.29 — compteurs du bouton SafeSky séparés de la quantité réellement
+ * rendue lorsque le filtre « liste suivie » est actif.
+ */
+let lastTrafficTotalEligibleCount = 0;
+let lastTrafficTrackedDetectedCount = 0;
 let lastTrafficAircraftSnapshot = [];
 let lastTrafficRenderMeta = null;
 
@@ -3403,6 +3352,18 @@ async function initializeApp() {
             });
     }, 2500);
 
+
+    /*
+     * v15.13 — aucun contrôle réseau FdS / GAAR au démarrage.
+     * Les boutons sont calculés uniquement depuis IndexedDB. Le NAS n'est interrogé
+     * qu'à la demande : premier téléchargement ou bouton « Maj » du lecteur.
+     */
+    setTimeout(() => {
+        refreshBriefingDocMapButtons().catch(error => {
+            console.info('[FDS/GAAR] Lecture locale de démarrage ignorée:', error?.message || error);
+        });
+    }, 1200);
+
     setTimeout(() => {
         scheduleOfflineTileWake('startup-post-init');
     }, 250);
@@ -4569,7 +4530,8 @@ function injectNauticalScaleStyle() {
     style.textContent = `
         .npf-nautical-scale {
             position: fixed !important;
-            left: calc(env(safe-area-inset-left, 0px) + 12px) !important;
+            /* v15.12 : dégagée de la colonne FdS / GAAR / SafeSky. */
+            left: calc(env(safe-area-inset-left, 0px) + 125px) !important;
             bottom: calc(env(safe-area-inset-bottom, 0px) + 0px) !important;
             z-index: 1350 !important;
             background: rgba(255, 255, 255, 0.95);
@@ -4625,6 +4587,36 @@ function injectNauticalScaleStyle() {
         }
         .npf-two-finger-ruler-label .nm { font-size: 15px; }
         .npf-two-finger-ruler-label .km { font-size: 12px; color:#41556a; margin-top:2px; }
+        .npf-two-finger-ruler-mark-label {
+            background: transparent !important;
+            border: 0 !important;
+            box-shadow: none !important;
+            pointer-events: none !important;
+            width: auto !important;
+            height: auto !important;
+        }
+        .npf-two-finger-ruler-mark-value {
+            display: inline-block;
+            min-width: 72px;
+            font-family: Arial, Helvetica, sans-serif;
+            font-size: 18px;
+            font-weight: 1000;
+            line-height: 1;
+            text-align: center;
+            white-space: nowrap;
+            text-shadow:
+                -2px -2px 0 #111827,
+                 2px -2px 0 #111827,
+                -2px  2px 0 #111827,
+                 2px  2px 0 #111827,
+                 0 2px 7px rgba(0,0,0,.90);
+        }
+        .npf-two-finger-ruler-mark-value.nm {
+            color: #ffea00;
+        }
+        .npf-two-finger-ruler-mark-value.km {
+            color: #00f5ff;
+        }
         .npf-two-finger-ruler-help {
             position: fixed;
             left: 50%;
@@ -4641,6 +4633,7 @@ function injectNauticalScaleStyle() {
         }
         @media (max-width: 900px) {
             .npf-nautical-scale {
+                left: calc(env(safe-area-inset-left, 0px) + 72px) !important;
                 font-size: 12px;
                 padding: 5px 7px 4px 7px;
             }
@@ -4740,6 +4733,8 @@ let twoFingerRulerWasTouchZoomEnabled = null;
 let twoFingerRulerPreviousTouchAction = null;
 let twoFingerRulerStartPoints = null;
 let twoFingerRulerHelpEl = null;
+const TWO_FINGER_RULER_PANE_NAME = 'npfTwoFingerRulerPane';
+const TWO_FINGER_RULER_PANE_Z_INDEX = 800;
 
 function getTouchContainerPoints(event) {
     if (!map || !map.getContainer || !event || !event.touches || event.touches.length < 2) return null;
@@ -4758,8 +4753,20 @@ function clearTwoFingerRulerLayer() {
     }
 }
 
+function ensureTwoFingerRulerPane() {
+    if (!map || !map.getPane || !map.createPane) return null;
+    let pane = map.getPane(TWO_FINGER_RULER_PANE_NAME);
+    if (!pane) pane = map.createPane(TWO_FINGER_RULER_PANE_NAME);
+    if (pane) {
+        pane.style.zIndex = String(TWO_FINGER_RULER_PANE_Z_INDEX);
+        pane.style.pointerEvents = 'none';
+    }
+    return pane;
+}
+
 function ensureTwoFingerRulerLayer() {
     if (!map || !window.L) return null;
+    ensureTwoFingerRulerPane();
     if (!twoFingerRulerLayer) twoFingerRulerLayer = L.layerGroup().addTo(map);
     return twoFingerRulerLayer;
 }
@@ -4779,14 +4786,106 @@ function hideTwoFingerRulerHelp() {
     twoFingerRulerHelpEl = null;
 }
 
+function formatTwoFingerRulerMarkNm(value, includeUnit = false) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return includeUnit ? '-- NM' : '--';
+    let text;
+    if (numeric === 0) text = '0';
+    else if (numeric < 1) text = Number(numeric.toFixed(1)).toString();
+    else if (numeric < 10) text = Number(numeric.toFixed(numeric % 1 ? 1 : 0)).toString();
+    else text = Math.round(numeric).toString();
+    return includeUnit ? `${text} NM` : text;
+}
+
+function formatTwoFingerRulerMarkKm(value, includeUnit = false) {
+    const numeric = Number(value);
+    if (!Number.isFinite(numeric) || numeric < 0) return includeUnit ? '-- km' : '--';
+    let text;
+    if (numeric === 0) text = '0';
+    else if (numeric < 1) text = Number(numeric.toFixed(1)).toString();
+    else if (numeric < 10) text = Number(numeric.toFixed(numeric % 1 ? 1 : 0)).toString();
+    else text = Math.round(numeric).toString();
+    return includeUnit ? `${text} km` : text;
+}
+
+function getTwoFingerRulerOffsetNormal(p1, p2) {
+    const dx = p2.x - p1.x;
+    const dy = p2.y - p1.y;
+    const len = Math.sqrt(dx * dx + dy * dy) || 1;
+    const nA = { x: -dy / len, y: dx / len };
+    const nB = { x: -nA.x, y: -nA.y };
+
+    /*
+     * Par défaut on choisit le côté qui pointe le plus vers le haut de l'écran,
+     * afin de conserver le comportement historique lorsque les doigts sont horizontaux.
+     * Si ce côté sort de l'écran, le score de débordement fait basculer la règle.
+     */
+    const preferred = nA.y <= nB.y ? nA : nB;
+    const alternate = preferred === nA ? nB : nA;
+    const container = map?.getContainer ? map.getContainer() : null;
+    const width = Math.max(1, Number(container?.clientWidth || container?.getBoundingClientRect?.().width || 0));
+    const height = Math.max(1, Number(container?.clientHeight || container?.getBoundingClientRect?.().height || 0));
+    const rulerOffsetPx = 74;
+    const nmLabelOffsetPx = 26;
+    const kmLabelOffsetPx = 42;
+    const maxLabelOffsetPx = Math.max(nmLabelOffsetPx, kmLabelOffsetPx);
+    const edgeMarginPx = 18;
+
+    const overflowScore = (normal) => {
+        const points = [p1, p2].flatMap((point) => {
+            const shifted = {
+                x: point.x + normal.x * rulerOffsetPx,
+                y: point.y + normal.y * rulerOffsetPx
+            };
+            return [
+                shifted,
+                {
+                    x: shifted.x + normal.x * maxLabelOffsetPx,
+                    y: shifted.y + normal.y * maxLabelOffsetPx
+                },
+                {
+                    x: shifted.x - normal.x * maxLabelOffsetPx,
+                    y: shifted.y - normal.y * maxLabelOffsetPx
+                }
+            ];
+        });
+        let score = 0;
+        points.forEach((point) => {
+            if (point.x < edgeMarginPx) score += edgeMarginPx - point.x;
+            if (point.x > width - edgeMarginPx) score += point.x - (width - edgeMarginPx);
+            if (point.y < edgeMarginPx) score += edgeMarginPx - point.y;
+            if (point.y > height - edgeMarginPx) score += point.y - (height - edgeMarginPx);
+        });
+        return score;
+    };
+
+    const preferredScore = overflowScore(preferred);
+    const alternateScore = overflowScore(alternate);
+    const normal = alternateScore + 2 < preferredScore ? alternate : preferred;
+    return { normal, rulerOffsetPx, nmLabelOffsetPx, kmLabelOffsetPx };
+}
+
 function drawTwoFingerRulerFromTouches(event) {
     const points = getTouchContainerPoints(event);
     const layer = ensureTwoFingerRulerLayer();
     if (!points || !layer || !map || !map.containerPointToLatLng || !map.distance) return;
 
-    const [p1, p2] = points;
-    const ll1 = map.containerPointToLatLng(p1);
-    const ll2 = map.containerPointToLatLng(p2);
+    const [touchA, touchB] = points;
+    const ll1 = map.containerPointToLatLng(touchA);
+    const ll2 = map.containerPointToLatLng(touchB);
+
+    /* v15.23 — ordre visuel stable des extrémités.
+     * L'ordre event.touches dépend du doigt posé en premier et ne doit pas
+     * déterminer le sens de lecture de l'échelle. Sur une règle horizontale,
+     * p1 est toujours l'extrémité gauche ; si elle est quasi verticale, p1 est
+     * l'extrémité haute pour éviter les inversions aléatoires.
+     */
+    const mostlyVertical = Math.abs(touchB.x - touchA.x) < Math.abs(touchB.y - touchA.y) * 0.18;
+    const touchAComesFirst = mostlyVertical
+        ? (touchA.y <= touchB.y)
+        : (touchA.x <= touchB.x);
+    const p1 = touchAComesFirst ? touchA : touchB;
+    const p2 = touchAComesFirst ? touchB : touchA;
     const meters = map.distance(ll1, ll2);
     if (!Number.isFinite(meters) || meters <= 0) return;
 
@@ -4794,75 +4893,112 @@ function drawTwoFingerRulerFromTouches(event) {
 
     const nm = meters / 1852;
     const km = meters / 1000;
-
-    /* v13.77 — la règle est dessinée au-dessus des doigts, sinon elle est masquée en vol.
-     * La mesure reste basée sur les deux points réellement touchés.
-     */
-    let offsetY = -72;
-    const minTouchY = Math.min(p1.y, p2.y);
-    if (minTouchY + offsetY < 18) offsetY = 18 - minTouchY;
-    const visualOffset = L.point(0, offsetY);
+    const { normal, rulerOffsetPx, nmLabelOffsetPx, kmLabelOffsetPx } = getTwoFingerRulerOffsetNormal(p1, p2);
+    const visualOffset = L.point(normal.x * rulerOffsetPx, normal.y * rulerOffsetPx);
     const vp1 = p1.add(visualOffset);
     const vp2 = p2.add(visualOffset);
     const vll1 = map.containerPointToLatLng(vp1);
     const vll2 = map.containerPointToLatLng(vp2);
+    const rulerPaneOptions = { pane: TWO_FINGER_RULER_PANE_NAME };
 
+    /* v15.19 — même langage graphique que le vecteur temps :
+     * halo noir + jaune fluorescent, au premier plan cartographique.
+     */
     L.polyline([vll1, vll2], {
+        ...rulerPaneOptions,
         color: '#111827',
-        weight: 8,
-        opacity: 0.80,
+        weight: 10,
+        opacity: 0.88,
         interactive: false,
-        lineCap: 'round'
+        lineCap: 'round',
+        lineJoin: 'round'
     }).addTo(layer);
     L.polyline([vll1, vll2], {
-        color: '#ffffff',
-        weight: 5,
-        opacity: 0.95,
-        interactive: false,
-        lineCap: 'round'
-    }).addTo(layer);
-    L.polyline([vll1, vll2], {
-        color: '#003f6b',
-        weight: 3,
+        ...rulerPaneOptions,
+        color: '#ffea00',
+        weight: 6,
         opacity: 1,
         interactive: false,
-        lineCap: 'round'
+        lineCap: 'round',
+        lineJoin: 'round'
     }).addTo(layer);
 
     const dx = vp2.x - vp1.x;
     const dy = vp2.y - vp1.y;
-    const len = Math.sqrt(dx * dx + dy * dy) || 1;
-    const nx = -dy / len;
-    const ny = dx / len;
-    const tickLength = 16;
+    const tickLength = 18;
     const fractions = [0, 0.25, 0.5, 0.75, 1];
+
     fractions.forEach((fraction) => {
         const px = vp1.x + dx * fraction;
         const py = vp1.y + dy * fraction;
-        const a = L.point(px - nx * tickLength / 2, py - ny * tickLength / 2);
-        const b = L.point(px + nx * tickLength / 2, py + ny * tickLength / 2);
-        L.polyline([map.containerPointToLatLng(a), map.containerPointToLatLng(b)], {
-            color: '#003f6b',
-            weight: fraction === 0 || fraction === 1 || fraction === 0.5 ? 4 : 3,
+        const a = L.point(
+            px - normal.x * tickLength / 2,
+            py - normal.y * tickLength / 2
+        );
+        const b = L.point(
+            px + normal.x * tickLength / 2,
+            py + normal.y * tickLength / 2
+        );
+        const tickLatLngs = [
+            map.containerPointToLatLng(a),
+            map.containerPointToLatLng(b)
+        ];
+        const isMajor = fraction === 0 || fraction === 1 || fraction === 0.5;
+
+        L.polyline(tickLatLngs, {
+            ...rulerPaneOptions,
+            color: '#111827',
+            weight: isMajor ? 8 : 7,
+            opacity: 0.90,
+            interactive: false,
+            lineCap: 'round'
+        }).addTo(layer);
+        L.polyline(tickLatLngs, {
+            ...rulerPaneOptions,
+            color: '#ffea00',
+            weight: isMajor ? 5 : 4,
             opacity: 1,
             interactive: false,
             lineCap: 'round'
         }).addTo(layer);
+
+        /* v15.23 — échelle NM : 0 à l’extrémité de départ visuelle (gauche si horizontale). */
+        const nmLabelPoint = L.point(
+            px + normal.x * nmLabelOffsetPx,
+            py + normal.y * nmLabelOffsetPx
+        );
+        const displayFraction = fraction;
+        const nmValueText = formatTwoFingerRulerMarkNm(nm * displayFraction, fraction === 1);
+        L.marker(map.containerPointToLatLng(nmLabelPoint), {
+            pane: TWO_FINGER_RULER_PANE_NAME,
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+                className: 'npf-two-finger-ruler-mark-label',
+                html: `<div class="npf-two-finger-ruler-mark-value nm">${nmValueText}</div>`,
+                iconSize: [108, 28],
+                iconAnchor: [54, 14]
+            })
+        }).addTo(layer);
+
+        /* v15.23 — échelle km : même sens que NM, mais davantage dégagée du trait. */
+        const kmLabelPoint = L.point(
+            px - normal.x * kmLabelOffsetPx,
+            py - normal.y * kmLabelOffsetPx
+        );
+        const kmValueText = formatTwoFingerRulerMarkKm(km * displayFraction, fraction === 1);
+        L.marker(map.containerPointToLatLng(kmLabelPoint), {
+            pane: TWO_FINGER_RULER_PANE_NAME,
+            interactive: false,
+            keyboard: false,
+            icon: L.divIcon({
+                className: 'npf-two-finger-ruler-mark-label',
+                html: `<div class="npf-two-finger-ruler-mark-value km">${kmValueText}</div>`,
+                iconSize: [108, 28],
+                iconAnchor: [54, 14]
+            })
+        }).addTo(layer);
     });
-
-    let labelPoint = L.point((vp1.x + vp2.x) / 2, (vp1.y + vp2.y) / 2 - 42);
-    if (labelPoint.y < 20) labelPoint = L.point(labelPoint.x, 20);
-    const labelLatLng = map.containerPointToLatLng(labelPoint);
-
-    L.marker(labelLatLng, {
-        interactive: false,
-        icon: L.divIcon({
-            className: 'npf-two-finger-ruler-label',
-            html: `<div class="nm">${formatNauticalMiles(nm)}</div><div class="km">${formatKilometers(km)}</div>`,
-            iconSize: [112, 44],
-            iconAnchor: [56, 22]
-        })
-    }).addTo(layer);
 }
 
 function cancelTwoFingerRulerTimer() {
@@ -6757,8 +6893,6 @@ function setupEventListeners() {
     const deleteRoadOverlayButton = document.getElementById('delete-road-overlay-button');
     const mapSourceOnlineBtn = document.getElementById('map-source-online-btn');
     const mapSourceOfflineBtn = document.getElementById('map-source-offline-btn');
-    const purgeInactivePacksBtn = document.getElementById('purge-inactive-packs-btn');
-    const refreshOfflineTilesBtn = document.getElementById('refresh-offline-tiles-btn');
     const simulationModeButton = document.getElementById('simulation-mode-button');
     const simulationMotionButton = document.getElementById('simulation-motion-button');
     const simulationMotionModal = document.getElementById('simulation-motion-modal');
@@ -7183,7 +7317,7 @@ function setupEventListeners() {
             ].join('\n')
         },
         'fdf-pdfs': {
-            title: 'Aide — Télécharger PDFs Doc Fdf',
+            title: 'Aide — Importer Doc FdF Réduite / Carte Fréquences',
             text: [
                 'Clique sur Drive.',
                 'Il faut être connecté au Drive Dash 8.',
@@ -7233,6 +7367,8 @@ function setupEventListeners() {
     window.addEventListener('keydown', (event) => {
         if (event.key === 'Escape' && importHelpModal?.style.display === 'flex') closeImportHelpModal();
     });
+
+    initializeBriefingDocsUi();
 
     offlineMapsButton.addEventListener('click', () => {
         offlineMapModal.style.display = 'flex';
@@ -7370,24 +7506,6 @@ function setupEventListeners() {
         });
     }
 
-    if (purgeInactivePacksBtn) {
-        purgeInactivePacksBtn.addEventListener('click', async () => {
-            await purgeInactivePacksCache();
-        });
-    }
-
-    if (refreshOfflineTilesBtn) {
-        refreshOfflineTilesBtn.addEventListener('click', async () => {
-            refreshOfflineTilesBtn.disabled = true;
-            refreshOfflineTilesBtn.textContent = '⏳ Rafraîchissement...';
-            try {
-                await refreshOfflineTilesRendering();
-            } finally {
-                refreshOfflineTilesBtn.disabled = false;
-                refreshOfflineTilesBtn.textContent = "Rafraîchir l'affichage des cartes offline";
-            }
-        });
-    }
 
 
     if (simulationModeButton) {
@@ -10887,7 +11005,6 @@ function ensureTrafficSettingsModal() {
             <div class="traffic-settings-header">
                 <div>
                     <div id="traffic-settings-title" class="traffic-settings-title">Filtres trafic</div>
-                    <div class="traffic-settings-subtitle">Réglages du calque trafic indicatif</div>
                 </div>
                 <button type="button" id="traffic-settings-close" class="traffic-settings-close" aria-label="Fermer">×</button>
             </div>
@@ -10974,10 +11091,6 @@ function ensureTrafficSettingsModal() {
                             disabled>
                         Réinitialiser
                     </button>
-                </div>
-                <div class="traffic-tools-note">
-                    Sélectionne ton transpondeur depuis la fenêtre d’un trafic ou depuis la recherche.
-                    Son étiquette sera masquée uniquement pendant la session PWA en cours.
                 </div>
             </div>
 
@@ -14542,6 +14655,7 @@ function updateTrafficSmoothPositions(timestamp) {
                     marker,
                     rendered.track
                 );
+                updateTrafficMarkerLabelConnector(marker);
             } catch (_) {}
         });
     }
@@ -14569,6 +14683,158 @@ function startTrafficSmoothAnimation() {
         );
 }
 
+
+
+function updateTrafficMarkerLabelConnector(marker) {
+    const icon = marker?._icon;
+    if (!icon || !icon.isConnected) return;
+
+    const label = icon.querySelector('.traffic-aircraft-altitude-label');
+    const symbol = icon.querySelector('.traffic-aircraft-arrow');
+    let connector = icon.querySelector('.traffic-label-connector');
+
+    if (!label || !symbol) {
+        if (connector) connector.remove();
+        return;
+    }
+
+    const iconRect = icon.getBoundingClientRect();
+    const labelRect = label.getBoundingClientRect();
+    const symbolRect = symbol.getBoundingClientRect();
+
+    if (
+        labelRect.width <= 0
+        || labelRect.height <= 0
+        || symbolRect.width <= 0
+        || symbolRect.height <= 0
+    ) {
+        if (connector) connector.style.display = 'none';
+        return;
+    }
+
+    const x1 = symbolRect.left + symbolRect.width / 2 - iconRect.left;
+    const y1 = symbolRect.top + symbolRect.height / 2 - iconRect.top;
+    const x2 = labelRect.left + labelRect.width / 2 - iconRect.left;
+    const y2 = labelRect.top + labelRect.height / 2 - iconRect.top;
+
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const length = Math.hypot(dx, dy);
+
+    if (!Number.isFinite(length) || length < 2) {
+        if (connector) connector.style.display = 'none';
+        return;
+    }
+
+    if (!connector) {
+        connector = document.createElement('span');
+        connector.className = 'traffic-label-connector';
+        connector.setAttribute('aria-hidden', 'true');
+        icon.appendChild(connector);
+    }
+
+    const midpointX = (x1 + x2) / 2;
+    const midpointY = (y1 + y2) / 2;
+    const angle = Math.atan2(dy, dx) * 180 / Math.PI;
+
+    /*
+     * v15.34 — la silhouette SafeSky est un SVG sur fond TRANSPARENT.
+     * Les v15.32/v15.33 lisaient backgroundColor du conteneur ; WebKit
+     * renvoyait rgba(0,0,0,0), valeur non vide qui empêchait le fallback,
+     * donc le trait central devenait transparent.
+     *
+     * On lit désormais la couleur de la forme SVG réellement visible :
+     * ss-fill / traffic-symbol-fill, puis le stroke d'une ss-line, puis
+     * seulement la propriété color du conteneur comme dernier secours.
+     */
+    const fillShape = symbol.querySelector(
+        'svg .ss-fill, svg .traffic-symbol-fill'
+    );
+    const lineShape = symbol.querySelector('svg .ss-line');
+    const fillStyle = fillShape ? window.getComputedStyle(fillShape) : null;
+    const lineStyle = lineShape ? window.getComputedStyle(lineShape) : null;
+    const symbolStyle = window.getComputedStyle(symbol);
+
+    const isUsableTrafficColor = value => {
+        const normalized = String(value || '').trim().toLowerCase();
+        return !!normalized
+            && normalized !== 'none'
+            && normalized !== 'transparent'
+            && normalized !== 'rgba(0, 0, 0, 0)'
+            && normalized !== 'rgba(0,0,0,0)';
+    };
+
+    const symbolColorCandidates = [
+        fillStyle?.fill,
+        lineStyle?.stroke,
+        symbolStyle?.color,
+        '#080c13'
+    ];
+    const symbolColor = symbolColorCandidates.find(
+        isUsableTrafficColor
+    ) || '#080c13';
+
+    connector.style.display = 'block';
+    connector.style.width = `${length.toFixed(1)}px`;
+    connector.style.left = `${midpointX.toFixed(1)}px`;
+    connector.style.top = `${midpointY.toFixed(1)}px`;
+    connector.style.transform =
+        `translate(-50%, -50%) rotate(${angle.toFixed(2)}deg)`;
+    connector.style.setProperty(
+        'background',
+        symbolColor,
+        'important'
+    );
+    connector.style.setProperty(
+        'background-color',
+        symbolColor,
+        'important'
+    );
+    connector.style.setProperty(
+        'opacity',
+        '1',
+        'important'
+    );
+    connector.style.setProperty(
+        'box-shadow',
+        'none',
+        'important'
+    );
+}
+
+function scheduleTrafficMarkerLabelConnector(marker) {
+    if (!marker) return;
+
+    requestAnimationFrame(() => {
+        updateTrafficMarkerLabelConnector(marker);
+        requestAnimationFrame(() => {
+            updateTrafficMarkerLabelConnector(marker);
+        });
+    });
+}
+
+function refreshAllTrafficLabelConnectors() {
+    if (!showTrafficLayer) return;
+    trafficMarkerRegistry.forEach(entry => {
+        if (entry?.marker) {
+            updateTrafficMarkerLabelConnector(entry.marker);
+        }
+    });
+}
+
+let trafficLabelConnectorMapEventsInstalled = false;
+
+function ensureTrafficLabelConnectorMapEvents() {
+    if (trafficLabelConnectorMapEventsInstalled || !map?.on) return;
+
+    trafficLabelConnectorMapEventsInstalled = true;
+    map.on('zoomend moveend resize', () => {
+        if (!showTrafficLayer) return;
+        requestAnimationFrame(() => {
+            refreshAllTrafficLabelConnectors();
+        });
+    });
+}
 
 function buildTrafficMarkerIcon(aircraft) {
     const hasTrack = Number.isFinite(aircraft.track);
@@ -14747,72 +15013,120 @@ function buildTrafficAircraftPopupHtml(
         </div>`;
 }
 
+function wireTrafficMarkerPopupButtons(marker) {
+    if (!marker) return;
+
+    const ac = marker._npfTrafficAircraft;
+    const popupElement = marker.getPopup()?.getElement?.();
+    if (!popupElement) return;
+
+    const trackButton = popupElement.querySelector(
+        '.traffic-popup-track-button'
+    );
+    const ownAircraftButton = popupElement.querySelector(
+        '.traffic-popup-own-button'
+    );
+
+    if (trackButton && ac?.hex) {
+        const updateTrackButtonState = () => {
+            const currentAircraft = marker._npfTrafficAircraft;
+            const trackedEntry = findTrackedTrafficEntryForAircraft(
+                currentAircraft
+            );
+            const permanentEntry = isPermanentTrackedTrafficEntry(
+                trackedEntry
+            );
+
+            trackButton.disabled = permanentEntry;
+            trackButton.textContent = permanentEntry
+                ? 'Suivi permanent'
+                : (trackedEntry
+                    ? 'Retirer de la liste suivie'
+                    : 'Ajouter à la liste suivie');
+            trackButton.title = permanentEntry
+                ? 'Indicatif permanent intégré à NPF'
+                : '';
+        };
+
+        updateTrackButtonState();
+        trackButton.onclick = () => {
+            const currentAircraft = marker._npfTrafficAircraft;
+            if (!currentAircraft?.hex) return;
+
+            const trackedEntry = findTrackedTrafficEntryForAircraft(
+                currentAircraft
+            );
+            if (isPermanentTrackedTrafficEntry(trackedEntry)) {
+                updateTrackButtonState();
+                return;
+            }
+
+            if (trackedEntry) {
+                removeTrackedTrafficIdentifier(trackedEntry.id);
+            } else {
+                addTrackedTrafficIdentifier(currentAircraft);
+            }
+
+            /*
+             * Le bouton visible est mis à jour immédiatement. Si le rendu
+             * SafeSky remplace ensuite le contenu de la popup, updateTrafficMarkerPopup()
+             * recâble le nouveau bouton sans attendre une réouverture.
+             */
+            updateTrackButtonState();
+        };
+    }
+
+    if (ownAircraftButton && ac?.hex) {
+        ownAircraftButton.onclick = () => {
+            const currentAircraft = marker._npfTrafficAircraft;
+            if (!currentAircraft?.hex) return;
+            setOwnTrafficAircraftSession(currentAircraft);
+        };
+    }
+}
+
 function installTrafficMarkerPopupInteraction(marker) {
     if (!marker || marker._npfTrafficPopupInteractionInstalled) return;
     marker._npfTrafficPopupInteractionInstalled = true;
 
     marker.on('popupopen', () => {
-        const ac = marker._npfTrafficAircraft;
-        const popupElement = marker.getPopup()?.getElement?.();
-        const trackButton = popupElement?.querySelector(
-            '.traffic-popup-track-button'
-        );
-        const ownAircraftButton = popupElement?.querySelector(
-            '.traffic-popup-own-button'
-        );
-
-        if (trackButton && ac?.hex) {
-            const updateTrackButtonState = () => {
-                const currentAircraft = marker._npfTrafficAircraft;
-                const trackedEntry = findTrackedTrafficEntryForAircraft(
-                    currentAircraft
-                );
-                const permanentEntry = isPermanentTrackedTrafficEntry(
-                    trackedEntry
-                );
-
-                trackButton.disabled = permanentEntry;
-                trackButton.textContent = permanentEntry
-                    ? 'Suivi permanent'
-                    : (trackedEntry
-                        ? 'Retirer de la liste suivie'
-                        : 'Ajouter à la liste suivie');
-                trackButton.title = permanentEntry
-                    ? 'Indicatif permanent intégré à NPF'
-                    : '';
-            };
-
-            updateTrackButtonState();
-            trackButton.onclick = () => {
-                const currentAircraft = marker._npfTrafficAircraft;
-                if (!currentAircraft?.hex) return;
-
-                const trackedEntry = findTrackedTrafficEntryForAircraft(
-                    currentAircraft
-                );
-                if (isPermanentTrackedTrafficEntry(trackedEntry)) {
-                    updateTrackButtonState();
-                    return;
-                }
-
-                if (trackedEntry) {
-                    removeTrackedTrafficIdentifier(trackedEntry.id);
-                } else {
-                    addTrackedTrafficIdentifier(currentAircraft);
-                }
-                updateTrackButtonState();
-            };
-        }
-
-        if (ownAircraftButton && ac?.hex) {
-            ownAircraftButton.onclick = () => {
-                const currentAircraft = marker._npfTrafficAircraft;
-                if (!currentAircraft?.hex) return;
-                setOwnTrafficAircraftSession(currentAircraft);
-            };
-        }
+        wireTrafficMarkerPopupButtons(marker);
     });
 }
+
+/*
+ * v15.09 — l’étiquette permanente fait partie visuellement du trafic mais
+ * dépasse largement la boîte 42 × 42 du divIcon. On lui rend les événements
+ * et on ouvre explicitement la popup depuis cette zone.
+ */
+function installTrafficMarkerLabelPopupInteraction(marker) {
+    if (!marker) return;
+
+    const markerElement = marker.getElement?.();
+    const labelElement = markerElement?.querySelector?.(
+        '.traffic-aircraft-altitude-label'
+    );
+    if (
+        !labelElement
+        || labelElement._npfTrafficLabelPopupInteractionInstalled
+    ) {
+        return;
+    }
+
+    labelElement._npfTrafficLabelPopupInteractionInstalled = true;
+
+    labelElement.addEventListener('click', event => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        try {
+            marker.openPopup();
+        } catch (_) {}
+    }, {
+        passive: false
+    });
+}
+
 
 /*
  * v14.57 — fermeture de la fiche trafic par clic réel sur le fond de carte.
@@ -15021,10 +15335,25 @@ function updateTrafficMarkerPopup(marker, popupHtml) {
     }
 
     installTrafficMarkerPopupInteraction(marker);
+
+    /*
+     * v15.09 — setContent() remplace le DOM d’une popup ouverte. Les boutons
+     * nouvellement créés doivent donc recevoir leurs onclick immédiatement,
+     * sans attendre un nouveau popupopen.
+     */
+    if (marker.isPopupOpen?.()) {
+        wireTrafficMarkerPopupButtons(marker);
+        requestAnimationFrame(() => {
+            if (marker.isPopupOpen?.()) {
+                wireTrafficMarkerPopupButtons(marker);
+            }
+        });
+    }
 }
 
 function renderTrafficAircraft(aircraftList, meta = {}) {
     if (!trafficLayer) return;
+    ensureTrafficLabelConnectorMapEvents();
 
     if (meta?.skipSnapshot !== true) {
         lastTrafficAircraftSnapshot = Array.isArray(aircraftList)
@@ -15088,8 +15417,15 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
         : null;
 
     const trackedIdentifierSet = getTrackedTrafficIdentifierSet();
-    const uniqueAircraft = [];
-    const seenAircraft = new Set();
+
+    /*
+     * v15.29 — on calcule d'abord tous les trafics éligibles SafeSky sans
+     * appliquer le filtre « seulement la liste suivie ». Cela permet au badge
+     * vert de toujours représenter la totalité, même lorsque la carte ne rend
+     * volontairement que les trafics de la liste.
+     */
+    const allEligibleAircraft = [];
+    const seenAllEligibleAircraft = new Set();
 
     (Array.isArray(aircraftList) ? aircraftList : [])
         .map(normalizeTrafficAircraft)
@@ -15143,14 +15479,6 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
             || ac.altitudeFeet === null
             || ac.altitudeFeet <= groundToAboveMaxAltitudeFt
         ))
-        .filter(ac => (
-            !settings.onlyTrackedIdentifiers
-            || ac.forceDisplay
-            || trackedIdentifierSet.has(
-                String(ac.hex || '').toUpperCase()
-            )
-            || isTrafficAircraftTracked(ac)
-        ))
         .forEach(ac => {
             const reference = getNearestTrafficReference(ac, points);
 
@@ -15168,10 +15496,25 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
 
             ac._trafficReference = showAllTraffic ? null : reference;
             const key = buildTrafficAircraftKey(ac);
-            if (seenAircraft.has(key)) return;
-            seenAircraft.add(key);
-            uniqueAircraft.push(ac);
+            if (seenAllEligibleAircraft.has(key)) return;
+            seenAllEligibleAircraft.add(key);
+            allEligibleAircraft.push(ac);
         });
+
+    lastTrafficTotalEligibleCount = allEligibleAircraft.length;
+    lastTrafficTrackedDetectedCount = allEligibleAircraft.filter(ac => (
+        trackedIdentifierSet.has(String(ac.hex || '').toUpperCase())
+        || isTrafficAircraftTracked(ac)
+    )).length;
+
+    const uniqueAircraft = allEligibleAircraft.filter(ac => (
+        !settings.onlyTrackedIdentifiers
+        || ac.forceDisplay
+        || trackedIdentifierSet.has(
+            String(ac.hex || '').toUpperCase()
+        )
+        || isTrafficAircraftTracked(ac)
+    ));
 
     const renderNow = Date.now();
     const activeAircraftKeys = new Set();
@@ -15224,6 +15567,10 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
                 entry.marker,
                 popupHtml
             );
+            installTrafficMarkerLabelPopupInteraction(
+                entry.marker
+            );
+            scheduleTrafficMarkerLabelConnector(entry.marker);
             return;
         }
 
@@ -15245,6 +15592,8 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
         marker._npfTrafficAircraft = ac;
         updateTrafficMarkerPopup(marker, popupHtml);
         marker.addTo(trafficLayer);
+        installTrafficMarkerLabelPopupInteraction(marker);
+        scheduleTrafficMarkerLabelConnector(marker);
 
         entry = {
             marker,
@@ -15289,7 +15638,7 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
 
     lastTrafficDisplayedCount = uniqueAircraft.length;
     refreshTrackedTrafficListUi();
-    refreshTrafficButtonState(uniqueAircraft.length);
+    refreshTrafficButtonState();
     updateTrafficStatus({
         visible: showTrafficLayer,
         state: 'ok',
@@ -15302,6 +15651,14 @@ function renderTrafficAircraft(aircraftList, meta = {}) {
     });
 
     startTrafficSmoothAnimation();
+
+    /*
+     * v15.30 — la liste des marqueurs SafeSky vient de changer : réconcilier
+     * immédiatement la couche GLR pour appliquer/supprimer les doublons.
+     */
+    if (npfGlobalLinkEnabled && npfGlobalLinkLastPositions.length) {
+        renderGlobalLinkPositions(npfGlobalLinkLastPositions);
+    }
 }
 
 function redrawTrafficLayerFromSnapshot() {
@@ -15338,7 +15695,22 @@ function updateTrafficStatus({ visible = showTrafficLayer, state = 'idle', count
 function refreshTrafficButtonState(count = null) {
     const button = document.getElementById('traffic-layer-button');
     const countEl = document.getElementById('traffic-button-count');
+    const trackedCountEl = document.getElementById('traffic-tracked-button-count');
     if (!button) return;
+
+    if (trackedCountEl) {
+        const trackedCount = Math.max(
+            0,
+            Math.round(Number(lastTrafficTrackedDetectedCount) || 0)
+        );
+        trackedCountEl.textContent = String(trackedCount);
+        trackedCountEl.style.display = showTrafficLayer ? 'inline-flex' : 'none';
+        trackedCountEl.title = `${trackedCount} trafic${trackedCount > 1 ? 's' : ''} de la liste suivie détecté${trackedCount > 1 ? 's' : ''}`;
+        trackedCountEl.setAttribute(
+            'aria-label',
+            `${trackedCount} trafic${trackedCount > 1 ? 's' : ''} de la liste suivie détecté${trackedCount > 1 ? 's' : ''}`
+        );
+    }
 
     if (count !== null && count !== undefined && count !== '') {
         const numericCount = Number(count);
@@ -15385,7 +15757,9 @@ function refreshTrafficButtonState(count = null) {
             if (lastTrafficError && !isTrafficLoading) {
                 countEl.textContent = '!';
             } else {
-                countEl.textContent = String(lastTrafficDisplayedCount);
+                countEl.textContent = String(
+                    Math.max(0, Math.round(Number(lastTrafficTotalEligibleCount) || 0))
+                );
             }
             countEl.style.display = 'inline-flex';
         } else {
@@ -15422,6 +15796,8 @@ async function refreshTrafficLayer(options = {}) {
     if (!points.length && !trackedIdentifiers.length) {
         lastTrafficError = 'Aucun point de référence';
         lastTrafficDisplayedCount = 0;
+        lastTrafficTotalEligibleCount = 0;
+        lastTrafficTrackedDetectedCount = 0;
         refreshTrafficButtonState(0);
         updateTrafficStatus({ state: 'error', message: 'Trafic : aucun point de référence', visible: true });
         return;
@@ -15621,6 +15997,10 @@ function toggleTrafficLayer(forceState = null) {
         if (trafficLayer && map && map.hasLayer(trafficLayer)) map.removeLayer(trafficLayer);
         refreshTrafficButtonState(0);
         updateTrafficStatus({ visible: false });
+
+        if (npfGlobalLinkEnabled && npfGlobalLinkLastPositions.length) {
+            renderGlobalLinkPositions(npfGlobalLinkLastPositions);
+        }
     }
 
     scheduleBaseMapStabilityRefresh(showTrafficLayer ? 'traffic-on' : 'traffic-off');
@@ -16808,6 +17188,1801 @@ window.openVacPdf = openVacPdf;
 window.deleteAllVacPdfs = deleteAllVacPdfs;
 window.displayVacManagementStatus = displayVacManagementStatus;
 
+
+
+// =========================================================================
+// v15.13 — FdS / GAAR NAS : lecteur intégré + mise à jour manuelle + stockage hors ligne
+// =========================================================================
+
+function initBriefingDocsDB() {
+    return new Promise((resolve, reject) => {
+        if (npfBriefingDocsDb) {
+            resolve(npfBriefingDocsDb);
+            return;
+        }
+        if (typeof indexedDB === 'undefined') {
+            reject(new Error('IndexedDB indisponible'));
+            return;
+        }
+        const request = indexedDB.open(NPF_BRIEFING_DOCS_DB_NAME, NPF_BRIEFING_DOCS_DB_VERSION);
+        request.onupgradeneeded = event => {
+            const db = event.target.result;
+            if (!db.objectStoreNames.contains(NPF_BRIEFING_DOCS_STORE_NAME)) {
+                db.createObjectStore(NPF_BRIEFING_DOCS_STORE_NAME, { keyPath: 'type' });
+            }
+        };
+        request.onsuccess = event => {
+            npfBriefingDocsDb = event.target.result;
+            npfBriefingDocsDb.onversionchange = () => {
+                try { npfBriefingDocsDb.close(); } catch (_) {}
+                npfBriefingDocsDb = null;
+            };
+            resolve(npfBriefingDocsDb);
+        };
+        request.onerror = () => reject(request.error || new Error('Base FDS / GAAR indisponible'));
+        request.onblocked = () => reject(new Error('Base FDS / GAAR bloquée par une autre instance'));
+    });
+}
+
+async function getBriefingDocRecord(type) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) return null;
+    const db = await initBriefingDocsDB();
+    return await new Promise((resolve, reject) => {
+        const tx = db.transaction(NPF_BRIEFING_DOCS_STORE_NAME, 'readonly');
+        const request = tx.objectStore(NPF_BRIEFING_DOCS_STORE_NAME).get(safeType);
+        request.onsuccess = () => resolve(request.result || null);
+        request.onerror = () => reject(request.error || new Error(`Lecture ${safeType.toUpperCase()} impossible`));
+    });
+}
+
+async function putBriefingDocRecord(record) {
+    if (!record || !NPF_BRIEFING_DOC_TYPES.includes(record.type)) {
+        throw new Error('Document FDS / GAAR invalide');
+    }
+    const db = await initBriefingDocsDB();
+    await new Promise((resolve, reject) => {
+        const tx = db.transaction(NPF_BRIEFING_DOCS_STORE_NAME, 'readwrite');
+        tx.objectStore(NPF_BRIEFING_DOCS_STORE_NAME).put(record);
+        tx.oncomplete = () => resolve();
+        tx.onerror = () => reject(tx.error || new Error('Enregistrement FDS / GAAR impossible'));
+        tx.onabort = () => reject(tx.error || new Error('Enregistrement FDS / GAAR interrompu'));
+    });
+}
+
+function clearBriefingDocsSession() {
+    try {
+        localStorage.removeItem(NPF_BRIEFING_DOCS_SESSION_TOKEN_KEY);
+        localStorage.removeItem(NPF_BRIEFING_DOCS_SESSION_EXP_KEY);
+    } catch (_) {}
+}
+
+function getStoredBriefingDocsSession() {
+    try {
+        const token = String(localStorage.getItem(NPF_BRIEFING_DOCS_SESSION_TOKEN_KEY) || '');
+        const exp = Number(localStorage.getItem(NPF_BRIEFING_DOCS_SESSION_EXP_KEY) || 0);
+        if (!token || !Number.isFinite(exp) || exp <= Date.now()) {
+            clearBriefingDocsSession();
+            return null;
+        }
+        return { token, exp };
+    } catch (_) {
+        return null;
+    }
+}
+
+function storeBriefingDocsSession(token, expiresAt) {
+    const exp = Date.parse(String(expiresAt || ''));
+    if (!token || !Number.isFinite(exp) || exp <= Date.now()) return false;
+    try {
+        localStorage.setItem(NPF_BRIEFING_DOCS_SESSION_TOKEN_KEY, String(token));
+        localStorage.setItem(NPF_BRIEFING_DOCS_SESSION_EXP_KEY, String(exp));
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function formatBriefingDocsDate(value) {
+    if (!value) return 'date inconnue';
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return String(value);
+    return date.toLocaleString('fr-FR', {
+        day: '2-digit', month: '2-digit', year: 'numeric',
+        hour: '2-digit', minute: '2-digit'
+    });
+}
+
+function formatBriefingDocsExpiry(exp) {
+    const date = new Date(Number(exp || 0));
+    if (Number.isNaN(date.getTime())) return 'minuit';
+    return date.toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' });
+}
+
+function formatBriefingDocsSize(bytes) {
+    const value = Number(bytes || 0);
+    if (!Number.isFinite(value) || value <= 0) return '';
+    if (value >= 1024 * 1024) return `${(value / (1024 * 1024)).toFixed(1)} Mo`;
+    return `${Math.max(1, Math.round(value / 1024))} Ko`;
+}
+
+async function fetchBriefingDocsNas(url, options = {}, timeoutMs = 15000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const response = await fetch(url, { ...options, cache: 'no-store', signal: controller.signal });
+        if (response.status === 401) {
+            clearBriefingDocsSession();
+        }
+        return response;
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function briefingDocsAuthHeaders(session) {
+    return session && session.token ? { 'Authorization': `Bearer ${session.token}` } : {};
+}
+
+async function authorizeBriefingDocs(password) {
+    const cleanPassword = String(password || '');
+    if (!cleanPassword) throw new Error('Saisis le mot de passe.');
+    if (!navigator.onLine) throw new Error('Connexion Internet requise pour autoriser les téléchargements.');
+
+    const response = await fetchBriefingDocsNas(`${NPF_BRIEFING_DOCS_API_URL}?action=login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password: cleanPassword })
+    }, 12000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !payload.token || !payload.expiresAt) {
+        throw new Error(payload?.message || payload?.error || `Autorisation refusée (${response.status})`);
+    }
+    if (!storeBriefingDocsSession(payload.token, payload.expiresAt)) {
+        throw new Error('Session reçue mais impossible à enregistrer sur cet appareil.');
+    }
+    return getStoredBriefingDocsSession();
+}
+
+function getBriefingDocsRemoteSignature(meta) {
+    if (!meta || !meta.exists) return '';
+    return [
+        String(meta.dateKey || ''),
+        String(meta.updatedAt || ''),
+        String(meta.revision || meta.fileRevision || ''),
+        String(meta.sizeBytes || 0),
+        String(meta.originalFilename || meta.filename || '')
+    ].join('|');
+}
+
+async function downloadBriefingDocFromNas(type, meta, session) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) throw new Error('Type de document inconnu');
+    const url = `${NPF_BRIEFING_DOCS_API_URL}?action=download&type=${encodeURIComponent(safeType)}&t=${Date.now()}`;
+    const response = await fetchBriefingDocsNas(url, {
+        method: 'GET',
+        headers: briefingDocsAuthHeaders(session)
+    }, 20000);
+    if (!response.ok) {
+        let message = `Téléchargement ${safeType.toUpperCase()} impossible (${response.status})`;
+        try {
+            const payload = await response.clone().json();
+            if (payload?.message) message = payload.message;
+        } catch (_) {}
+        throw new Error(message);
+    }
+    const blob = await response.blob();
+    if (!blob || blob.size < 1000) throw new Error(`${safeType.toUpperCase()} vide ou incomplète`);
+    const signature = await blob.slice(0, 5).text().catch(() => '');
+    if (signature !== '%PDF-') throw new Error(`${safeType.toUpperCase()} reçue mais le fichier n’est pas un PDF valide`);
+
+    const record = {
+        type: safeType,
+        blob,
+        filename: String(meta?.originalFilename || meta?.filename || `${safeType}.pdf`),
+        size: blob.size,
+        dateKey: String(meta?.dateKey || ''),
+        mailDate: String(meta?.mailDate || ''),
+        remoteUpdatedAt: String(meta?.updatedAt || ''),
+        remoteSignature: getBriefingDocsRemoteSignature(meta),
+        downloadedAt: Date.now()
+    };
+    await putBriefingDocRecord(record);
+    return record;
+}
+
+async function syncBriefingDocsFromNas(options = {}) {
+    if (npfBriefingDocsSyncInProgress) return false;
+    const session = getStoredBriefingDocsSession();
+    if (!session) {
+        if (!options.silent) throw new Error('Autorisation FDS / GAAR requise.');
+        await displayBriefingDocsStatus();
+        return false;
+    }
+    if (!navigator.onLine) {
+        if (!options.silent) throw new Error('Mode hors ligne : les documents locaux restent disponibles.');
+        await displayBriefingDocsStatus();
+        return false;
+    }
+
+    npfBriefingDocsSyncInProgress = true;
+    try {
+        const statusUrl = `${NPF_BRIEFING_DOCS_API_URL}?action=status&t=${Date.now()}`;
+        const response = await fetchBriefingDocsNas(statusUrl, {
+            method: 'GET',
+            headers: briefingDocsAuthHeaders(session)
+        }, 12000);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.ok !== true) {
+            throw new Error(payload?.message || payload?.error || `Statut NAS indisponible (${response.status})`);
+        }
+
+        let downloaded = 0;
+        for (const type of NPF_BRIEFING_DOC_TYPES) {
+            const meta = payload[type];
+            if (!isBriefingDocMetaForToday(meta)) continue;
+            const remoteSignature = getBriefingDocsRemoteSignature(meta);
+            const localRecord = await getBriefingDocRecord(type).catch(() => null);
+            if (localRecord && localRecord.remoteSignature === remoteSignature && localRecord.blob instanceof Blob) {
+                continue;
+            }
+            await downloadBriefingDocFromNas(type, meta, session);
+            downloaded += 1;
+        }
+
+        try { localStorage.setItem(NPF_BRIEFING_DOCS_LAST_SYNC_KEY, String(Date.now())); } catch (_) {}
+        return downloaded;
+    } finally {
+        npfBriefingDocsSyncInProgress = false;
+        await refreshBriefingDocMapButtons().catch(() => {});
+    }
+}
+
+function getBriefingDocsParisDateKey() {
+    try {
+        const parts = new Intl.DateTimeFormat('en-CA', {
+            timeZone: 'Europe/Paris',
+            year: 'numeric',
+            month: '2-digit',
+            day: '2-digit'
+        }).formatToParts(new Date());
+        const values = {};
+        parts.forEach(part => {
+            if (part.type !== 'literal') values[part.type] = part.value;
+        });
+        if (values.year && values.month && values.day) {
+            return `${values.year}${values.month}${values.day}`;
+        }
+    } catch (_) {}
+    const now = new Date();
+    return `${now.getFullYear()}${String(now.getMonth() + 1).padStart(2, '0')}${String(now.getDate()).padStart(2, '0')}`;
+}
+
+function extractBriefingDocDateKey(value) {
+    const text = String(value || '');
+    const match = text.match(/(?:^|\D)(20\d{6})(?:\D|$)/);
+    return match ? match[1] : '';
+}
+
+function getBriefingDocEffectiveDateKey(value) {
+    if (!value || typeof value !== 'object') return '';
+    /*
+     * v15.26 — le nom du PDF est prioritaire : en fin de journée une FdS du
+     * lendemain peut être reçue aujourd'hui, donc mailDate / mtime ne prouvent
+     * pas que le document concerne la date du jour.
+     */
+    const filenameDate = extractBriefingDocDateKey(value.originalFilename || value.filename || '');
+    if (filenameDate) return filenameDate;
+    const declared = String(value.dateKey || '').replace(/\D/g, '');
+    return /^20\d{6}$/.test(declared) ? declared : '';
+}
+
+function isBriefingDocMetaForToday(meta) {
+    return Boolean(meta && meta.exists && getBriefingDocEffectiveDateKey(meta) === getBriefingDocsParisDateKey());
+}
+
+function isBriefingDocRecordForToday(record) {
+    return Boolean(
+        record
+        && record.blob instanceof Blob
+        && getBriefingDocEffectiveDateKey(record) === getBriefingDocsParisDateKey()
+    );
+}
+
+function getBriefingDocMapButton(type) {
+    return document.getElementById(
+        String(type || '').toLowerCase() === 'gaar'
+            ? 'briefing-gaar-map-button'
+            : 'briefing-fds-map-button'
+    );
+}
+
+function closeBriefingDocSelectorModal() {
+    const modal = document.getElementById('briefing-doc-selector-modal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+}
+
+function openBriefingDocSelectorModal() {
+    const modal = document.getElementById('briefing-doc-selector-modal');
+    if (!modal) return false;
+    refreshBriefingDocMapButtons().catch(() => {});
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    return true;
+}
+
+function updateBriefingDocsMainButtonState(fdsRecord, gaarRecord) {
+    const mainButton = document.getElementById('briefing-docs-map-button');
+    const fdsLine = document.getElementById('briefing-docs-main-fds-label');
+    const gaarLine = document.getElementById('briefing-docs-main-gaar-label');
+    const fdsLoaded = isBriefingDocRecordForToday(fdsRecord);
+    const gaarLoaded = isBriefingDocRecordForToday(gaarRecord);
+
+    const updateLine = (element, loaded) => {
+        if (!element) return;
+        element.classList.toggle('briefing-doc-loaded', loaded);
+        element.classList.toggle('briefing-doc-missing', !loaded);
+    };
+    updateLine(fdsLine, fdsLoaded);
+    updateLine(gaarLine, gaarLoaded);
+
+    if (!mainButton) return;
+    const anyLoaded = fdsLoaded || gaarLoaded;
+    mainButton.classList.toggle('briefing-docs-any-loaded', anyLoaded);
+    mainButton.classList.toggle('briefing-docs-none-loaded', !anyLoaded);
+    mainButton.classList.toggle('loading', npfBriefingDocsSyncInProgress);
+    mainButton.setAttribute('aria-busy', npfBriefingDocsSyncInProgress ? 'true' : 'false');
+    const fdsState = fdsLoaded ? 'FdS chargée' : 'FdS non chargée';
+    const gaarState = gaarLoaded ? 'GAAR chargé' : 'GAAR non chargé';
+    const stateText = `${fdsState} — ${gaarState} — appuyer pour choisir`;
+    mainButton.title = stateText;
+    mainButton.setAttribute('aria-label', stateText);
+}
+
+async function refreshBriefingDocMapButtons() {
+    const [fds, gaar] = await Promise.all([
+        getBriefingDocRecord('fds').catch(() => null),
+        getBriefingDocRecord('gaar').catch(() => null)
+    ]);
+
+    const update = (type, record) => {
+        const button = getBriefingDocMapButton(type);
+        if (!button) return;
+        const current = isBriefingDocRecordForToday(record);
+        const label = type === 'gaar' ? 'GAAR' : 'FdS';
+        button.classList.toggle('briefing-doc-loaded', current);
+        button.classList.toggle('briefing-doc-missing', !current);
+        button.classList.toggle('loading', npfBriefingDocsSyncInProgress);
+        button.setAttribute('aria-busy', npfBriefingDocsSyncInProgress ? 'true' : 'false');
+        const stateText = current
+            ? `${label} du jour charg${type === 'gaar' ? 'é' : 'ée'} — appuyer pour ouvrir`
+            : `${label} du jour non télécharg${type === 'gaar' ? 'é' : 'ée'} — appuyer pour télécharger`;
+        button.title = stateText;
+        button.setAttribute('aria-label', stateText);
+        const selectorStatus = document.getElementById(`briefing-${type}-selector-status`);
+        if (selectorStatus) {
+            selectorStatus.textContent = current
+                ? (type === 'gaar' ? 'Chargé aujourd’hui' : 'Chargée aujourd’hui')
+                : (type === 'gaar' ? 'Non téléchargé' : 'Non téléchargée');
+        }
+    };
+
+    update('fds', fds);
+    update('gaar', gaar);
+    updateBriefingDocsMainButtonState(fds, gaar);
+    return { fds, gaar };
+}
+
+function closeBriefingDocsPasswordModal() {
+    const modal = document.getElementById('briefing-docs-password-modal');
+    const input = document.getElementById('briefing-docs-password-input');
+    const status = document.getElementById('briefing-docs-password-status');
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+    }
+    if (input) input.value = '';
+    if (status) status.textContent = '';
+    npfBriefingDocsPendingType = null;
+}
+
+function openBriefingDocsPasswordModal(type) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) return false;
+    const modal = document.getElementById('briefing-docs-password-modal');
+    const title = document.getElementById('briefing-docs-password-title');
+    const help = document.getElementById('briefing-docs-password-help');
+    const input = document.getElementById('briefing-docs-password-input');
+    const status = document.getElementById('briefing-docs-password-status');
+    if (!modal) return false;
+
+    npfBriefingDocsPendingType = safeType;
+    const label = safeType === 'gaar' ? 'GAAR' : 'FdS';
+    if (title) title.textContent = `Accès ${label}`;
+    if (help) help.textContent = `Saisis le mot de passe pour autoriser les téléchargements FdS / GAAR jusqu’à minuit.`;
+    if (status) status.textContent = '';
+    if (input) input.value = '';
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    setTimeout(() => {
+        try { input?.focus({ preventScroll: true }); } catch (_) { try { input?.focus(); } catch (_) {} }
+    }, 60);
+    return true;
+}
+
+function getBriefingDocLabel(type) {
+    return String(type || '').toLowerCase() === 'gaar' ? 'GAAR' : 'FdS';
+}
+
+function setBriefingDocViewerStatus(message = '', options = {}) {
+    const status = document.getElementById('briefing-doc-viewer-status');
+    if (!status) return;
+    status.textContent = message || '';
+    status.classList.toggle('visible', Boolean(message));
+    status.classList.toggle('success', Boolean(options.success));
+    status.classList.toggle('error', Boolean(options.error));
+}
+
+function revokeBriefingDocViewerObjectUrl() {
+    if (!npfBriefingDocViewerObjectUrl) return;
+    try { URL.revokeObjectURL(npfBriefingDocViewerObjectUrl); } catch (_) {}
+    npfBriefingDocViewerObjectUrl = null;
+}
+
+function closeBriefingDocViewer() {
+    const modal = document.getElementById('briefing-doc-viewer-modal');
+    const frame = document.getElementById('briefing-doc-viewer-frame');
+    if (frame) frame.src = 'about:blank';
+    revokeBriefingDocViewerObjectUrl();
+    if (modal) {
+        modal.style.display = 'none';
+        modal.setAttribute('aria-hidden', 'true');
+        modal.classList.remove('briefing-doc-viewer-fds-width');
+    }
+    npfBriefingDocViewerType = null;
+    setBriefingDocViewerStatus('');
+}
+
+async function displayBriefingDocInViewer(type, record, options = {}) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) return false;
+    if (!isBriefingDocRecordForToday(record)) {
+        alert(`Aucune ${getBriefingDocLabel(safeType)} du jour enregistrée sur cet appareil.`);
+        return false;
+    }
+
+    const modal = document.getElementById('briefing-doc-viewer-modal');
+    const frame = document.getElementById('briefing-doc-viewer-frame');
+    const title = document.getElementById('briefing-doc-viewer-title');
+    const meta = document.getElementById('briefing-doc-viewer-meta');
+    if (!modal || !frame) throw new Error('Lecteur PDF FdS / GAAR indisponible.');
+
+    revokeBriefingDocViewerObjectUrl();
+    npfBriefingDocViewerObjectUrl = URL.createObjectURL(record.blob);
+    npfBriefingDocViewerType = safeType;
+
+    const label = getBriefingDocLabel(safeType);
+    if (title) title.textContent = label;
+    if (meta) {
+        const pieces = [];
+        if (record.filename) pieces.push(record.filename);
+        if (record.mailDate) pieces.push(`mail ${formatBriefingDocsDate(record.mailDate)}`);
+        else if (record.remoteUpdatedAt) pieces.push(`MAJ ${formatBriefingDocsDate(record.remoteUpdatedAt)}`);
+        meta.textContent = pieces.join(' · ');
+    }
+
+    frame.title = `${label} du jour`;
+    // v15.16 : Safari/iPad ignore fréquemment les fragments FitH/page-width.
+    // La FdS est donc grossie réellement par CSS dans le stage du lecteur ;
+    // le fragment reste seulement une indication supplémentaire au moteur PDF.
+    modal.classList.toggle('briefing-doc-viewer-fds-width', safeType === 'fds');
+    frame.src = `${npfBriefingDocViewerObjectUrl}#page=1&view=FitH&zoom=page-width&pagemode=none`;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+    if (!options.keepStatus) setBriefingDocViewerStatus('');
+    return true;
+}
+
+async function openBriefingDoc(type) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) return false;
+    try {
+        const record = await getBriefingDocRecord(safeType);
+        return await displayBriefingDocInViewer(safeType, record);
+    } catch (error) {
+        alert(`Ouverture ${getBriefingDocLabel(safeType)} impossible : ${error.message || error}`);
+        return false;
+    }
+}
+
+async function fetchBriefingDocsStatusPayload(session) {
+    const statusUrl = `${NPF_BRIEFING_DOCS_API_URL}?action=status&t=${Date.now()}`;
+    const response = await fetchBriefingDocsNas(statusUrl, {
+        method: 'GET',
+        headers: briefingDocsAuthHeaders(session)
+    }, 12000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true) {
+        throw new Error(payload?.message || payload?.error || `Statut NAS indisponible (${response.status})`);
+    }
+    return payload;
+}
+
+function getBriefingDocSourceRefreshUrl(type) {
+    const safeType = String(type || '').toLowerCase();
+    const stamp = encodeURIComponent(Date.now());
+    if (safeType === 'fds') {
+        // Même URL / même mode de déclenchement que BFG : navigation iframe opaque.
+        return `${NPF_FDS_GMAIL_REFRESH_URL}?source=npf-v15.16&t=${stamp}`;
+    }
+    if (safeType === 'gaar') {
+        // BFG utilise déjà ce relais NAS pour déclencher l'Apps Script GAAR.
+        return `${NPF_GAAR_IMPORT_REQUEST_URL}?source=npf-v15.16&t=${stamp}`;
+    }
+    return '';
+}
+
+function triggerBriefingDocSourceRefreshInBackground(type) {
+    const safeType = String(type || '').toLowerCase();
+    const url = getBriefingDocSourceRefreshUrl(safeType);
+    if (!url) return Promise.reject(new Error('Type de document inconnu'));
+
+    return new Promise((resolve, reject) => {
+        try {
+            const iframe = document.createElement('iframe');
+            iframe.style.position = 'fixed';
+            iframe.style.left = '-20px';
+            iframe.style.top = '-20px';
+            iframe.style.width = '1px';
+            iframe.style.height = '1px';
+            iframe.style.border = '0';
+            iframe.style.opacity = '0';
+            iframe.style.pointerEvents = 'none';
+            iframe.setAttribute('aria-hidden', 'true');
+            iframe.tabIndex = -1;
+            iframe.src = url;
+            (document.body || document.documentElement).appendChild(iframe);
+
+            // Comme BFG : on considère la demande lancée rapidement, mais on laisse
+            // l'iframe vivre assez longtemps pour que Gmail -> NAS se termine.
+            setTimeout(() => resolve(true), 1000);
+            setTimeout(() => {
+                try { iframe.remove(); } catch (_) {}
+            }, 120000);
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+function waitBriefingDocsMs(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+async function waitForBriefingDocSourceRefresh(type, session, previousSignature) {
+    const safeType = String(type || '').toLowerCase();
+    const maxAttempts = 45; // environ 90 secondes, comme l'attente robuste BFG
+    const retrySourceAttempts = new Set([8, 20, 32]);
+    let lastPayload = null;
+    let lastError = null;
+
+    for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
+        await waitBriefingDocsMs(attempt === 0 ? 2500 : 2000);
+
+        if (retrySourceAttempts.has(attempt)) {
+            setBriefingDocViewerStatus(
+                `Toujours en attente du NAS — relance ${getBriefingDocLabel(safeType)}…`
+            );
+            await triggerBriefingDocSourceRefreshInBackground(safeType).catch(() => {});
+        }
+
+        try {
+            lastPayload = await fetchBriefingDocsStatusPayload(session);
+            const meta = lastPayload?.[safeType];
+            const signature = getBriefingDocsRemoteSignature(meta);
+            if (!previousSignature || (signature && signature !== previousSignature)) {
+                return { payload: lastPayload, changedOnNas: true };
+            }
+            setBriefingDocViewerStatus(
+                `Mise à jour ${getBriefingDocLabel(safeType)} en cours…`
+            );
+        } catch (error) {
+            lastError = error;
+            setBriefingDocViewerStatus(
+                `NAS temporairement indisponible — nouvelle tentative en cours…`,
+                { error: false }
+            );
+        }
+    }
+
+    if (lastPayload) return { payload: lastPayload, changedOnNas: false };
+    throw lastError || new Error('Statut FdS / GAAR indisponible après attente.');
+}
+
+async function refreshSingleBriefingDocFromNas(type, options = {}) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) throw new Error('Type de document inconnu');
+    if (npfBriefingDocsSyncInProgress) throw new Error('Une mise à jour FdS / GAAR est déjà en cours.');
+
+    const session = getStoredBriefingDocsSession();
+    if (!session) throw new Error('Autorisation FDS / GAAR requise.');
+    if (!navigator.onLine) throw new Error('Mode hors ligne : le document local reste disponible.');
+
+    npfBriefingDocsSyncInProgress = true;
+    await refreshBriefingDocMapButtons().catch(() => {});
+    try {
+        let payload;
+        if (options.sourceRefresh === true) {
+            // v15.16 : reproduire le fonctionnement BFG côté navigateur.
+            // On relève d'abord la révision NAS, on déclenche la source dans un
+            // iframe invisible, puis on attend que le NAS expose la nouvelle révision.
+            const beforePayload = await fetchBriefingDocsStatusPayload(session);
+            const beforeMeta = beforePayload?.[safeType];
+            const beforeSignature = getBriefingDocsRemoteSignature(beforeMeta);
+            await triggerBriefingDocSourceRefreshInBackground(safeType);
+            const waitResult = await waitForBriefingDocSourceRefresh(safeType, session, beforeSignature);
+            payload = waitResult.payload;
+        } else {
+            payload = await fetchBriefingDocsStatusPayload(session);
+        }
+        const meta = payload[safeType];
+        if (!isBriefingDocMetaForToday(meta)) {
+            throw new Error(`Aucune ${getBriefingDocLabel(safeType)} de la date du jour disponible sur le NAS.`);
+        }
+
+        const remoteSignature = getBriefingDocsRemoteSignature(meta);
+        const localRecord = await getBriefingDocRecord(safeType).catch(() => null);
+        const localIsCurrent = isBriefingDocRecordForToday(localRecord);
+        const same = Boolean(
+            localIsCurrent
+            && localRecord?.blob instanceof Blob
+            && localRecord.remoteSignature === remoteSignature
+        );
+
+        let record = localRecord;
+        const changed = !same;
+        let downloaded = false;
+        if (!same || options.force === true) {
+            // v15.14 : un appui explicite sur « Maj » doit réellement relire le PDF
+            // courant du NAS, même si une métadonnée distante n'a pas changé.
+            record = await downloadBriefingDocFromNas(safeType, meta, session);
+            downloaded = true;
+        }
+
+        try { localStorage.setItem(NPF_BRIEFING_DOCS_LAST_SYNC_KEY, String(Date.now())); } catch (_) {}
+        return { changed, downloaded, record, meta };
+    } finally {
+        npfBriefingDocsSyncInProgress = false;
+        await refreshBriefingDocMapButtons().catch(() => {});
+    }
+}
+
+async function handleBriefingDocMapButtonClick(type) {
+    const safeType = String(type || '').toLowerCase();
+    if (!NPF_BRIEFING_DOC_TYPES.includes(safeType)) return false;
+
+    if (!getStoredBriefingDocsSession()) {
+        openBriefingDocsPasswordModal(safeType);
+        return false;
+    }
+
+    const localRecord = await getBriefingDocRecord(safeType).catch(() => null);
+    if (isBriefingDocRecordForToday(localRecord)) {
+        return await displayBriefingDocInViewer(safeType, localRecord);
+    }
+
+    if (!navigator.onLine) {
+        alert(`${getBriefingDocLabel(safeType)} du jour non téléchargée. Une connexion Internet est nécessaire pour la récupérer.`);
+        return false;
+    }
+
+    try {
+        const result = await refreshSingleBriefingDocFromNas(safeType);
+        if (!isBriefingDocRecordForToday(result.record)) {
+            alert(`Aucune ${getBriefingDocLabel(safeType)} du jour disponible sur le NAS.`);
+            return false;
+        }
+        return await displayBriefingDocInViewer(safeType, result.record);
+    } catch (error) {
+        alert(`${getBriefingDocLabel(safeType)} : ${error.message || error}`);
+        await refreshBriefingDocMapButtons();
+        return false;
+    }
+}
+
+async function displayBriefingDocsStatus() {
+    return await refreshBriefingDocMapButtons();
+}
+
+function initializeBriefingDocsUi() {
+    const mainButton = document.getElementById('briefing-docs-map-button');
+    const selectorModal = document.getElementById('briefing-doc-selector-modal');
+    const selectorCloseButton = document.getElementById('close-briefing-doc-selector-modal');
+    const fdsButton = document.getElementById('briefing-fds-map-button');
+    const gaarButton = document.getElementById('briefing-gaar-map-button');
+    const modal = document.getElementById('briefing-docs-password-modal');
+    const closeButton = document.getElementById('briefing-docs-password-close');
+    const passwordInput = document.getElementById('briefing-docs-password-input');
+    const authorizeButton = document.getElementById('briefing-docs-authorize-button');
+    const passwordStatus = document.getElementById('briefing-docs-password-status');
+    const viewerCloseButton = document.getElementById('briefing-doc-viewer-close');
+    const viewerRefreshButton = document.getElementById('briefing-doc-viewer-refresh');
+
+    const bindDocButton = (button, type) => {
+        if (!button || button.dataset.bound === '1') return;
+        button.dataset.bound = '1';
+        button.addEventListener('click', () => {
+            closeBriefingDocSelectorModal();
+            handleBriefingDocMapButtonClick(type).catch(error => {
+                alert(`${getBriefingDocLabel(type)} : ${error.message || error}`);
+            });
+        });
+    };
+
+    if (mainButton && mainButton.dataset.bound !== '1') {
+        mainButton.dataset.bound = '1';
+        mainButton.addEventListener('click', openBriefingDocSelectorModal);
+    }
+    if (selectorCloseButton && selectorCloseButton.dataset.bound !== '1') {
+        selectorCloseButton.dataset.bound = '1';
+        selectorCloseButton.addEventListener('click', closeBriefingDocSelectorModal);
+    }
+    if (selectorModal && selectorModal.dataset.bound !== '1') {
+        selectorModal.dataset.bound = '1';
+        selectorModal.addEventListener('click', event => {
+            if (event.target === selectorModal) closeBriefingDocSelectorModal();
+        });
+    }
+
+    bindDocButton(fdsButton, 'fds');
+    bindDocButton(gaarButton, 'gaar');
+
+    if (viewerCloseButton && viewerCloseButton.dataset.bound !== '1') {
+        viewerCloseButton.dataset.bound = '1';
+        viewerCloseButton.addEventListener('click', closeBriefingDocViewer);
+    }
+    if (viewerRefreshButton && viewerRefreshButton.dataset.bound !== '1') {
+        viewerRefreshButton.dataset.bound = '1';
+        viewerRefreshButton.addEventListener('click', async () => {
+            const type = npfBriefingDocViewerType;
+            if (!type) return;
+
+            if (!getStoredBriefingDocsSession()) {
+                openBriefingDocsPasswordModal(type);
+                return;
+            }
+            if (!navigator.onLine) {
+                setBriefingDocViewerStatus('Hors ligne : impossible de vérifier une mise à jour.', { error: true });
+                return;
+            }
+
+            const originalText = viewerRefreshButton.textContent || 'Maj';
+            try {
+                viewerRefreshButton.disabled = true;
+                viewerRefreshButton.textContent = 'Maj…';
+                setBriefingDocViewerStatus(`Recherche de la dernière ${getBriefingDocLabel(type)} dans Gmail…`);
+                const result = await refreshSingleBriefingDocFromNas(type, { force: true, sourceRefresh: true });
+                await displayBriefingDocInViewer(type, result.record, { keepStatus: true });
+                setBriefingDocViewerStatus(
+                    result.changed ? 'Nouvelle version téléchargée.' : 'Document rechargé depuis le NAS.',
+                    { success: true }
+                );
+            } catch (error) {
+                if (!getStoredBriefingDocsSession()) {
+                    openBriefingDocsPasswordModal(type);
+                    setBriefingDocViewerStatus('Autorisation expirée : saisis à nouveau le mot de passe.', { error: true });
+                } else {
+                    setBriefingDocViewerStatus(error.message || String(error), { error: true });
+                }
+            } finally {
+                viewerRefreshButton.disabled = false;
+                viewerRefreshButton.textContent = originalText;
+            }
+        });
+    }
+
+    const closeModal = () => closeBriefingDocsPasswordModal();
+    if (closeButton && closeButton.dataset.bound !== '1') {
+        closeButton.dataset.bound = '1';
+        closeButton.addEventListener('click', closeModal);
+    }
+    if (modal && modal.dataset.bound !== '1') {
+        modal.dataset.bound = '1';
+        modal.addEventListener('click', event => {
+            if (event.target === modal) closeModal();
+        });
+    }
+
+    const authorizePending = async () => {
+        const targetType = npfBriefingDocsPendingType || 'fds';
+        const password = passwordInput?.value || '';
+        if (!password) {
+            if (passwordStatus) passwordStatus.textContent = 'Saisis le mot de passe.';
+            try { passwordInput?.focus(); } catch (_) {}
+            return;
+        }
+
+        const originalText = authorizeButton?.textContent || 'Autoriser jusqu’à minuit';
+        try {
+            if (authorizeButton) {
+                authorizeButton.disabled = true;
+                authorizeButton.textContent = 'Autorisation…';
+            }
+            if (passwordStatus) passwordStatus.textContent = 'Vérification du mot de passe…';
+            await authorizeBriefingDocs(password);
+            if (passwordStatus) passwordStatus.textContent = `Téléchargement ${getBriefingDocLabel(targetType)} du jour…`;
+
+            const result = await refreshSingleBriefingDocFromNas(targetType);
+            if (!isBriefingDocRecordForToday(result.record)) {
+                if (passwordStatus) passwordStatus.textContent = `${getBriefingDocLabel(targetType)} du jour non disponible sur le NAS.`;
+                return;
+            }
+
+            closeBriefingDocsPasswordModal();
+            await displayBriefingDocInViewer(targetType, result.record);
+        } catch (error) {
+            if (passwordStatus) passwordStatus.textContent = error.message || String(error);
+            await refreshBriefingDocMapButtons();
+        } finally {
+            if (authorizeButton) {
+                authorizeButton.disabled = false;
+                authorizeButton.textContent = originalText;
+            }
+        }
+    };
+
+    if (authorizeButton && authorizeButton.dataset.bound !== '1') {
+        authorizeButton.dataset.bound = '1';
+        authorizeButton.addEventListener('click', authorizePending);
+    }
+    if (passwordInput && passwordInput.dataset.bound !== '1') {
+        passwordInput.dataset.bound = '1';
+        passwordInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') {
+                event.preventDefault();
+                authorizePending();
+            }
+        });
+    }
+
+    if (!window.__npfBriefingDocsEscapeBound) {
+        window.__npfBriefingDocsEscapeBound = true;
+        window.addEventListener('keydown', event => {
+            if (event.key !== 'Escape') return;
+            if (selectorModal?.style.display === 'flex') {
+                closeBriefingDocSelectorModal();
+                return;
+            }
+            if (modal?.style.display === 'flex') {
+                closeModal();
+                return;
+            }
+            const viewer = document.getElementById('briefing-doc-viewer-modal');
+            if (viewer?.style.display === 'flex') closeBriefingDocViewer();
+        });
+    }
+
+    refreshBriefingDocMapButtons().catch(() => {});
+}
+
+window.openBriefingDoc = openBriefingDoc;
+window.displayBriefingDocsStatus = displayBriefingDocsStatus;
+window.refreshBriefingDocMapButtons = refreshBriefingDocMapButtons;
+window.syncBriefingDocsFromNas = syncBriefingDocsFromNas;
+window.refreshSingleBriefingDocFromNas = refreshSingleBriefingDocFromNas;
+window.closeBriefingDocViewer = closeBriefingDocViewer;
+window.openBriefingDocSelectorModal = openBriefingDocSelectorModal;
+window.closeBriefingDocSelectorModal = closeBriefingDocSelectorModal;
+
+
+
+// =========================================================================
+// =========================================================================
+const NPF_GLOBAL_LINK_UI_ENABLED = false; // accès GLR temporairement masqué en v2026.64.
+const NPF_GLOBAL_LINK_API_URL = 'https://grisonb.synology.me/briefing-api/npf-global-link-api.php';
+const NPF_GLOBAL_LINK_SESSION_KEY = 'npfGlobalLinkSessionV1';
+const NPF_GLOBAL_LINK_SESSION_EXP_KEY = 'npfGlobalLinkSessionExpV1';
+const NPF_GLOBAL_LINK_LAYER_ENABLED_KEY = 'npfGlobalLinkLayerEnabledV1';
+const NPF_GLOBAL_LINK_REFRESH_MS = 15000;
+const NPF_GLOBAL_LINK_FRESH_SECONDS = 180;
+const NPF_GLOBAL_LINK_PANE_NAME = 'npfGlobalLinkPane';
+const NPF_GLOBAL_LINK_PANE_Z_INDEX = 645;
+const NPF_GLOBAL_LINK_CONNECTOR_PANE_NAME = 'npfGlobalLinkConnectorPane';
+const NPF_GLOBAL_LINK_CONNECTOR_PANE_Z_INDEX = 644;
+
+let npfGlobalLinkLayer = null;
+let npfGlobalLinkRefreshTimer = null;
+let npfGlobalLinkEnabled = false;
+let npfGlobalLinkFetchInProgress = false;
+let npfGlobalLinkAttempt = '';
+let npfGlobalLinkLastPositions = [];
+/* v15.30 — état de fusion GLR/SafeSky. */
+let npfGlobalLinkRenderedCount = 0;
+let npfGlobalLinkSafeSkyMatches = [];
+let npfGlobalLinkRelayoutTimer = null;
+
+function getStoredGlobalLinkSession() {
+    try {
+        const token = String(localStorage.getItem(NPF_GLOBAL_LINK_SESSION_KEY) || '');
+        const exp = Number(localStorage.getItem(NPF_GLOBAL_LINK_SESSION_EXP_KEY) || 0);
+        if (!token || !Number.isFinite(exp) || exp <= Date.now()) {
+            clearStoredGlobalLinkSession();
+            return null;
+        }
+        return { token, exp };
+    } catch (_) {
+        return null;
+    }
+}
+
+function storeGlobalLinkSession(token, expiresAt) {
+    const exp = Date.parse(String(expiresAt || ''));
+    if (!token || !Number.isFinite(exp) || exp <= Date.now()) return false;
+    try {
+        localStorage.setItem(NPF_GLOBAL_LINK_SESSION_KEY, String(token));
+        localStorage.setItem(NPF_GLOBAL_LINK_SESSION_EXP_KEY, String(exp));
+        return true;
+    } catch (_) {
+        return false;
+    }
+}
+
+function clearStoredGlobalLinkSession() {
+    try {
+        localStorage.removeItem(NPF_GLOBAL_LINK_SESSION_KEY);
+        localStorage.removeItem(NPF_GLOBAL_LINK_SESSION_EXP_KEY);
+    } catch (_) {}
+}
+
+function globalLinkAuthHeaders(docsSession, globalSession = null) {
+    const headers = {};
+    if (docsSession?.token) headers.Authorization = `Bearer ${docsSession.token}`;
+    if (globalSession?.token) headers['X-Global-Link-Session'] = globalSession.token;
+    return headers;
+}
+
+async function fetchGlobalLinkNas(action, options = {}, timeoutMs = 20000) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+        const separator = NPF_GLOBAL_LINK_API_URL.includes('?') ? '&' : '?';
+        const url = `${NPF_GLOBAL_LINK_API_URL}${separator}action=${encodeURIComponent(action)}&t=${Date.now()}`;
+        return await fetch(url, { ...options, cache: 'no-store', signal: controller.signal });
+    } finally {
+        clearTimeout(timer);
+    }
+}
+
+function setGlobalLinkAuthStatus(message = '', type = '') {
+    const el = document.getElementById('global-link-auth-status');
+    if (!el) return;
+    el.textContent = String(message || '');
+    el.classList.toggle('error', type === 'error');
+    el.classList.toggle('success', type === 'success');
+}
+
+function openGlobalLinkAuthModal() {
+    const modal = document.getElementById('global-link-auth-modal');
+    if (!modal) return;
+    modal.style.display = 'flex';
+    modal.setAttribute('aria-hidden', 'false');
+}
+
+function closeGlobalLinkAuthModal() {
+    const modal = document.getElementById('global-link-auth-modal');
+    if (!modal) return;
+    modal.style.display = 'none';
+    modal.setAttribute('aria-hidden', 'true');
+    const input = document.getElementById('global-link-captcha-input');
+    if (input) input.value = '';
+}
+
+async function ensureGlobalLinkNpfAuthorization() {
+    let docsSession = getStoredBriefingDocsSession();
+    if (docsSession) return docsSession;
+    if (!navigator.onLine) throw new Error('Connexion Internet requise.');
+    const password = window.prompt('Mot de passe NPF requis pour accéder à Global Link :', '');
+    if (password === null) throw new Error('Autorisation annulée.');
+    docsSession = await authorizeBriefingDocs(password);
+    if (!docsSession) throw new Error('Autorisation NPF impossible.');
+    return docsSession;
+}
+
+async function loadGlobalLinkCaptcha() {
+    const docsSession = await ensureGlobalLinkNpfAuthorization();
+    openGlobalLinkAuthModal();
+    setGlobalLinkAuthStatus('Chargement du code de sécurité…');
+    const image = document.getElementById('global-link-captcha-image');
+    if (image) image.removeAttribute('src');
+    const response = await fetchGlobalLinkNas('captcha', {
+        method: 'GET',
+        headers: globalLinkAuthHeaders(docsSession)
+    }, 20000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !payload.attempt || !payload.imageDataUrl) {
+        if (response.status === 401) clearBriefingDocsSession();
+        throw new Error(payload?.message || payload?.error || `Captcha Global Link impossible (${response.status})`);
+    }
+    npfGlobalLinkAttempt = String(payload.attempt);
+    if (image) image.src = String(payload.imageDataUrl);
+    setGlobalLinkAuthStatus('Saisis le code affiché puis appuie sur Connexion.');
+    const input = document.getElementById('global-link-captcha-input');
+    if (input) {
+        input.value = '';
+        try { input.focus(); } catch (_) {}
+    }
+    return true;
+}
+
+async function submitGlobalLinkCaptcha() {
+    const input = document.getElementById('global-link-captcha-input');
+    const captcha = String(input?.value || '').trim();
+    if (!npfGlobalLinkAttempt) throw new Error('Charge d’abord un code de sécurité.');
+    if (!captcha) throw new Error('Saisis le code de sécurité.');
+    const docsSession = await ensureGlobalLinkNpfAuthorization();
+    setGlobalLinkAuthStatus('Connexion à Global Link…');
+    const response = await fetchGlobalLinkNas('login', {
+        method: 'POST',
+        headers: {
+            ...globalLinkAuthHeaders(docsSession),
+            'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ attempt: npfGlobalLinkAttempt, captcha })
+    }, 20000);
+    const payload = await response.json().catch(() => null);
+    if (!response.ok || !payload || payload.ok !== true || !payload.session || !payload.expiresAt) {
+        if (response.status === 401 && payload?.error === 'npf_authorization_required') clearBriefingDocsSession();
+        throw new Error(payload?.message || payload?.error || `Connexion Global Link refusée (${response.status})`);
+    }
+    if (!storeGlobalLinkSession(payload.session, payload.expiresAt)) {
+        throw new Error('Session Global Link reçue mais impossible à enregistrer.');
+    }
+    npfGlobalLinkAttempt = '';
+    setGlobalLinkAuthStatus('Connexion Global Link établie.', 'success');
+    setTimeout(closeGlobalLinkAuthModal, 250);
+    return getStoredGlobalLinkSession();
+}
+
+function ensureGlobalLinkPane() {
+    if (!map?.getPane || !map?.createPane) return null;
+
+    let connectorPane = map.getPane(NPF_GLOBAL_LINK_CONNECTOR_PANE_NAME);
+    if (!connectorPane) {
+        connectorPane = map.createPane(NPF_GLOBAL_LINK_CONNECTOR_PANE_NAME);
+    }
+    if (connectorPane) {
+        connectorPane.style.zIndex = String(NPF_GLOBAL_LINK_CONNECTOR_PANE_Z_INDEX);
+        connectorPane.style.pointerEvents = 'none';
+    }
+
+    let pane = map.getPane(NPF_GLOBAL_LINK_PANE_NAME);
+    if (!pane) pane = map.createPane(NPF_GLOBAL_LINK_PANE_NAME);
+    if (pane) {
+        pane.style.zIndex = String(NPF_GLOBAL_LINK_PANE_Z_INDEX);
+        pane.style.pointerEvents = 'auto';
+    }
+    return pane;
+}
+
+function scheduleGlobalLinkLabelRelayout() {
+    if (!npfGlobalLinkEnabled || !npfGlobalLinkLastPositions.length) return;
+    if (npfGlobalLinkRelayoutTimer) clearTimeout(npfGlobalLinkRelayoutTimer);
+    npfGlobalLinkRelayoutTimer = setTimeout(() => {
+        npfGlobalLinkRelayoutTimer = null;
+        renderGlobalLinkPositions(npfGlobalLinkLastPositions);
+    }, 70);
+}
+
+function ensureGlobalLinkLayer() {
+    if (!map || !window.L) return null;
+    ensureGlobalLinkPane();
+    if (!npfGlobalLinkLayer) npfGlobalLinkLayer = L.layerGroup().addTo(map);
+    if (!map.__npfGlobalLinkLabelRelayoutBound) {
+        map.__npfGlobalLinkLabelRelayoutBound = true;
+        map.on('zoomend moveend resize', scheduleGlobalLinkLabelRelayout);
+    }
+    return npfGlobalLinkLayer;
+}
+
+function formatGlobalLinkAge(seconds) {
+    const value = Math.max(0, Number(seconds) || 0);
+    if (value < 90) return `${Math.round(value)} s`;
+    return `${Math.round(value / 60)} min`;
+}
+
+function escapeGlobalLinkHtml(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+
+function normalizeTrafficSourceCallsign(value) {
+    let text = String(value ?? '').trim().toUpperCase();
+    if (!text || text === 'N/A' || text === '--') return '';
+
+    /*
+     * NFD enlève les accents éventuels, puis on retire espaces, tirets,
+     * ponctuation et séparateurs. MILAN 80 et MILAN80 donnent donc la même clé.
+     */
+    try {
+        text = text.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+    } catch (_) {}
+
+    return text.replace(/[^A-Z0-9]/g, '');
+}
+
+function splitTrafficComparableCallsign(value) {
+    const compact = normalizeTrafficSourceCallsign(value);
+    if (!compact) return { compact: '', base: '', suffix: '' };
+
+    /*
+     * On isole le numéro final, éventuellement suivi d'une lettre.
+     * Le préfixe doit contenir au moins deux lettres pour éviter des
+     * rapprochements trop permissifs.
+     */
+    const match = compact.match(/^([A-Z]{2,})(\d+[A-Z]?)$/);
+    if (!match) return { compact, base: compact, suffix: '' };
+
+    return {
+        compact,
+        base: match[1],
+        suffix: match[2]
+    };
+}
+
+function trafficCallsignEditDistanceAtMostOne(left, right) {
+    const a = String(left || '');
+    const b = String(right || '');
+    if (a === b) return true;
+    if (Math.abs(a.length - b.length) > 1) return false;
+
+    /*
+     * Distance de Levenshtein limitée à 1 : substitution, insertion ou
+     * suppression d'un seul caractère. Suffisant pour DRAGO <-> DRAGON.
+     */
+    if (a.length === b.length) {
+        let differences = 0;
+        for (let i = 0; i < a.length; i += 1) {
+            if (a[i] !== b[i] && ++differences > 1) return false;
+        }
+        return differences === 1;
+    }
+
+    const shorter = a.length < b.length ? a : b;
+    const longer = a.length < b.length ? b : a;
+    let i = 0;
+    let j = 0;
+    let differences = 0;
+
+    while (i < shorter.length && j < longer.length) {
+        if (shorter[i] === longer[j]) {
+            i += 1;
+            j += 1;
+            continue;
+        }
+        differences += 1;
+        if (differences > 1) return false;
+        j += 1;
+    }
+
+    if (j < longer.length) differences += 1;
+    return differences <= 1;
+}
+
+function compareTrafficSourceCallsigns(glrName, safeSkyCallsign) {
+    const glr = splitTrafficComparableCallsign(glrName);
+    const ss = splitTrafficComparableCallsign(safeSkyCallsign);
+
+    if (!glr.compact || !ss.compact) {
+        return { match: false, mode: '' };
+    }
+
+    if (glr.compact === ss.compact) {
+        return { match: true, mode: 'exact-normalized' };
+    }
+
+    /*
+     * Tolérance volontairement stricte :
+     * - un numéro final doit exister des deux côtés et être identique ;
+     * - les deux préfixes doivent avoir au moins 4 caractères ;
+     * - une seule différence de caractère maximum est acceptée.
+     *
+     * Ainsi MILAN75 ne peut pas fusionner avec MILAN76, mais
+     * DRAGO13 peut fusionner avec DRAGON13.
+     */
+    if (
+        glr.suffix
+        && ss.suffix
+        && glr.suffix === ss.suffix
+        && glr.base.length >= 4
+        && ss.base.length >= 4
+        && trafficCallsignEditDistanceAtMostOne(glr.base, ss.base)
+    ) {
+        return { match: true, mode: 'same-number-fuzzy-prefix' };
+    }
+
+    return { match: false, mode: '' };
+}
+
+function getRenderedSafeSkyTrafficForGlobalLinkDedup() {
+    if (
+        !showTrafficLayer
+        || !trafficLayer
+        || !map
+        || !map.hasLayer?.(trafficLayer)
+    ) {
+        return [];
+    }
+
+    const result = [];
+    trafficMarkerRegistry.forEach(entry => {
+        const ac = entry?.aircraft;
+        const marker = entry?.marker;
+        if (!ac || !marker) return;
+
+        const callsign = String(ac.callsign || '').trim();
+        if (!callsign || callsign === 'N/A') return;
+
+        const latLng = marker.getLatLng?.();
+        result.push({
+            callsign,
+            lat: Number(latLng?.lat ?? ac.lat),
+            lon: Number(latLng?.lng ?? ac.lon),
+            aircraftKey: marker._trafficAircraftKey || buildTrafficAircraftKey(ac)
+        });
+    });
+    return result;
+}
+
+function findSafeSkyMatchForGlobalLinkItem(item, safeSkyTraffic) {
+    const glrName = String(item?.name || '').trim();
+    if (!glrName || !Array.isArray(safeSkyTraffic) || !safeSkyTraffic.length) {
+        return null;
+    }
+
+    let best = null;
+
+    safeSkyTraffic.forEach(candidate => {
+        const comparison = compareTrafficSourceCallsigns(
+            glrName,
+            candidate.callsign
+        );
+        if (!comparison.match) return;
+
+        let distanceNm = Infinity;
+        if (
+            Number.isFinite(Number(item?.lat))
+            && Number.isFinite(Number(item?.lon))
+            && Number.isFinite(Number(candidate.lat))
+            && Number.isFinite(Number(candidate.lon))
+        ) {
+            distanceNm = calculateDistanceInNm(
+                Number(item.lat),
+                Number(item.lon),
+                Number(candidate.lat),
+                Number(candidate.lon)
+            );
+        }
+
+        const score = comparison.mode === 'exact-normalized' ? 0 : 1;
+        if (
+            !best
+            || score < best.score
+            || (
+                score === best.score
+                && Number(distanceNm) < Number(best.distanceNm)
+            )
+        ) {
+            best = {
+                score,
+                mode: comparison.mode,
+                glrName,
+                safeSkyCallsign: candidate.callsign,
+                safeSkyAircraftKey: candidate.aircraftKey,
+                distanceNm: Number.isFinite(distanceNm) ? distanceNm : null
+            };
+        }
+    });
+
+    return best;
+}
+
+/*
+ * Diagnostic volontairement non graphique : disponible dans la console si
+ * besoin de contrôler les appariements sans encombrer la carte.
+ */
+window.getGlobalLinkSafeSkyMatches = () => (
+    Array.isArray(npfGlobalLinkSafeSkyMatches)
+        ? npfGlobalLinkSafeSkyMatches.map(item => ({ ...item }))
+        : []
+);
+
+function updateGlobalLinkButton(options = {}) {
+    const button = document.getElementById('global-link-layer-button');
+    const count = document.getElementById('global-link-button-count');
+    if (!button) return;
+    const hasSession = !!getStoredGlobalLinkSession();
+    const positions = Array.isArray(npfGlobalLinkLastPositions) ? npfGlobalLinkLastPositions : [];
+    const now = Date.now();
+    /* v15.26 — ne plus masquer les missions GLR anciennes.
+     * Global Link conserve certains moyens (DRAGON, PUMA, etc.) visibles même
+     * lorsqu'ils n'ont pas émis depuis plus de 15 min. NPF affiche donc toutes
+     * les positions renvoyées par le relais et utilise uniquement la couleur
+     * pour signaler leur ancienneté.
+     */
+    const visible = positions.filter(item => (
+        Number.isFinite(Number(item.lat)) && Number.isFinite(Number(item.lon))
+    ));
+    const fresh = visible.filter(item => {
+        const ts = Date.parse(String(item.updatedAt || ''));
+        const age = Number.isFinite(ts) ? Math.max(0, (now - ts) / 1000) : Infinity;
+        return age <= NPF_GLOBAL_LINK_FRESH_SECONDS;
+    });
+    button.classList.remove('global-link-auth-needed','global-link-ready','global-link-active','global-link-stale','loading');
+    if (options.loading) button.classList.add('loading');
+    if (!hasSession) {
+        button.classList.add('global-link-auth-needed');
+        button.title = 'GLR — connexion requise';
+    } else if (npfGlobalLinkEnabled && fresh.length) {
+        button.classList.add('global-link-active');
+        button.title = `GLR — ${fresh.length} appareil(s) actif(s) — appuyer pour masquer`;
+    } else if (npfGlobalLinkEnabled && visible.length) {
+        button.classList.add('global-link-stale');
+        button.title = 'GLR — positions anciennes ou en attente de mise à jour';
+    } else {
+        button.classList.add('global-link-ready');
+        button.title = npfGlobalLinkEnabled ? 'GLR — aucune position récente' : 'GLR — appuyer pour afficher';
+    }
+    if (count) {
+        const displayedCount = Math.max(
+            0,
+            Math.round(Number(npfGlobalLinkRenderedCount) || 0)
+        );
+        count.textContent = String(npfGlobalLinkEnabled ? displayedCount : 0);
+        count.style.display = npfGlobalLinkEnabled ? 'inline-flex' : 'none';
+        count.title = npfGlobalLinkSafeSkyMatches.length
+            ? `${displayedCount} GLR affiché(s) · ${npfGlobalLinkSafeSkyMatches.length} fusionné(s) avec SafeSky`
+            : `${displayedCount} GLR affiché(s)`;
+    }
+}
+
+function globalLinkRectsOverlap(a, b, gap = 3) {
+    return !(
+        a.right + gap <= b.left
+        || a.left >= b.right + gap
+        || a.bottom + gap <= b.top
+        || a.top >= b.bottom + gap
+    );
+}
+
+function buildGlobalLinkLabelLayout(items) {
+    const placements = new Map();
+    if (!map?.latLngToContainerPoint || !map?.getSize) return placements;
+    const size = map.getSize();
+    const edge = 8;
+    const occupiedLabels = [];
+    const symbolRects = items.map(item => {
+        const p = map.latLngToContainerPoint([item.lat, item.lon]);
+        return { left: p.x - 21, right: p.x + 21, top: p.y - 21, bottom: p.y + 21 };
+    });
+
+    const insideViewport = rect => (
+        rect.left >= edge && rect.right <= size.x - edge
+        && rect.top >= edge && rect.bottom <= size.y - edge
+    );
+    const isFree = (rect, ownIndex) => (
+        insideViewport(rect)
+        && !occupiedLabels.some(other => globalLinkRectsOverlap(rect, other, 4))
+        && !symbolRects.some((symbol, symbolIndex) => symbolIndex !== ownIndex && globalLinkRectsOverlap(rect, symbol, 2))
+    );
+    const rectFromCenter = (x, y, width, height) => ({
+        left: x - width / 2, right: x + width / 2,
+        top: y - height / 2, bottom: y + height / 2
+    });
+
+    items.forEach((item, index) => {
+        const p = map.latLngToContainerPoint([item.lat, item.lon]);
+        const width = Math.max(68, Math.min(168, 20 + String(item.name || '').length * 8.4));
+        const height = 25;
+        const hGap = 27 + width / 2;
+        const vGap = 27 + height / 2;
+        const shifts = [0, -30, 30, -60, 60, -90, 90, -120, 120];
+        const candidates = [];
+
+        // Priorité à droite/gauche puis dessus/dessous, en décalant progressivement.
+        shifts.forEach(dy => {
+            candidates.push({ x: p.x + hGap, y: p.y + dy });
+            candidates.push({ x: p.x - hGap, y: p.y + dy });
+        });
+        shifts.forEach(dx => {
+            candidates.push({ x: p.x + dx, y: p.y - vGap });
+            candidates.push({ x: p.x + dx, y: p.y + vGap });
+        });
+
+        let chosen = null;
+        for (const candidate of candidates) {
+            const rect = rectFromCenter(candidate.x, candidate.y, width, height);
+            if (isFree(rect, index)) { chosen = { ...candidate, rect }; break; }
+        }
+
+        /*
+         * v15.28 — ne jamais transformer les étiquettes GLR en « liste » dans
+         * un coin de la carte. Si aucun emplacement proche du trafic n'est libre,
+         * l'étiquette est masquée plutôt que déplacée loin de son symbole.
+         * Le symbole avion reste visible et cliquable.
+         */
+        if (!chosen) return;
+
+        placements.set(item.key, { point: L.point(chosen.x, chosen.y), width, height });
+        occupiedLabels.push(chosen.rect);
+    });
+    return placements;
+}
+
+function renderGlobalLinkPositions(positions) {
+    npfGlobalLinkLastPositions = Array.isArray(positions) ? positions : [];
+    const layer = ensureGlobalLinkLayer();
+    if (!layer) return;
+    layer.clearLayers();
+    if (!npfGlobalLinkEnabled) {
+        npfGlobalLinkRenderedCount = 0;
+        npfGlobalLinkSafeSkyMatches = [];
+        updateGlobalLinkButton();
+        return;
+    }
+    const now = Date.now();
+    const currentBounds = map?.getBounds ? map.getBounds() : null;
+    const visibleItems = npfGlobalLinkLastPositions
+        .map((item, sourceIndex) => {
+            const lat = Number(item.lat);
+            const lon = Number(item.lon);
+            if (!Number.isFinite(lat) || !Number.isFinite(lon)) return null;
+
+            /*
+             * v15.28 — aucun trafic hors champ ne doit générer un symbole,
+             * une étiquette ou un trait visible dans le viewport.
+             * Les données restent dans npfGlobalLinkLastPositions et seront
+             * réévaluées au prochain zoom/moveend.
+             */
+            if (currentBounds && !currentBounds.contains(L.latLng(lat, lon))) return null;
+
+            const ts = Date.parse(String(item.updatedAt || ''));
+            const ageSeconds = Number.isFinite(ts) ? Math.max(0, (now - ts) / 1000) : Infinity;
+            const name = String(item.name || 'Global Link').trim();
+            return {
+                ...item, lat, lon, ageSeconds, name,
+                stale: ageSeconds > NPF_GLOBAL_LINK_FRESH_SECONDS,
+                key: `${String(item.groupId || item.missionId || name)}|${sourceIndex}`
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => (a.ageSeconds - b.ageSeconds) || a.name.localeCompare(b.name, 'fr'));
+
+    /*
+     * v15.30 — SafeSky est prioritaire, mais uniquement pour les trafics
+     * réellement rendus sur sa couche. Un trafic absent/filtré de SafeSky
+     * continue donc à être rendu par GLR.
+     */
+    const renderedSafeSkyTraffic = getRenderedSafeSkyTrafficForGlobalLinkDedup();
+    npfGlobalLinkSafeSkyMatches = [];
+
+    const deduplicatedItems = visibleItems.filter(item => {
+        const match = findSafeSkyMatchForGlobalLinkItem(
+            item,
+            renderedSafeSkyTraffic
+        );
+        if (!match) return true;
+
+        npfGlobalLinkSafeSkyMatches.push({
+            ...match,
+            glrGroupId: item.groupId || '',
+            glrMissionId: item.missionId || ''
+        });
+        return false;
+    });
+
+    npfGlobalLinkRenderedCount = deduplicatedItems.length;
+    const labelLayout = buildGlobalLinkLabelLayout(deduplicatedItems);
+    deduplicatedItems.forEach(item => {
+        const safeName = escapeGlobalLinkHtml(item.name);
+        const placement = labelLayout.get(item.key);
+        const labelLatLng = placement
+            ? map.containerPointToLatLng(placement.point)
+            : null;
+
+        /*
+         * v15.27 — liaison centre étiquette -> centre trafic.
+         * Le trait est ajouté avant le symbole et l'étiquette afin qu'ils
+         * restent graphiquement au premier plan, tout en reliant leurs centres.
+         */
+        if (labelLatLng && placement) {
+            /*
+             * v15.30 — connecteur DOM. Les deux extrémités sont calculées à
+             * partir des centres en pixels du trafic et de l'étiquette.
+             * L'élément est un marqueur Leaflet dans le MEME pane que les
+             * symboles GLR : on évite ainsi les problèmes de rendu SVG/canvas
+             * constatés sur l'iPad.
+             */
+            const aircraftPoint = map.latLngToContainerPoint(
+                [item.lat, item.lon]
+            );
+            const labelPoint = placement.point;
+            const dx = labelPoint.x - aircraftPoint.x;
+            const dy = labelPoint.y - aircraftPoint.y;
+            const lengthPx = Math.hypot(dx, dy);
+
+            if (Number.isFinite(lengthPx) && lengthPx >= 2) {
+                const midpoint = L.point(
+                    (aircraftPoint.x + labelPoint.x) / 2,
+                    (aircraftPoint.y + labelPoint.y) / 2
+                );
+                const midpointLatLng = map.containerPointToLatLng(
+                    midpoint
+                );
+                const angleDeg = Math.atan2(dy, dx) * 180 / Math.PI;
+                const connectorClass = item.stale
+                    ? ' stale'
+                    : '';
+                /*
+                 * v15.32 — mêmes couleurs que le symbole GLR défini dans le
+                 * style : #198754 (frais) / #e67e22 (ancien).
+                 */
+                const connectorColor = item.stale
+                    ? '#e67e22'
+                    : '#198754';
+
+                const connectorIcon = L.divIcon({
+                    className: 'global-link-connector-marker',
+                    html: `<span class="global-link-connector-line${connectorClass}" style="--glr-connector-color:${connectorColor};width:${lengthPx.toFixed(1)}px;transform:translate(-50%,-50%) rotate(${angleDeg.toFixed(2)}deg);"></span>`,
+                    iconSize: [1, 1],
+                    iconAnchor: [0.5, 0.5]
+                });
+
+                L.marker(midpointLatLng, {
+                    /*
+                     * v15.34 — pane DOM dédié juste sous les marqueurs GLR.
+                     * Aucun zIndexOffset négatif : Safari pouvait placer le
+                     * connecteur derrière le contenu cartographique.
+                     */
+                    pane: NPF_GLOBAL_LINK_CONNECTOR_PANE_NAME,
+                    icon: connectorIcon,
+                    interactive: false,
+                    keyboard: false,
+                    zIndexOffset: 0
+                }).addTo(layer);
+            }
+        }
+
+        const symbolIcon = L.divIcon({
+            className: 'global-link-aircraft-marker',
+            html: `<div class="global-link-aircraft-symbol${item.stale ? ' stale' : ''}">✈</div>`,
+            iconSize: [34,34],
+            iconAnchor: [17,17]
+        });
+        const marker = L.marker([item.lat, item.lon], {
+            pane: NPF_GLOBAL_LINK_PANE_NAME,
+            icon: symbolIcon,
+            keyboard: false,
+            title: item.name
+        });
+        const altitude = item.altitude === null || item.altitude === undefined || item.altitude === ''
+            ? '—'
+            : escapeGlobalLinkHtml(item.altitude);
+        marker.bindPopup(`<div class="global-link-popup"><strong>${safeName}</strong><br>Source : Global Link Rescue<br>Position : ${item.lat.toFixed(5)}, ${item.lon.toFixed(5)}<br>Altitude source : ${altitude}<br>Âge : ${escapeGlobalLinkHtml(formatGlobalLinkAge(item.ageSeconds))}</div>`);
+        marker.addTo(layer);
+
+        if (placement && labelLatLng) {
+            const labelIcon = L.divIcon({
+                className: 'global-link-aircraft-label-marker',
+                html: `<div class="global-link-aircraft-label${item.stale ? ' stale' : ''}">${safeName}</div>`,
+                iconSize: [placement.width, placement.height],
+                iconAnchor: [placement.width / 2, placement.height / 2]
+            });
+            L.marker(labelLatLng, {
+                pane: NPF_GLOBAL_LINK_PANE_NAME,
+                icon: labelIcon,
+                interactive: false,
+                keyboard: false
+            }).addTo(layer);
+        }
+    });
+    updateGlobalLinkButton();
+}
+
+async function refreshGlobalLinkPositions(options = {}) {
+    if (!npfGlobalLinkEnabled || npfGlobalLinkFetchInProgress) return false;
+    if (!navigator.onLine) {
+        updateGlobalLinkButton();
+        return false;
+    }
+    const docsSession = getStoredBriefingDocsSession();
+    const globalSession = getStoredGlobalLinkSession();
+    if (!docsSession || !globalSession) {
+        if (!docsSession) clearBriefingDocsSession();
+        if (!globalSession) clearStoredGlobalLinkSession();
+        updateGlobalLinkButton();
+        if (!options.silent) await loadGlobalLinkCaptcha();
+        return false;
+    }
+    npfGlobalLinkFetchInProgress = true;
+    updateGlobalLinkButton({ loading: true });
+    try {
+        const response = await fetchGlobalLinkNas('positions', {
+            method: 'GET',
+            headers: globalLinkAuthHeaders(docsSession, globalSession)
+        }, 20000);
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || !payload || payload.ok !== true) {
+            if (response.status === 401) {
+                if (payload?.error === 'npf_authorization_required') clearBriefingDocsSession();
+                if (payload?.error === 'global_session_invalid') clearStoredGlobalLinkSession();
+            }
+            throw new Error(payload?.message || payload?.error || `Positions Global Link indisponibles (${response.status})`);
+        }
+        renderGlobalLinkPositions(payload.positions || []);
+        return true;
+    } catch (error) {
+        console.warn('[Global Link]', error);
+        updateGlobalLinkButton();
+        if (!options.silent) alert(`Global Link : ${error.message || error}`);
+        return false;
+    } finally {
+        npfGlobalLinkFetchInProgress = false;
+        updateGlobalLinkButton();
+    }
+}
+
+function stopGlobalLinkRefreshTimer() {
+    if (npfGlobalLinkRefreshTimer) clearInterval(npfGlobalLinkRefreshTimer);
+    npfGlobalLinkRefreshTimer = null;
+}
+
+function startGlobalLinkRefreshTimer() {
+    stopGlobalLinkRefreshTimer();
+    if (!npfGlobalLinkEnabled) return;
+    npfGlobalLinkRefreshTimer = setInterval(() => {
+        if (document.visibilityState === 'visible') refreshGlobalLinkPositions({ silent: true });
+    }, NPF_GLOBAL_LINK_REFRESH_MS);
+}
+
+function setGlobalLinkEnabled(enabled, options = {}) {
+    npfGlobalLinkEnabled = !!enabled;
+    try { localStorage.setItem(NPF_GLOBAL_LINK_LAYER_ENABLED_KEY, npfGlobalLinkEnabled ? '1' : '0'); } catch (_) {}
+    if (!npfGlobalLinkEnabled) {
+        stopGlobalLinkRefreshTimer();
+        if (npfGlobalLinkLayer) npfGlobalLinkLayer.clearLayers();
+        updateGlobalLinkButton();
+        return;
+    }
+    startGlobalLinkRefreshTimer();
+    updateGlobalLinkButton();
+    if (options.refresh !== false) refreshGlobalLinkPositions({ silent: !!options.silent });
+}
+
+async function handleGlobalLinkButtonClick() {
+    if (npfGlobalLinkEnabled) {
+        setGlobalLinkEnabled(false);
+        return;
+    }
+    const docsSession = await ensureGlobalLinkNpfAuthorization();
+    let globalSession = getStoredGlobalLinkSession();
+    if (!globalSession) {
+        await loadGlobalLinkCaptcha();
+        return;
+    }
+    if (!docsSession) return;
+    setGlobalLinkEnabled(true, { refresh: true, silent: false });
+}
+
+function initializeGlobalLinkUi() {
+    const button = document.getElementById('global-link-layer-button');
+
+    if (!NPF_GLOBAL_LINK_UI_ENABLED) {
+        npfGlobalLinkEnabled = false;
+        stopGlobalLinkRefreshTimer();
+        if (npfGlobalLinkLayer) npfGlobalLinkLayer.clearLayers();
+        try {
+            localStorage.setItem(NPF_GLOBAL_LINK_LAYER_ENABLED_KEY, '0');
+        } catch (_) {}
+        if (button) {
+            button.hidden = true;
+            button.setAttribute('aria-hidden', 'true');
+            button.tabIndex = -1;
+        }
+        updateGlobalLinkButton();
+        return;
+    }
+    const modal = document.getElementById('global-link-auth-modal');
+    const closeButton = document.getElementById('global-link-auth-close');
+    const refreshButton = document.getElementById('global-link-captcha-refresh');
+    const submitButton = document.getElementById('global-link-auth-submit');
+    const captchaInput = document.getElementById('global-link-captcha-input');
+
+    if (button && button.dataset.bound !== '1') {
+        button.dataset.bound = '1';
+        button.addEventListener('click', () => {
+            handleGlobalLinkButtonClick().catch(error => {
+                console.warn('[Global Link]', error);
+                if (error?.message && error.message !== 'Autorisation annulée.') alert(`Global Link : ${error.message}`);
+                updateGlobalLinkButton();
+            });
+        });
+    }
+    if (closeButton && closeButton.dataset.bound !== '1') {
+        closeButton.dataset.bound = '1';
+        closeButton.addEventListener('click', closeGlobalLinkAuthModal);
+    }
+    if (refreshButton && refreshButton.dataset.bound !== '1') {
+        refreshButton.dataset.bound = '1';
+        refreshButton.addEventListener('click', () => {
+            loadGlobalLinkCaptcha().catch(error => setGlobalLinkAuthStatus(error.message || String(error), 'error'));
+        });
+    }
+    const submit = async () => {
+        const originalText = submitButton?.textContent || 'Connexion';
+        try {
+            if (submitButton) { submitButton.disabled = true; submitButton.textContent = 'Connexion…'; }
+            await submitGlobalLinkCaptcha();
+            setGlobalLinkEnabled(true, { refresh: true, silent: false });
+        } catch (error) {
+            setGlobalLinkAuthStatus(error.message || String(error), 'error');
+            try { await loadGlobalLinkCaptcha(); } catch (_) {}
+        } finally {
+            if (submitButton) { submitButton.disabled = false; submitButton.textContent = originalText; }
+        }
+    };
+    if (submitButton && submitButton.dataset.bound !== '1') {
+        submitButton.dataset.bound = '1';
+        submitButton.addEventListener('click', submit);
+    }
+    if (captchaInput && captchaInput.dataset.bound !== '1') {
+        captchaInput.dataset.bound = '1';
+        captchaInput.addEventListener('keydown', event => {
+            if (event.key === 'Enter') { event.preventDefault(); submit(); }
+        });
+    }
+    if (modal && modal.dataset.bound !== '1') {
+        modal.dataset.bound = '1';
+        modal.addEventListener('click', event => { if (event.target === modal) closeGlobalLinkAuthModal(); });
+    }
+    if (!window.__npfGlobalLinkLifecycleBound) {
+        window.__npfGlobalLinkLifecycleBound = true;
+        window.addEventListener('online', () => {
+            if (npfGlobalLinkEnabled) refreshGlobalLinkPositions({ silent: true });
+        });
+        document.addEventListener('visibilitychange', () => {
+            if (document.visibilityState === 'visible' && npfGlobalLinkEnabled) {
+                refreshGlobalLinkPositions({ silent: true });
+            }
+        });
+        window.addEventListener('keydown', event => {
+            if (event.key === 'Escape' && modal?.style.display === 'flex') closeGlobalLinkAuthModal();
+        });
+    }
+    try { npfGlobalLinkEnabled = localStorage.getItem(NPF_GLOBAL_LINK_LAYER_ENABLED_KEY) === '1'; } catch (_) {}
+    updateGlobalLinkButton();
+    if (npfGlobalLinkEnabled && getStoredGlobalLinkSession() && getStoredBriefingDocsSession()) {
+        startGlobalLinkRefreshTimer();
+        setTimeout(() => refreshGlobalLinkPositions({ silent: true }), 800);
+    } else if (npfGlobalLinkEnabled) {
+        npfGlobalLinkEnabled = false;
+        try { localStorage.setItem(NPF_GLOBAL_LINK_LAYER_ENABLED_KEY, '0'); } catch (_) {}
+        updateGlobalLinkButton();
+    }
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+    initializeGlobalLinkUi();
+});
+
+window.refreshGlobalLinkPositions = refreshGlobalLinkPositions;
+window.setGlobalLinkEnabled = setGlobalLinkEnabled;
 
 function initAirportPdfDB() {
     return new Promise((resolve, reject) => {
@@ -23115,21 +25290,6 @@ function displayInstalledMaps() {
     const groups = groupInstalledMapPacks(installedPacks);
     list.innerHTML = '';
 
-    if (groups.length > 0) {
-        const resetLi = document.createElement('li');
-        resetLi.className = 'offline-map-reset-line';
-        resetLi.innerHTML = `
-            <span class="offline-map-name-line">
-                <strong>Réparation stockage offline</strong><br>
-                <small>À utiliser si une suppression reste bloquée.</small>
-            </span>
-            <div class="offline-map-actions">
-                <button class="delete-map-btn offline-full-reset-btn" onclick="window.resetAllOfflineMapsStorage()">Réinitialiser profond</button>
-            </div>
-        `;
-        list.appendChild(resetLi);
-    }
-
     if (groups.length === 0) {
         list.innerHTML = '<li class="no-maps-placeholder">Aucun pack de cartes installé.</li>';
         return;
@@ -23157,6 +25317,20 @@ function displayInstalledMaps() {
         `;
         list.appendChild(li);
     });
+
+    // v15.03 — dépannage profond affiché sous les cartes téléchargées.
+    const resetLi = document.createElement('li');
+    resetLi.className = 'offline-map-reset-line';
+    resetLi.innerHTML = `
+        <span class="offline-map-name-line">
+            <strong>Réparation stockage offline</strong><br>
+            <small>À utiliser si une suppression reste bloquée.</small>
+        </span>
+        <div class="offline-map-actions">
+            <button class="delete-map-btn offline-full-reset-btn" onclick="window.resetAllOfflineMapsStorage()">Réinitialiser profond</button>
+        </div>
+    `;
+    list.appendChild(resetLi);
 
     updateOfflineStatus();
 }
@@ -27311,7 +29485,7 @@ function initializeCalculator() {
     td { font-weight: 800; }
     th:nth-child(5), th:nth-child(6) { font-size: 11.8px; }
     td:nth-child(5), td:nth-child(6) { font-size: 12.5px; white-space: nowrap; }
-    td.kg-cell .kg-inline { font-size: 14px; }
+    td.kg-cell .kg-inline { font-size: 18px; }
     td.kg-cell .kg-unit { font-size: .68em; }
     .rlt-export-cell { line-height: 1.06; padding-left: 3px; padding-right: 3px; white-space: nowrap; overflow: hidden; }
     .rlt-export-cell .kg-inline { font-size: 13px; }
