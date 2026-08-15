@@ -1,4 +1,4 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.65';
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.66';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
 // GLR reste intégré mais aucun bouton GLR n'est créé dans l'interface.
@@ -27207,7 +27207,26 @@ function initializeTeamChat() {
     const CHAT_OUTBOX_KEY = 'teamChatOutbox';
     const CHAT_SEEN_IDS_KEY = 'teamChatSeenIds';
     const CHAT_CONNECTION_DESIRED_KEY = 'teamChatConnectionDesired';
-    let chatConnectionDesired = localStorage.getItem(CHAT_CONNECTION_DESIRED_KEY) === 'true';
+
+    /*
+     * v2026.66 — aucune connexion Chat automatique après un démarrage,
+     * rechargement ou nouvelle ouverture de la PWA.
+     *
+     * Une ancienne version pouvait laisser `teamChatConnectionDesired=true`
+     * dans localStorage. La pérenne v2026.65 relisait cette valeur et lançait
+     * immédiatement connectToChat(), ce qui pouvait bloquer le bouton sur
+     * « Connexion... » si le broker ne répondait pas.
+     *
+     * La préférence de connexion n'est donc plus restaurée entre deux
+     * chargements de page. Elle reste utilisable dans la session courante :
+     * après un clic volontaire sur Connexion, les reprises réseau / premier
+     * plan peuvent toujours reconnecter automatiquement.
+     */
+    let chatConnectionDesired = false;
+    try {
+        localStorage.setItem(CHAT_CONNECTION_DESIRED_KEY, 'false');
+    } catch (_) {}
+
     let unreadCount = 0;
     let reconnectAfterOnlineTimeout = null;
     let isChatConnecting = false;
@@ -28451,18 +28470,12 @@ function initializeTeamChat() {
     });
 
     /*
-     * Restauration de l'état lors d'un démarrage complet :
-     * - préférence connectée : tentative de connexion ;
-     * - préférence déconnectée : maintien hors ligne.
+     * v2026.66 — un démarrage complet ne restaure jamais une connexion Chat.
+     * L'utilisateur doit appuyer sur « Connexion » dans la session courante.
+     * Les reconnexions automatiques restent autorisées ensuite tant que
+     * `chatConnectionDesired` a été activé volontairement dans cette session.
      */
-    if (chatConnectionDesired) {
-        setConnectionState(false, 'Connexion...');
-        setTimeout(() => {
-            reconnectIfNeeded('Restauration du dernier état du chat.');
-        }, 350);
-    } else {
-        setConnectionState(false, 'Hors ligne');
-    }
+    setConnectionState(false, 'Hors ligne');
 
     window.addEventListener('beforeunload', () => {
         publishOwnLocationClear();
