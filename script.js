@@ -1,7 +1,7 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.66';
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.67';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
-// GLR reste intégré mais aucun bouton GLR n'est créé dans l'interface.
+// Base fonctionnelle : pérenne v2026.66 + parcours Chat validé en TEST v15.36.
 
 function installGlobalStylusBlocker() {
     if (window.__npfGlobalStylusBlockerInstalled) return;
@@ -18080,7 +18080,7 @@ window.closeBriefingDocSelectorModal = closeBriefingDocSelectorModal;
 
 // =========================================================================
 // =========================================================================
-const NPF_GLOBAL_LINK_UI_ENABLED = false; // accès GLR temporairement absent de l'interface en v2026.65.
+const NPF_GLOBAL_LINK_UI_ENABLED = false; // v2026.67 : GLR absent de l'interface pérenne.
 const NPF_GLOBAL_LINK_API_URL = 'https://grisonb.synology.me/briefing-api/npf-global-link-api.php';
 const NPF_GLOBAL_LINK_SESSION_KEY = 'npfGlobalLinkSessionV1';
 const NPF_GLOBAL_LINK_SESSION_EXP_KEY = 'npfGlobalLinkSessionExpV1';
@@ -27161,7 +27161,12 @@ function initializeTeamChat() {
     const clearLocalButton = document.getElementById('chat-clear-local-button');
     const clearChannelButton = document.getElementById('chat-clear-channel-button');
     const clearCancelButton = document.getElementById('chat-clear-cancel-button');
-    if (!panel || !toggleButton || !minimizeButton || !clearButton || !alertBadge || !offlineBadge || !roomInput || !userInput || !connectButton || !sendButton || !messageInput || !messagesBox || !connectionState || !onlineUsersLabel || !clearModal || !clearLocalButton || !clearChannelButton || !clearCancelButton) return;
+    const chatConnectModal = document.getElementById('chat-connect-modal');
+    const chatConnectGpsCheckbox = document.getElementById('chat-connect-gps-checkbox');
+    const chatConnectModalStatus = document.getElementById('chat-connect-modal-status');
+    const chatConnectModalCancel = document.getElementById('chat-connect-modal-cancel');
+    const chatConnectModalConfirm = document.getElementById('chat-connect-modal-confirm');
+    if (!panel || !toggleButton || !minimizeButton || !clearButton || !alertBadge || !offlineBadge || !roomInput || !userInput || !connectButton || !sendButton || !messageInput || !messagesBox || !connectionState || !onlineUsersLabel || !clearModal || !clearLocalButton || !clearChannelButton || !clearCancelButton || !chatConnectModal || !chatConnectGpsCheckbox || !chatConnectModalStatus || !chatConnectModalCancel || !chatConnectModalConfirm) return;
 
     /*
      * v11.88 — iPad/Safari : éviter l'appel du bandeau de connexion/passkey
@@ -27201,6 +27206,7 @@ function initializeTeamChat() {
     validateChatConfigButton.title = 'Valider le changement de canal ou pseudo';
     validateChatConfigButton.className = 'chat-validate-config-button';
     validateChatConfigButton.disabled = true;
+    validateChatConfigButton.style.display = 'none';
     clearButton.parentNode.insertBefore(validateChatConfigButton, clearButton);
 
     const CHAT_CLIENT_ID_KEY = 'teamChatClientId';
@@ -27209,18 +27215,9 @@ function initializeTeamChat() {
     const CHAT_CONNECTION_DESIRED_KEY = 'teamChatConnectionDesired';
 
     /*
-     * v2026.66 — aucune connexion Chat automatique après un démarrage,
-     * rechargement ou nouvelle ouverture de la PWA.
-     *
-     * Une ancienne version pouvait laisser `teamChatConnectionDesired=true`
-     * dans localStorage. La pérenne v2026.65 relisait cette valeur et lançait
-     * immédiatement connectToChat(), ce qui pouvait bloquer le bouton sur
-     * « Connexion... » si le broker ne répondait pas.
-     *
-     * La préférence de connexion n'est donc plus restaurée entre deux
-     * chargements de page. Elle reste utilisable dans la session courante :
-     * après un clic volontaire sur Connexion, les reprises réseau / premier
-     * plan peuvent toujours reconnecter automatiquement.
+     * v2026.67 — le Chat démarre toujours hors ligne.
+     * Une valeur persistante laissée par une ancienne version ne doit jamais
+     * déclencher de connexion au chargement de la PWA.
      */
     let chatConnectionDesired = false;
     try {
@@ -27230,6 +27227,7 @@ function initializeTeamChat() {
     let unreadCount = 0;
     let reconnectAfterOnlineTimeout = null;
     let isChatConnecting = false;
+    let chatHasConnectedForCurrentIntent = false;
     let hasAnnouncedConnection = true;
     const pendingChatMessages = [];
     const renderedMessageIds = new Set();
@@ -27259,6 +27257,7 @@ function initializeTeamChat() {
     const savedConfig = JSON.parse(localStorage.getItem(CHAT_STORAGE_KEY) || 'null') || defaultConfig;
     roomInput.value = savedConfig.room || defaultConfig.room;
     userInput.value = savedConfig.user || defaultConfig.user;
+    chatConnectGpsCheckbox.checked = locationSharingEnabled;
 
     const persistedSeenIds = new Set(JSON.parse(localStorage.getItem(CHAT_SEEN_IDS_KEY) || '[]'));
     const history = JSON.parse(localStorage.getItem(CHAT_HISTORY_KEY) || '[]');
@@ -27269,6 +27268,9 @@ function initializeTeamChat() {
 
     const setChatConnectionDesired = (desired) => {
         chatConnectionDesired = desired === true;
+        if (!chatConnectionDesired) {
+            chatHasConnectedForCurrentIntent = false;
+        }
         localStorage.setItem(
             CHAT_CONNECTION_DESIRED_KEY,
             chatConnectionDesired ? 'true' : 'false'
@@ -27309,6 +27311,98 @@ function initializeTeamChat() {
         room: (roomInput.value || '').trim().replace(/[^a-zA-Z0-9-_]/g, ''),
         user: (userInput.value || '').trim()
     });
+
+    const setChatConnectModalStatus = (message = '', type = '') => {
+        chatConnectModalStatus.textContent = String(message || '');
+        chatConnectModalStatus.classList.toggle('error', type === 'error');
+    };
+
+    const persistChatConnectForm = () => {
+        persistConfig();
+        locationSharingEnabled = chatConnectGpsCheckbox.checked === true;
+        localStorage.setItem(
+            CHAT_LOCATION_SHARING_KEY,
+            locationSharingEnabled ? 'true' : 'false'
+        );
+    };
+
+    const openChatConnectModal = () => {
+        /*
+         * v15.35 — à chaque ouverture, on repart des valeurs actuellement
+         * mémorisées. Au premier usage le canal vaut Milan et le pseudo est vide.
+         */
+        let storedConfig = null;
+        try {
+            storedConfig = JSON.parse(
+                localStorage.getItem(CHAT_STORAGE_KEY) || 'null'
+            );
+        } catch (_) {}
+
+        roomInput.value = storedConfig?.room || roomInput.value || 'Milan';
+        userInput.value = storedConfig?.user || userInput.value || '';
+        locationSharingEnabled =
+            localStorage.getItem(CHAT_LOCATION_SHARING_KEY) === 'true';
+        chatConnectGpsCheckbox.checked = locationSharingEnabled;
+
+        setChatConnectModalStatus('');
+        chatConnectModal.style.display = 'flex';
+        chatConnectModal.setAttribute('aria-hidden', 'false');
+
+        requestAnimationFrame(() => {
+            try {
+                if (!(userInput.value || '').trim()) {
+                    userInput.focus();
+                } else {
+                    roomInput.focus();
+                    roomInput.select();
+                }
+            } catch (_) {}
+        });
+    };
+
+    const closeChatConnectModal = () => {
+        chatConnectModal.style.display = 'none';
+        chatConnectModal.setAttribute('aria-hidden', 'true');
+        setChatConnectModalStatus('');
+    };
+
+    const confirmChatConnectModal = async () => {
+        persistChatConnectForm();
+
+        const current = getCurrentChatConfig();
+        if (!current.room) {
+            setChatConnectModalStatus(
+                'Confirme le nom du canal.',
+                'error'
+            );
+            try { roomInput.focus(); } catch (_) {}
+            return;
+        }
+        if (!current.user) {
+            setChatConnectModalStatus(
+                'Renseigne un pseudo.',
+                'error'
+            );
+            try { userInput.focus(); } catch (_) {}
+            return;
+        }
+
+        roomInput.value = current.room;
+        userInput.value = current.user.slice(0, 24);
+        persistChatConnectForm();
+
+        lastValidatedChatConfig = {
+            room: current.room,
+            user: current.user
+        };
+        updateChatValidateButtonState();
+        updateLocationShareButton();
+
+        closeChatConnectModal();
+        setChatConnectionDesired(true);
+        setConnectionState(false, 'Connexion...');
+        await connectToChat();
+    };
 
     const updateChatValidateButtonState = () => {
         /*
@@ -28097,9 +28191,14 @@ function initializeTeamChat() {
         setConnectionState(false, 'Connexion...');
         hasAnnouncedConnection = false;
         pendingChatMessages.length = 0;
+        /*
+         * v2026.67 — aucune boucle automatique pendant la PREMIÈRE tentative.
+         * Une fois une connexion réellement établie, announceConnection()
+         * réactive reconnectPeriod à 5000 ms pour les coupures ultérieures.
+         */
         chatClient = mqtt.connect(CHAT_BROKER_URL, {
             keepalive: 45,
-            reconnectPeriod: 5000,
+            reconnectPeriod: chatHasConnectedForCurrentIntent ? 5000 : 0,
             connectTimeout: 20000,
             clean: true, // session non persistante: évite de conserver des abonnements d'anciens canaux
             protocolVersion: 4,
@@ -28122,6 +28221,10 @@ function initializeTeamChat() {
             const announceConnection = () => {
                 if (hasAnnouncedConnection) return;
                 hasAnnouncedConnection = true;
+                chatHasConnectedForCurrentIntent = true;
+                if (chatClient?.options) {
+                    chatClient.options.reconnectPeriod = 5000;
+                }
                 setConnectionState(true);
                 isChatConnecting = false;
                 lastValidatedChatConfig = getCurrentChatConfig();
@@ -28260,6 +28363,29 @@ function initializeTeamChat() {
             } catch (_) {}
         });
 
+        const failInitialChatConnection = (label = 'Connexion impossible') => {
+            if (chatHasConnectedForCurrentIntent || !chatConnectionDesired) {
+                return false;
+            }
+
+            setChatConnectionDesired(false);
+            isChatConnecting = false;
+
+            const failedClient = chatClient;
+            chatClient = null;
+            if (failedClient) {
+                try {
+                    failedClient.options.reconnectPeriod = 0;
+                } catch (_) {}
+                try {
+                    failedClient.end(true);
+                } catch (_) {}
+            }
+
+            setConnectionState(false, label);
+            return true;
+        };
+
         chatClient.on('reconnect', () => {
             hasAnnouncedConnection = false;
             setConnectionState(false, 'Reconnexion...');
@@ -28268,7 +28394,14 @@ function initializeTeamChat() {
             stopPresenceHeartbeat();
             hasAnnouncedConnection = false;
             isChatConnecting = false;
-            setConnectionState(false);
+
+            const initialFailed = failInitialChatConnection(
+                'Connexion impossible'
+            );
+            if (!initialFailed) {
+                setConnectionState(false);
+            }
+
             if (locationPublishTimer) {
                 clearInterval(locationPublishTimer);
                 locationPublishTimer = null;
@@ -28280,7 +28413,14 @@ function initializeTeamChat() {
             stopPresenceHeartbeat();
             hasAnnouncedConnection = false;
             isChatConnecting = false;
-            setConnectionState(false, 'Hors ligne');
+
+            const initialFailed = failInitialChatConnection(
+                'Connexion impossible'
+            );
+            if (!initialFailed) {
+                setConnectionState(false, 'Hors ligne');
+            }
+
             if (locationPublishTimer) {
                 clearInterval(locationPublishTimer);
                 locationPublishTimer = null;
@@ -28290,8 +28430,18 @@ function initializeTeamChat() {
         });
         chatClient.on('error', (err) => {
             isChatConnecting = false;
-            setConnectionState(false, 'Erreur réseau');
-            appendChatMessage('Système', `Erreur réseau: ${err.message}`, new Date().toISOString(), true);
+            const initialFailed = failInitialChatConnection(
+                'Connexion impossible'
+            );
+            if (!initialFailed) {
+                setConnectionState(false, 'Erreur réseau');
+            }
+            appendChatMessage(
+                'Système',
+                `Erreur réseau: ${err.message}`,
+                new Date().toISOString(),
+                true
+            );
         });
     }
 
@@ -28408,26 +28558,83 @@ function initializeTeamChat() {
         closeClearModal();
     });
 
-    roomInput.addEventListener('input', updateChatValidateButtonState);
-    roomInput.addEventListener('change', updateChatValidateButtonState);
-    userInput.addEventListener('input', updateChatValidateButtonState);
-    userInput.addEventListener('change', updateChatValidateButtonState);
+    const persistChatTextFields = () => {
+        persistConfig();
+        updateChatValidateButtonState();
+    };
+
+    roomInput.addEventListener('input', persistChatTextFields);
+    roomInput.addEventListener('change', persistChatTextFields);
+    userInput.addEventListener('input', persistChatTextFields);
+    userInput.addEventListener('change', persistChatTextFields);
     validateChatConfigButton.addEventListener('click', applyChatConfigValidation);
     updateChatValidateButtonState();
 
+    chatConnectGpsCheckbox.addEventListener('change', () => {
+        persistChatConnectForm();
+        updateLocationShareButton();
+    });
+
+    chatConnectModalCancel.addEventListener('click', () => {
+        /*
+         * Même en cas d'annulation, les valeurs saisies restent mémorisées
+         * conformément au comportement demandé.
+         */
+        persistChatConnectForm();
+        closeChatConnectModal();
+    });
+
+    chatConnectModalConfirm.addEventListener('click', () => {
+        confirmChatConnectModal().catch((error) => {
+            setChatConnectModalStatus(
+                `Connexion impossible : ${error.message || error}`,
+                'error'
+            );
+        });
+    });
+
+    chatConnectModal.addEventListener('click', (event) => {
+        if (event.target === chatConnectModal) {
+            persistChatConnectForm();
+            closeChatConnectModal();
+        }
+    });
+
+    document.addEventListener('keydown', (event) => {
+        if (
+            event.key === 'Escape'
+            && chatConnectModal.style.display === 'flex'
+        ) {
+            persistChatConnectForm();
+            closeChatConnectModal();
+        }
+    });
+
+    [roomInput, userInput].forEach((input) => {
+        input.addEventListener('keydown', (event) => {
+            if (event.key !== 'Enter') return;
+            event.preventDefault();
+            confirmChatConnectModal().catch((error) => {
+                setChatConnectModalStatus(
+                    `Connexion impossible : ${error.message || error}`,
+                    'error'
+                );
+            });
+        });
+    });
+
     connectButton.addEventListener('click', () => {
         /*
-         * L'intention mémorisée prime sur le seul état MQTT instantané.
-         * Ainsi, même hors réseau, le bouton permet d'annuler une future
-         * reconnexion automatique.
+         * v15.35 — connecté / connexion demandée : le bouton reste une
+         * déconnexion. Hors ligne : "Connexion" ouvre d'abord la fenêtre de
+         * configuration GPS / canal / pseudo.
          */
         if (chatConnectionDesired || chatConnected || isChatConnecting) {
             setChatConnectionDesired(false);
             disconnectFromChat();
+            closeChatConnectModal();
         } else {
-            setChatConnectionDesired(true);
-            setConnectionState(false, 'Connexion...');
-            connectToChat();
+            openChatConnectModal();
         }
     });
     locationShareButton.addEventListener('click', () => {
@@ -28470,10 +28677,8 @@ function initializeTeamChat() {
     });
 
     /*
-     * v2026.66 — un démarrage complet ne restaure jamais une connexion Chat.
-     * L'utilisateur doit appuyer sur « Connexion » dans la session courante.
-     * Les reconnexions automatiques restent autorisées ensuite tant que
-     * `chatConnectionDesired` a été activé volontairement dans cette session.
+     * v2026.67 — aucun démarrage automatique du Chat.
+     * La connexion est toujours déclenchée depuis la fenêtre de configuration.
      */
     setConnectionState(false, 'Hors ligne');
 
