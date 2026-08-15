@@ -1,3 +1,56 @@
+VERSION PÉRENNE v2026.65 — CORRECTION STRUCTURELLE : BOUTON GLR SUPPRIMÉ / SAFESKY À SA PLACE
+Date : 15/08/2026
+Base : PÉRENNE v2026.64
+
+OBJECTIF
+- Corriger définitivement la présence visuelle persistante de l'icône GLR.
+- Ne plus dépendre d'un attribut `hidden` ou d'une règle CSS pour masquer ce bouton.
+- Faire occuper physiquement à SafeSky la position libérée.
+
+MODIFICATIONS
+1. Bouton GLR supprimé du HTML
+- Le bloc `<button id="global-link-layer-button">...</button>` est entièrement supprimé de l'Index.
+- Le bouton GLR n'existe donc plus dans le DOM.
+- Il ne peut plus réapparaître à cause d'une ancienne règle CSS, d'un `display:flex !important`, du cache de style ou d'une interaction entre `hidden` et les styles auteur.
+
+2. SafeSky prend réellement sa place
+- Le bouton SafeSky existant reste unique.
+- Comme il suit directement FdS/GAAR dans le conteneur des commandes carte, il occupe maintenant physiquement la position précédemment utilisée par GLR.
+- Aucune copie de l'icône SafeSky n'est créée.
+- Toute la logique SafeSky, ses états et ses compteurs restent inchangés.
+
+3. GLR conservé mais sans interface
+- Le code GLR reste présent dans Script pour une réactivation future.
+- `NPF_GLOBAL_LINK_UI_ENABLED = false` reste actif.
+- GLR est forcé OFF au démarrage, son timer est arrêté et sa couche est vidée.
+- L'absence du bouton est gérée sans erreur : `getElementById('global-link-layer-button')` peut retourner `null`.
+
+4. Nettoyage
+- La règle CSS finale servant uniquement à cacher le bouton GLR est supprimée puisqu'elle n'est plus nécessaire.
+- Les anciennes règles fonctionnelles GLR restent dans la feuille de style pour une éventuelle réactivation future.
+
+ÉLÉMENTS INCHANGÉS
+- Base fonctionnelle v2026.64.
+- SafeSky et ses deux compteurs.
+- Traits étiquette / trafic.
+- FdS / GAAR du jour uniquement.
+- VAC, cartes Online/Offline, GPS, plans d'eau, IndexedDB.
+- Aucun fichier NAS à remplacer.
+
+CONTRÔLES TECHNIQUES
+- Versions Index / Manifest / Script / Style / SW alignées sur v2026.65.
+- Syntaxe JavaScript Script et SW contrôlée avec Node.
+- Manifest JSON contrôlé.
+- Vérification : aucun `id="global-link-layer-button"` dans l'Index.
+- Vérification : exactement un `id="traffic-layer-button"` dans l'Index.
+- GLR forcé OFF dans Script.
+- Historique v2026.64 et antérieur conservé intégralement et exactement ci-dessous.
+- Aucun secret ou identifiant d'authentification ajouté aux six fichiers publics.
+
+======================================================================
+HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
+======================================================================
+
 VERSION PÉRENNE v2026.64 — BASE v15.34 / SAFESKY VISIBLE / GLR TEMPORAIREMENT MASQUÉ
 Date : 15/08/2026
 Base : TEST v15.34
