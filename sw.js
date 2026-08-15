@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-63_foreground_resume_dedup';
-const APP_VERSION = 'v2026.63';
+const SW_VERSION = 'sw-v2026-64_perenne_safesky_primary_glr_hidden';
+const APP_VERSION = 'v2026.64';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
@@ -96,6 +96,7 @@ const memoryTileCache = new Map();
 const VERSION_SENSITIVE_CORE_FILES = new Set([
     'index.html',
     'script.js',
+    'style.css',
     'manifest.json'
 ]);
 
@@ -107,15 +108,18 @@ function getAppShellFilename(url) {
     }
 }
 
-function buildVersionedAppShellUrl(url) {
+function buildVersionedAppShellUrl(url, attempt = 0) {
     const parsed = new URL(url, self.location.href);
     parsed.searchParams.set('appv', APP_VERSION);
     parsed.searchParams.set('swinstall', SW_VERSION);
+    if (attempt > 0) {
+        parsed.searchParams.set('swtry', `${attempt}-${Date.now()}`);
+    }
     return parsed.toString();
 }
 
-async function fetchForAppShell(url, timeoutMs = 12000) {
-    const request = new Request(buildVersionedAppShellUrl(url), {
+async function fetchForAppShell(url, timeoutMs = 12000, attempt = 0) {
+    const request = new Request(buildVersionedAppShellUrl(url, attempt), {
         cache: 'reload',
         mode: url === DEPARTMENTS_GEOJSON_URL ? 'cors' : 'same-origin'
     });
@@ -137,6 +141,9 @@ async function validateVersionSensitiveCoreResponse(url, response) {
         if (filename === 'script.js') {
             return text.includes(`const NPF_SCRIPT_BUILD_VERSION = '${APP_VERSION}'`);
         }
+        if (filename === 'style.css') {
+            return text.includes(`NPF_STYLE_BUILD_VERSION: ${APP_VERSION}`);
+        }
         if (filename === 'manifest.json') {
             const manifest = JSON.parse(text);
             return String(manifest.start_url || '').includes(`appv=${APP_VERSION}`);
@@ -145,6 +152,36 @@ async function validateVersionSensitiveCoreResponse(url, response) {
         return false;
     }
     return false;
+}
+
+/*
+ * v15.21 — GitHub Pages peut propager index/script/style/manifest sur quelques
+ * secondes. Un seul fichier ancien ne doit plus condamner immédiatement
+ * l'installation du nouveau Service Worker. Les fichiers versionnés sont donc
+ * relus plusieurs fois avec une URL anti-cache différente avant abandon.
+ */
+async function fetchValidatedCoreForInstall(url) {
+    const filename = getAppShellFilename(url);
+    const versionSensitive = VERSION_SENSITIVE_CORE_FILES.has(filename);
+    const maxAttempts = versionSensitive ? 6 : 1;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+        try {
+            const response = await fetchForAppShell(
+                url,
+                versionSensitive ? 6500 : 15000,
+                attempt
+            );
+            const valid = response && response.ok
+                && await validateVersionSensitiveCoreResponse(url, response);
+            if (valid) return response;
+        } catch (_) {}
+
+        if (attempt < maxAttempts) {
+            await swDelay(1400);
+        }
+    }
+    return null;
 }
 
 async function copyExistingCachedAsset(url, targetCache) {
@@ -169,10 +206,8 @@ self.addEventListener('install', event => {
         for (const url of CORE_APP_SHELL_URLS) {
             let stored = false;
             try {
-                const response = await fetchForAppShell(url, 15000);
-                const valid = response && response.ok
-                    && await validateVersionSensitiveCoreResponse(url, response);
-                if (valid) {
+                const response = await fetchValidatedCoreForInstall(url);
+                if (response) {
                     await cache.put(url, response.clone());
                     stored = true;
                 }
@@ -397,6 +432,15 @@ self.addEventListener('fetch', event => {
 
     if (request.method !== 'GET') return;
 
+    // v15.16 — FdS / GAAR : ne pas appeler respondWith() pour la chaîne réseau
+    // de mise à jour. Safari/iPad affichait sinon « FetchEvent.respondWith ...
+    // TypeError: Load failed » quand une navigation/fetch externe échouait.
+    // Sans respondWith, le navigateur effectue sa requête réseau normalement et
+    // script.js gère les erreurs dans le bandeau du lecteur.
+    if (isBriefingDocsNasRequest(request.url) || isBriefingDocsSourceRequest(request.url) || isGlobalLinkNasRequest(request.url)) {
+        return;
+    }
+
  // v14.93 — le dépôt VAC GitHub Pages reste une source réseau pure.
  // Les PDF sont ensuite conservés par script.js dans IndexedDB, pas dans Cache Storage.
     if (isVacRepositoryRequest(request.url)) {
@@ -428,6 +472,40 @@ self.addEventListener('fetch', event => {
 });
 
 
+
+
+function isGlobalLinkNasRequest(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'grisonb.synology.me'
+            && parsed.pathname === '/briefing-api/npf-global-link-api.php';
+    } catch (_) {
+        return false;
+    }
+}
+
+function isBriefingDocsNasRequest(url) {
+    try {
+        const parsed = new URL(url);
+        return parsed.hostname === 'grisonb.synology.me'
+            && parsed.pathname === '/briefing-api/npf-docs-api.php';
+    } catch (_) {
+        return false;
+    }
+}
+
+function isBriefingDocsSourceRequest(url) {
+    try {
+        const parsed = new URL(url);
+        if (parsed.hostname === 'script.google.com' || parsed.hostname === 'script.googleusercontent.com') {
+            return true;
+        }
+        return parsed.hostname === 'grisonb.synology.me'
+            && parsed.pathname === '/briefing-api/request-gaar-import.php';
+    } catch (_) {
+        return false;
+    }
+}
 
 
 function isVacRepositoryRequest(url) {
