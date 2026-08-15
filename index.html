@@ -7,9 +7,9 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.66" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.66">
-    <link rel="manifest" href="manifest.json?appv=v2026.66">
+    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.67" as="fetch" crossorigin="anonymous">
+    <link rel="stylesheet" href="style.css?appv=v2026.67">
+    <link rel="manifest" href="manifest.json?appv=v2026.67">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v13.92">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v13.92">
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v13.92">
@@ -57,7 +57,7 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.66';
+        const APP_VERSION = 'v2026.67';
         const SERVICE_WORKER_URL = `./sw.js?appv=${encodeURIComponent(APP_VERSION)}`;
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
@@ -659,14 +659,69 @@
             </div>
         </div>
         <div class="chat-config-row">
-            <input type="text" id="chat-room-input" maxlength="32" placeholder="Canal sans espace (ex: GAAR-ALPHA)">
-            <input type="text" id="chat-user-input" maxlength="24" placeholder="Votre pseudo">
             <button id="chat-connect-button">Connexion</button>
         </div>
         <div id="chat-messages"></div>
         <div class="chat-send-row">
             <input type="text" id="chat-message-input" maxlength="280" placeholder="Message..." autocomplete="one-time-code" autocorrect="off" autocapitalize="sentences" spellcheck="false" data-lpignore="true" data-1p-ignore="true">
             <button id="chat-send-button">Envoyer</button>
+        </div>
+    </div>
+
+    <div id="chat-connect-modal"
+         class="chat-connect-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="chat-connect-modal-content"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="chat-connect-modal-title">
+            <h3 id="chat-connect-modal-title">Connexion au chat</h3>
+
+            <label class="chat-connect-gps-row" for="chat-connect-gps-checkbox">
+                <span>Activer localisation GPS</span>
+                <input type="checkbox"
+                       id="chat-connect-gps-checkbox">
+            </label>
+
+            <label class="chat-connect-field" for="chat-room-input">
+                <span>Confirmer nom du Canal</span>
+                <input type="text"
+                       id="chat-room-input"
+                       maxlength="32"
+                       value="Milan"
+                       autocomplete="off"
+                       autocorrect="off"
+                       spellcheck="false"
+                       data-lpignore="true"
+                       data-1p-ignore="true">
+            </label>
+
+            <label class="chat-connect-field" for="chat-user-input">
+                <span>Renseigner Pseudo</span>
+                <input type="text"
+                       id="chat-user-input"
+                       maxlength="24"
+                       value=""
+                       autocomplete="off"
+                       autocorrect="off"
+                       spellcheck="false"
+                       data-lpignore="true"
+                       data-1p-ignore="true">
+            </label>
+
+            <div id="chat-connect-modal-status"
+                 class="chat-connect-modal-status"
+                 aria-live="polite"></div>
+
+            <div class="chat-connect-modal-actions">
+                <button id="chat-connect-modal-cancel"
+                        type="button"
+                        class="chat-connect-modal-secondary">Annuler</button>
+                <button id="chat-connect-modal-confirm"
+                        type="button"
+                        class="chat-connect-modal-primary">Valider et se connecter</button>
+            </div>
         </div>
     </div>
 
@@ -720,7 +775,7 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.66"></script>
+    <script src="script.js?appv=v2026.67"></script>
     
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
