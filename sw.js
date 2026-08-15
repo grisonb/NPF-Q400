@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-66_chat_manual_start';
-const APP_VERSION = 'v2026.66';
+const SW_VERSION = 'sw-v2026-67_chat_modal_no_initial_loop';
+const APP_VERSION = 'v2026.67';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
