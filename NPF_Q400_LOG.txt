@@ -1,3 +1,58 @@
+VERSION PÉRENNE v2026.66 — CHAT : SUPPRESSION DE LA CONNEXION AUTOMATIQUE AU DÉMARRAGE
+Date : 15/08/2026
+Base : PÉRENNE v2026.65
+
+OBJECTIF
+- Corriger le blocage observé dans la pérenne v2026.65 : à l'ouverture de la fenêtre Chat, l'état pouvait rester sur « Connexion... » sans permettre d'action.
+- Ne jamais lancer automatiquement le Chat après un démarrage ou rechargement complet de NPF.
+- Conserver les reconnexions automatiques utiles après une connexion volontaire pendant la session courante.
+
+CAUSE IDENTIFIÉE
+- La pérenne v2026.65 mémorisait l'intention de connexion dans `teamChatConnectionDesired`.
+- Si cette valeur était restée sur `true`, `initializeTeamChat()` la relisait au prochain démarrage.
+- NPF positionnait immédiatement l'état sur « Connexion... » puis appelait `reconnectIfNeeded()` et `connectToChat()`.
+- Pendant cet état de connexion, le bouton était désactivé.
+- Si le broker MQTT ou le réseau répondait mal, l'utilisateur pouvait donc rester bloqué sur « Connexion... ».
+
+MODIFICATIONS
+1. Démarrage du Chat toujours hors ligne
+- `chatConnectionDesired` est désormais initialisé à `false` à chaque nouveau chargement de la PWA.
+- La valeur persistante `teamChatConnectionDesired` est remise à `false` au démarrage.
+- Aucun ancien état `true` issu d'une version précédente ne peut donc déclencher une connexion automatique.
+
+2. Suppression de la restauration automatique au démarrage
+- Le bloc qui affichait « Connexion... » puis lançait `reconnectIfNeeded('Restauration du dernier état du chat.')` est supprimé.
+- Au démarrage, l'état du Chat est explicitement positionné sur « Hors ligne ».
+- Le bouton reste disponible et affiche « Connexion ».
+
+3. Reconnexion automatique conservée pendant la session
+- Lorsqu'un utilisateur appuie volontairement sur « Connexion », `setChatConnectionDesired(true)` reste utilisé.
+- Si le réseau disparaît puis revient pendant cette même session, `reconnectIfNeeded()` peut toujours reconnecter le Chat.
+- Le retour au premier plan peut également reconnecter après une perte de liaison.
+- Une déconnexion volontaire remet `chatConnectionDesired` à `false` et continue d'empêcher toute reconnexion.
+
+4. Périmètre
+- Aucun changement de protocole MQTT.
+- Aucun changement des canaux, pseudos, messages, présence, GPS Chat ou notifications.
+- Aucun changement SafeSky.
+- GLR reste absent de l'interface pérenne comme en v2026.65.
+- Aucun fichier NAS à remplacer.
+
+CONTRÔLES TECHNIQUES
+- Versions Index / Manifest / Script / Style / SW alignées sur v2026.66.
+- Syntaxe JavaScript Script et SW contrôlée avec Node.
+- Manifest JSON contrôlé.
+- Absence de toute restauration automatique du Chat au démarrage contrôlée.
+- `chatConnectionDesired` initialisé à `false` et stockage persistant réinitialisé à `false`.
+- Reconnexion réseau / retour premier plan toujours présente après connexion volontaire.
+- Bouton GLR toujours absent de l'Index pérenne.
+- Historique v2026.65 et antérieur conservé intégralement et exactement ci-dessous.
+- Aucun secret d'authentification ajouté aux six fichiers publics.
+
+======================================================================
+HISTORIQUE PRÉCÉDENT CONSERVÉ INTÉGRALEMENT
+======================================================================
+
 VERSION PÉRENNE v2026.65 — CORRECTION STRUCTURELLE : BOUTON GLR SUPPRIMÉ / SAFESKY À SA PLACE
 Date : 15/08/2026
 Base : PÉRENNE v2026.64
