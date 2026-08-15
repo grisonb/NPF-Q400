@@ -1,5 +1,5 @@
-const SW_VERSION = 'sw-v2026-64_perenne_safesky_primary_glr_hidden';
-const APP_VERSION = 'v2026.64';
+const SW_VERSION = 'sw-v2026-65_perenne_glr_button_removed';
+const APP_VERSION = 'v2026.65';
 
 const DB_NAME = 'OfflineTilesDB_v13_70_clean';
 const LEGACY_TILE_DB_NAME = DB_NAME;
