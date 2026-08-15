@@ -1,7 +1,7 @@
-const NPF_SCRIPT_BUILD_VERSION = 'v2026.64';
+const NPF_SCRIPT_BUILD_VERSION = 'v2026.65';
 window.NPF_SCRIPT_BUILD_VERSION = NPF_SCRIPT_BUILD_VERSION;
 
-// GLR reste intégré mais son accès cartographique est temporairement masqué.
+// GLR reste intégré mais aucun bouton GLR n'est créé dans l'interface.
 
 function installGlobalStylusBlocker() {
     if (window.__npfGlobalStylusBlockerInstalled) return;
@@ -18080,7 +18080,7 @@ window.closeBriefingDocSelectorModal = closeBriefingDocSelectorModal;
 
 // =========================================================================
 // =========================================================================
-const NPF_GLOBAL_LINK_UI_ENABLED = false; // accès GLR temporairement masqué en v2026.64.
+const NPF_GLOBAL_LINK_UI_ENABLED = false; // accès GLR temporairement absent de l'interface en v2026.65.
 const NPF_GLOBAL_LINK_API_URL = 'https://grisonb.synology.me/briefing-api/npf-global-link-api.php';
 const NPF_GLOBAL_LINK_SESSION_KEY = 'npfGlobalLinkSessionV1';
 const NPF_GLOBAL_LINK_SESSION_EXP_KEY = 'npfGlobalLinkSessionExpV1';
@@ -18890,11 +18890,6 @@ function initializeGlobalLinkUi() {
         try {
             localStorage.setItem(NPF_GLOBAL_LINK_LAYER_ENABLED_KEY, '0');
         } catch (_) {}
-        if (button) {
-            button.hidden = true;
-            button.setAttribute('aria-hidden', 'true');
-            button.tabIndex = -1;
-        }
         updateGlobalLinkButton();
         return;
     }
