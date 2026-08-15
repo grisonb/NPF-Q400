@@ -7,9 +7,9 @@
     <title>NPF-Q400</title>
     <link rel="stylesheet" href="leaflet.css">
     <link rel="preload" href="communes_aliases.json" as="fetch" crossorigin="anonymous">
-    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.63" as="fetch" crossorigin="anonymous">
-    <link rel="stylesheet" href="style.css?appv=v2026.63">
-    <link rel="manifest" href="manifest.json?appv=v2026.63">
+    <link rel="preload" href="data/localites/localites-france-v14.56.zip?appv=v2026.64" as="fetch" crossorigin="anonymous">
+    <link rel="stylesheet" href="style.css?appv=v2026.64">
+    <link rel="manifest" href="manifest.json?appv=v2026.64">
     <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192x192.png?appv=v13.92">
     <link rel="icon" type="image/png" sizes="512x512" href="icons/icon-512x512.png?appv=v13.92">
     <link rel="apple-touch-icon" sizes="180x180" href="icons/apple-touch-icon.png?appv=v13.92">
@@ -57,7 +57,8 @@
     </style>
 
     <script>
-        const APP_VERSION = 'v2026.63';
+        const APP_VERSION = 'v2026.64';
+        const SERVICE_WORKER_URL = `./sw.js?appv=${encodeURIComponent(APP_VERSION)}`;
         const APP_VERSION_STORAGE_KEY = 'appVersion';
         const SW_CONTROLLER_RELOAD_GUARD_KEY = 'swControllerReloadGuard';
         const POST_UPDATE_NOTICE_VERSION_KEY = 'npfPostUpdateRestartNoticeVersion';
@@ -258,12 +259,10 @@
 
             try {
                 if ('serviceWorker' in navigator) {
-                    let registration = await navigator.serviceWorker.getRegistration('./');
-                    if (!registration) {
-                        registration = await navigator.serviceWorker.register('./sw.js', {
-                            updateViaCache: 'none'
-                        });
-                    }
+                    const registration = await navigator.serviceWorker.register(
+                        SERVICE_WORKER_URL,
+                        { updateViaCache: 'none' }
+                    );
                     if (registration && typeof registration.update === 'function') {
                         await Promise.race([
                             registration.update(),
@@ -309,7 +308,7 @@
             const checkForServiceWorkerUpdate = async () => {
                 try {
                     const registration = await navigator.serviceWorker.register(
-                        './sw.js',
+                        SERVICE_WORKER_URL,
                         { updateViaCache: 'none' }
                     );
                     watchServiceWorkerUpdate(registration);
@@ -423,8 +422,28 @@
                 </svg>
             </span>
         </button>
+        <button id="briefing-docs-map-button"
+                class="left-map-action-button briefing-docs-group-map-button briefing-docs-none-loaded"
+                type="button"
+                title="FdS / GAAR — ouvrir les documents opérationnels"
+                aria-label="FdS / GAAR — ouvrir les documents opérationnels">
+            <span id="briefing-docs-main-fds-label" class="briefing-docs-main-line briefing-doc-missing">FdS</span>
+            <span id="briefing-docs-main-gaar-label" class="briefing-docs-main-line briefing-doc-missing">GAAR</span>
+        </button>
+        <button id="global-link-layer-button"
+                class="left-map-action-button global-link-map-button global-link-auth-needed"
+                type="button"
+                hidden
+                aria-hidden="true"
+                tabindex="-1"
+                title="Global Link — temporairement masqué"
+                aria-label="Global Link — temporairement masqué">
+            <span class="global-link-map-label">GLR</span>
+            <span id="global-link-button-count" class="global-link-button-count" style="display:none;">0</span>
+        </button>
         <button id="traffic-layer-button" class="left-map-action-button traffic-map-button" title="SafeSky — afficher/masquer le trafic aérien indicatif — appui long : filtres" aria-label="SafeSky — afficher ou masquer le trafic aérien indicatif">
             <span class="traffic-icon traffic-safesky-icon" aria-hidden="true"></span>
+            <span id="traffic-tracked-button-count" class="traffic-tracked-button-count" style="display:none;">0</span>
             <span id="traffic-button-count" class="traffic-button-count">0</span>
         </button>
         <button id="simulation-motion-button" class="left-map-action-button simulation-motion-map-button" type="button" hidden
@@ -435,6 +454,124 @@
         </button>
     </div>
     <div id="traffic-status-display" class="traffic-status-display" style="display: none;"></div>
+
+    <div id="briefing-doc-selector-modal"
+         class="briefing-doc-selector-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="briefing-doc-selector-modal-content"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="briefing-doc-selector-title">
+            <button id="close-briefing-doc-selector-modal"
+                    class="briefing-doc-selector-modal-close"
+                    type="button"
+                    aria-label="Fermer">&times;</button>
+            <h2 id="briefing-doc-selector-title">FdS / GAAR</h2>
+            <p class="briefing-doc-selector-help">Sélectionne le document à ouvrir. La couleur indique si le document du jour est déjà chargé.</p>
+            <div class="briefing-doc-selector-list">
+                <button id="briefing-fds-map-button"
+                        class="briefing-doc-map-button briefing-doc-selector-choice briefing-doc-missing"
+                        type="button"
+                        title="FdS du jour non téléchargée"
+                        aria-label="FdS du jour non téléchargée">
+                    <span class="briefing-doc-selector-choice-name">FdS</span>
+                    <span id="briefing-fds-selector-status" class="briefing-doc-selector-choice-status">Non téléchargée</span>
+                </button>
+                <button id="briefing-gaar-map-button"
+                        class="briefing-doc-map-button briefing-doc-selector-choice briefing-doc-missing"
+                        type="button"
+                        title="GAAR du jour non téléchargé"
+                        aria-label="GAAR du jour non téléchargé">
+                    <span class="briefing-doc-selector-choice-name">GAAR</span>
+                    <span id="briefing-gaar-selector-status" class="briefing-doc-selector-choice-status">Non téléchargé</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div id="global-link-auth-modal"
+         class="global-link-auth-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="global-link-auth-dialog" role="dialog" aria-modal="true" aria-labelledby="global-link-auth-title">
+            <button id="global-link-auth-close" class="global-link-auth-close" type="button" aria-label="Fermer">×</button>
+            <h3 id="global-link-auth-title">Global Link Rescue</h3>
+            <p class="global-link-auth-explain">Recopie le code de sécurité affiché ci-dessous pour autoriser le suivi Global Link.</p>
+            <div class="global-link-captcha-frame">
+                <img id="global-link-captcha-image" alt="Code de sécurité Global Link" />
+            </div>
+            <input id="global-link-captcha-input"
+                   class="global-link-captcha-input"
+                   type="text"
+                   inputmode="numeric"
+                   autocomplete="off"
+                   maxlength="8"
+                   placeholder="Code de sécurité" />
+            <div id="global-link-auth-status" class="global-link-auth-status" aria-live="polite"></div>
+            <div class="global-link-auth-actions">
+                <button id="global-link-captcha-refresh" type="button" class="global-link-secondary-button">Nouveau code</button>
+                <button id="global-link-auth-submit" type="button" class="global-link-primary-button">Connexion</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="briefing-docs-password-modal"
+         class="briefing-docs-password-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="briefing-docs-password-dialog"
+             role="dialog"
+             aria-modal="true"
+             aria-labelledby="briefing-docs-password-title">
+            <button id="briefing-docs-password-close"
+                    class="briefing-docs-password-close"
+                    type="button"
+                    aria-label="Fermer">&times;</button>
+            <h2 id="briefing-docs-password-title">Accès FdS / GAAR</h2>
+            <p id="briefing-docs-password-help">Saisis le mot de passe pour autoriser les téléchargements jusqu’à minuit.</p>
+            <input id="briefing-docs-password-input"
+                   type="password"
+                   autocomplete="current-password"
+                   placeholder="Mot de passe"
+                   aria-label="Mot de passe FdS et GAAR">
+            <button id="briefing-docs-authorize-button"
+                    type="button"
+                    class="briefing-docs-password-submit">Autoriser jusqu’à minuit</button>
+            <div id="briefing-docs-password-status"
+                 class="briefing-docs-password-status"
+                 aria-live="polite"></div>
+        </div>
+    </div>
+
+    <div id="briefing-doc-viewer-modal"
+         class="briefing-doc-viewer-modal"
+         style="display: none;"
+         aria-hidden="true">
+        <div class="briefing-doc-viewer-toolbar">
+            <div class="briefing-doc-viewer-heading">
+                <strong id="briefing-doc-viewer-title">FdS / GAAR</strong>
+                <span id="briefing-doc-viewer-meta"></span>
+            </div>
+            <div class="briefing-doc-viewer-actions">
+                <button id="briefing-doc-viewer-refresh"
+                        type="button"
+                        class="briefing-doc-viewer-refresh">Maj</button>
+                <button id="briefing-doc-viewer-close"
+                        type="button"
+                        class="briefing-doc-viewer-close">Fermer</button>
+            </div>
+        </div>
+        <div id="briefing-doc-viewer-status"
+             class="briefing-doc-viewer-status"
+             aria-live="polite"></div>
+        <div id="briefing-doc-viewer-stage" class="briefing-doc-viewer-stage">
+            <iframe id="briefing-doc-viewer-frame"
+                    class="briefing-doc-viewer-frame"
+                    title="Document FdS ou GAAR"
+                    src="about:blank"></iframe>
+        </div>
+    </div>
 
     <div id="quick-offline-map-modal"
          class="quick-offline-map-modal"
@@ -594,7 +731,7 @@
     <script src="leaflet.min.js"></script>
     <script src="suncalc.js"></script>
     <script src="jszip.min.js"></script>
-    <script src="script.js?appv=v2026.63"></script>
+    <script src="script.js?appv=v2026.64"></script>
     
     <div id="fuel-split-modal" class="fuel-split-modal" style="display: none;">
         <div class="fuel-split-modal-content">
@@ -831,6 +968,14 @@
                     <button id="simulation-mode-button" type="button" class="simulation-mode-button">Mode simulation avion</button>
                 </div>
 
+                <div class="map-source-management-section">
+                    <h3 class="maps-management-title">Type de carte</h3>
+                    <div class="map-source-buttons">
+                        <button type="button" id="map-source-online-btn" class="map-source-btn map-source-btn-online active">ONLINE</button>
+                        <button type="button" id="map-source-offline-btn" class="map-source-btn map-source-btn-offline">OFFLINE</button>
+                    </div>
+                </div>
+
                 <div id="import-progress-section" style="display: none;">
                     <p id="import-status-message">Importation en cours...</p>
                     <div class="progress-bar-container">
@@ -839,25 +984,13 @@
                 </div>
 
                 <div class="installed-maps-section offline-maps-management-section">
-                    <h3>Cartes Offline</h3>
+                    <h3 class="maps-management-title">Cartes Offline</h3>
                     <div class="import-help-row">
                         <label for="zip-importer-input" class="import-button">Importer Cartes Offline</label>
                         <button type="button" class="import-help-button" data-import-help="offline-maps" aria-label="Aide Importer Cartes Offline" title="Aide">?</button>
                     </div>
                     <input type="file" id="zip-importer-input" accept=".zip" style="display: none;">
 
-                    <div class="offline-toggle-row">
-                        <span>Type de carte :</span>
-                        <div class="map-source-buttons">
-                            <button type="button" id="map-source-online-btn" class="map-source-btn map-source-btn-online active">Online</button>
-                            <button type="button" id="map-source-offline-btn" class="map-source-btn map-source-btn-offline">Offline</button>
-                        </div>
-                    </div>
-                    <details class="offline-maintenance-section">
-                        <summary>Maintenance / dépannage</summary>
-                        <button type="button" id="refresh-offline-tiles-btn" class="neutral-inline-btn">Rafraîchir l'affichage des cartes</button>
-                        <button type="button" id="purge-inactive-packs-btn" class="danger-inline-btn">Vider le cache des packs désélectionnés</button>
-                    </details>
                     <ul id="installed-maps-list">
                         <!-- Les packs installés seront listés ici par le JavaScript -->
                         <li class="no-maps-placeholder">Aucun pack de cartes installé.</li>
@@ -865,7 +998,7 @@
                 </div>
 
                 <div class="road-overlay-import-block">
-                    <h3>Calque Routier</h3>
+                    <h3 class="maps-management-title">Calque Routier</h3>
                     <div class="import-help-row">
                         <label for="road-overlay-importer-input" class="import-button road-overlay-import-button">
                             Importer Calque Routier
@@ -886,14 +1019,11 @@
                 </div>
 
                 <div class="vac-management-section">
-                    <h3>Cartes VAC</h3>
+                    <h3 class="maps-management-title">Cartes VAC</h3>
                     <p>
                         Cartes VAC officielles SIA publiées par NPF-Q400-VAC et stockées sur cet appareil
                         pour une utilisation 100 % hors ligne. Source : SIA / AIP Atlas VAC.
                     </p>
-                    <div id="vac-installed-status" class="vac-installed-status" aria-live="polite">
-                        Vérification du stockage local…
-                    </div>
                     <div class="vac-management-actions">
                         <button id="vac-download-update-button" type="button" class="import-button">
                             Télécharger les Cartes VAC
@@ -904,6 +1034,9 @@
                             Tout supprimer
                         </button>
                     </div>
+                    <div id="vac-installed-status" class="vac-installed-status" aria-live="polite">
+                        Vérification du stockage local…
+                    </div>
                     <div id="vac-download-progress" class="vac-download-progress" style="display: none;">
                         <div class="vac-download-progress-track">
                             <div id="vac-download-progress-bar" class="vac-download-progress-bar"></div>
@@ -912,13 +1045,14 @@
                     </div>
                 </div>
 
+
                 <div class="airport-pdf-section">
-                    <h3>PDFs FDF réduite / aérodromes offline</h3>
+                    <h3>Doc FdF Réduite / Carte Fréquences</h3>
                     <p>Importe un ou plusieurs PDF nommés avec leur code OACI, par exemple <b>LFTW.pdf</b>, <b>LFKJ.pdf</b> ou <b>LFAQ.pdf</b>, ou les documents communs <b>Doc Fdf Réduité.pdf</b> et <b>Carte Fréquences OPS.pdf</b>. Ils seront stockés sur l’iPad pour ouverture hors ligne.</p>
                     <div class="airport-pdf-toolbar">
                         <div class="import-help-row airport-pdf-import-help-row">
-                            <label for="airport-pdf-importer-input" class="import-button pdf-import-button">Télécharger PDFs Doc Fdf Réduité</label>
-                            <button type="button" class="import-help-button" data-import-help="fdf-pdfs" aria-label="Aide Télécharger PDFs Doc Fdf Réduité" title="Aide">?</button>
+                            <label for="airport-pdf-importer-input" class="import-button pdf-import-button">Importer Doc FdF Réduite / Carte Fréquences</label>
+                            <button type="button" class="import-help-button" data-import-help="fdf-pdfs" aria-label="Aide Importer Doc FdF Réduite / Carte Fréquences" title="Aide">?</button>
                         </div>
                         <button id="delete-all-airport-pdfs-button" type="button"
                                 class="danger-inline-btn airport-pdf-delete-all-button"
