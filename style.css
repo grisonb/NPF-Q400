@@ -1,4 +1,4 @@
-/* NPF_STYLE_BUILD_VERSION: v2026.64 */
+/* NPF_STYLE_BUILD_VERSION: v2026.65 */
 /* v14.83 — nettoyage des références techniques et limitation des cartouches routiers. */
 /* v14.81 — recherche phonétique nationale élargie aux fragments sur deux lettres. */
 /* v14.80 — Brive conservé uniquement sous LFSL. */
@@ -14231,12 +14231,10 @@ body.gaar-point-search-open .gaar-editing-banner {
 }
 
 
+
+
 /* ==========================================================================
-   v2026.64 PÉRENNE — GLR temporairement masqué
+   v2026.65 PÉRENNE — SafeSky occupe la position trafic principale
    ========================================================================== */
 
-#global-link-layer-button {
-    display: none !important;
-}
-
-/* SafeSky remonte automatiquement dans l'emplacement visuel libéré par GLR. */
+/* Le bouton GLR n'existe plus dans le DOM ; aucune règle de masquage n'est requise. */
